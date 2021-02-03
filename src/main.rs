@@ -1,3 +1,5 @@
+use console::style;
+use indicatif::ProgressBar;
 use inkwell::OptimizationLevel;
 use inkwell::{
     builder::Builder,
@@ -19,6 +21,7 @@ use inkwell::{
 use std::{
     error::Error,
     fmt::{Debug, Display},
+    fs::File,
     io::BufWriter,
     path::Path,
     process::{Command, Output},
@@ -87,7 +90,6 @@ impl<'ctx> CodeGen<'ctx> {
                 .build_global_string("Hello, world!", "hello_world")
         };
         hello_world_message.set_linkage(Linkage::LinkOnceODR);
-        //hello_world_message.set_visibility(visibility)
         hello_world_message.set_constant(true);
         let hello_world_deref = unsafe {
             self.builder.build_in_bounds_gep(
@@ -130,6 +132,8 @@ impl Display for ExecutionError {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    println!("{} Building module...", style("[1/4]").bold().dim());
+
     let host_triple = guess_host_triple::guess_host_triple().unwrap();
 
     std::env::set_current_dir("test").unwrap();
@@ -152,6 +156,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     codegen.jit_compile_sum();
     codegen.jit_compile_main();
+
+    println!(
+        "{} Compiling to target machine...",
+        style("[2/4]").bold().dim()
+    );
 
     Target::initialize_x86(&InitializationConfig::default());
 
@@ -189,6 +198,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .write_to_file(&codegen.module, FileType::Object, &path)
         .is_ok());
 
+    // Create a "glue" file to force CMake to use the C linker and actually link libc, instead of whatever it normally does.
+    File::create(Path::new("glue.c")).unwrap();
+
+    println!("{} Configuring CMake...", style("[3/4]").bold().dim());
+
     {
         use std::io::Write;
         // Output the CMakeLists.txt file.
@@ -196,11 +210,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         writeln!(cmakelists, "cmake_minimum_required (VERSION 3.10)").unwrap();
         writeln!(cmakelists, "project (TEST)").unwrap();
         writeln!(cmakelists, "add_executable (test foo.o glue.c)").unwrap();
-        writeln!(
-            cmakelists,
-            "set_target_properties (test PROPERTIES LINKER_LANGUAGE C)"
-        )
-        .unwrap();
     }
 
     let cmake_build_folder = format!("cmake_{}", host_triple);
@@ -213,6 +222,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             output: cmake_configure,
         }));
     }
+
+    println!("{} Linking...", style("[4/4]").bold().dim());
+
     let cmake_build = Command::new("cmake")
         .arg("--build")
         .arg(".")
@@ -224,6 +236,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             output: cmake_build,
         }));
     }
+
+    println!(
+        "{} Running executable...",
+        style("Complete!").bold().green()
+    );
     assert!(run_executable().status().unwrap().success());
 
     // let x = 1u64;
