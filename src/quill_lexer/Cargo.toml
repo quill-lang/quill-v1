@@ -1,0 +1,9 @@
+[package]
+name = "quill_lexer"
+version = "0.1.0"
+authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+quill_source_file = { path = "../quill_source_file" }
+tokio = { version = "1.1", features = ["macros", "rt"] }
