@@ -241,6 +241,9 @@ mod test {
         let lexed = error_emitter.consume_diagnostic(lexed);
         error_emitter.emit_all().await;
 
+        // If the lex fails, the test will fail.
+        let lexed = lexed.unwrap();
+
         println!("lexed: {:?}", lexed);
     }
 }
