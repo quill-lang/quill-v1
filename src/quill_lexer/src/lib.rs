@@ -3,8 +3,8 @@
 use std::iter::Peekable;
 
 use quill_common::{
-    diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
-    location::{Location, Range, SourceFileIdentifier},
+    diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
+    location::{Location, Range, Ranged, SourceFileIdentifier},
 };
 use quill_source_file::PackageFileSystem;
 
@@ -18,41 +18,225 @@ pub enum TokenType {
 
     LeftParenthesis,
     RightParenthesis,
+    LeftSquare,
+    RightSquare,
+    LeftBrace,
+    RightBrace,
 
     Let,
 
     Identifier(String),
 }
 
+/// A single token such as an identifier or special character.
 #[derive(Debug)]
 pub struct Token {
     pub token_type: TokenType,
     pub range: Range,
 }
 
-/// This function is asynchronous since it may read the file from disk.
+impl Ranged for Token {
+    fn range(&self) -> Range {
+        self.range
+    }
+}
+
+/// A list of tokens grouped by a set of matching brackets.
+#[derive(Debug)]
+pub struct Tree {
+    /// The range representing the open bracket.
+    open: Range,
+    /// The range representing the close bracket.
+    close: Range,
+    /// The actual tokens inside this tree node.
+    tokens: Vec<TokenTree>,
+    /// What kind of brackets does this token tree represent?
+    bracket_type: BracketType,
+}
+
+/// A program (and by extension a line of code) is subdivided into token trees, which are essentially bracketed groups.
+/// For example, in the expression `1 + (2 + 3) + 4`, the token trees are `[1, +, [2, +, 3], +, 4]`.
+#[derive(Debug)]
+pub enum TokenTree {
+    Token(Token),
+    Tree(Tree),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BracketType {
+    Parentheses,
+    Square,
+    Brace,
+}
+
+impl Ranged for TokenTree {
+    fn range(&self) -> Range {
+        match self {
+            TokenTree::Token(token) => token.range,
+            TokenTree::Tree(Tree { open, close, .. }) => open.union(*close),
+        }
+    }
+}
+
+/// Lexes a source file. This function reads a source file from disk (if not cached), splits it into tokens, and groups those tokens into token trees.
 pub async fn lex(
     fs: &PackageFileSystem,
     source_file: &SourceFileIdentifier,
-) -> DiagnosticResult<Vec<Vec<Token>>> {
+) -> DiagnosticResult<Vec<TokenTree>> {
+    tokenise(fs, source_file)
+        .await
+        .bind(|tokens| group_token_trees(tokens, source_file))
+}
+
+/// Takes a linear list of tokens, and sorts them into a hierarchy of token trees according to the use of brackets.
+fn group_token_trees(
+    tokens: Vec<Token>,
+    source_file: &SourceFileIdentifier,
+) -> DiagnosticResult<Vec<TokenTree>> {
+    #[derive(Debug)]
+    struct OpenBracket {
+        /// The range representing the open bracket.
+        open: Range,
+        /// The actual tokens inside this tree node.
+        tokens: Vec<TokenTree>,
+        /// What kind of brackets does this token tree represent?
+        /// If none, this token tree represents the whole program.
+        bracket_type: Option<BracketType>,
+    }
+
+    // Every time we encounter an open bracket, put it on the stack.
+    // When we encounter a closing bracket, pop off the top element of the stack and check that the bracket type matches.
+    let mut open_bracket_stack = Vec::new();
+
+    open_bracket_stack.push(OpenBracket {
+        open: Location { line: 0, col: 0 }.into(),
+        tokens: Vec::new(),
+        bracket_type: None,
+    });
+
+    for token in tokens {
+        match token.token_type {
+            TokenType::LeftParenthesis | TokenType::LeftSquare | TokenType::LeftBrace => {
+                let bracket_type = match token.token_type {
+                    TokenType::LeftParenthesis => BracketType::Parentheses,
+                    TokenType::LeftSquare => BracketType::Square,
+                    TokenType::LeftBrace => BracketType::Brace,
+                    _ => panic!(),
+                };
+                open_bracket_stack.push(OpenBracket {
+                    open: token.range,
+                    tokens: Vec::new(),
+                    bracket_type: Some(bracket_type),
+                });
+            }
+            TokenType::RightParenthesis | TokenType::RightSquare | TokenType::RightBrace => {
+                // Pop the top element on the stack and check that the bracket type matches.
+                let open_bracket = open_bracket_stack.pop().expect("bracket stack was empty");
+                let bracket_type = match token.token_type {
+                    TokenType::RightParenthesis => BracketType::Parentheses,
+                    TokenType::RightSquare => BracketType::Square,
+                    TokenType::RightBrace => BracketType::Brace,
+                    _ => panic!(),
+                };
+                match open_bracket.bracket_type {
+                    Some(other_bracket_type) => {
+                        if other_bracket_type == bracket_type {
+                            // The bracket type matched. Turn this open/close bracket pair into a token tree.
+                            let tree = Tree {
+                                open: open_bracket.open,
+                                close: token.range,
+                                tokens: open_bracket.tokens,
+                                bracket_type,
+                            };
+                            // Add this tree to the new top item on the stack.
+                            // This can't fail, since the lowest item on the stack is the entire program, which has no bracket type.
+                            // Hence the entire program can never match any closing bracket, and hence will never be popped without immediately
+                            // quitting this compilation step.
+                            open_bracket_stack
+                                .last_mut()
+                                .expect("entire program should never be popped")
+                                .tokens
+                                .push(TokenTree::Tree(tree));
+                        } else {
+                            return DiagnosticResult::fail(ErrorMessage::new_with(
+                                "this opening bracket didn't match the closing bracket".to_string(),
+                                Severity::Error,
+                                Diagnostic::at(source_file, &open_bracket.open),
+                                HelpMessage {
+                                    message: "closing bracket was here".to_string(),
+                                    help_type: HelpType::Note,
+                                    diagnostic: Diagnostic::at(source_file, &token),
+                                },
+                            ));
+                        }
+                    }
+                    None => {
+                        return DiagnosticResult::fail(ErrorMessage::new(
+                            "closing bracket had no opening bracket to pair with".to_string(),
+                            Severity::Error,
+                            Diagnostic::at(source_file, &token),
+                        ));
+                    }
+                }
+            }
+            _ => {
+                open_bracket_stack
+                    .last_mut()
+                    .expect("open bracket stack was empty")
+                    .tokens
+                    .push(TokenTree::Token(token));
+            }
+        }
+    }
+
+    // The open bracket stack should have exactly one element on it, otherwise there are some unclosed brackets.
+    if open_bracket_stack.len() > 1 {
+        open_bracket_stack
+            .into_iter()
+            .skip(1)
+            .map(|open_bracket| {
+                DiagnosticResult::fail(ErrorMessage::new(
+                    "this opening bracket was not closed".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &open_bracket.open),
+                ))
+            })
+            .collect::<DiagnosticResult<_>>()
+            .deny()
+    } else {
+        DiagnosticResult::ok(
+            open_bracket_stack
+                .pop()
+                .expect("open bracket stack was empty")
+                .tokens,
+        )
+    }
+}
+
+/// This function is asynchronous since it may read the file from disk.
+async fn tokenise(
+    fs: &PackageFileSystem,
+    source_file: &SourceFileIdentifier,
+) -> DiagnosticResult<Vec<Token>> {
     fs.with_source_file(source_file, |source| match source {
         Ok(source) => source
             .get_contents()
             .lines()
             .enumerate()
-            .map(|(line_number, line)| lex_line(source_file, line_number as u32, line))
-            .collect(),
+            .map(|(line_number, line)| tokenise_line(source_file, line_number as u32, line))
+            .collect::<DiagnosticResult<Vec<Vec<Token>>>>()
+            .map(|lines| lines.into_iter().flatten().collect()),
         Err(_) => DiagnosticResult::fail(ErrorMessage::new(
             "could not read file".to_string(),
             Severity::Error,
-            Diagnostic::in_file(source_file.clone()),
+            Diagnostic::in_file(source_file),
         )),
     })
     .await
 }
 
 /// Returns the leading whitespace and then the list of tokens on this line.
-fn lex_line(
+fn tokenise_line(
     source_file: &SourceFileIdentifier,
     line_number: u32,
     line: &str,
@@ -68,7 +252,7 @@ fn lex_line(
     consume_whitespace(line_number, &mut chars);
 
     while let Some(&(col, _)) = chars.peek() {
-        let token = lex_token(source_file, line_number, &mut chars);
+        let token = parse_token(source_file, line_number, &mut chars);
         let should_break = token.failed();
         tokens.push(token);
         if should_break {
@@ -93,7 +277,7 @@ fn lex_line(
 /// In order to parse correctly, tokens must be separated from each other, or they will be grouped into a single token.
 /// Therefore, symbolic tokens e.g. '+' are separated from alphanumeric tokens e.g. 'append' automatically.
 /// Putting two symbolic tokens next to each other requires spacing.
-fn lex_token(
+fn parse_token(
     source_file: &SourceFileIdentifier,
     line: u32,
     chars: &mut Peekable<impl Iterator<Item = (u32, char)>>,
@@ -104,7 +288,7 @@ fn lex_token(
         return DiagnosticResult::fail(ErrorMessage::new(
             String::from("unexpected control character"),
             Severity::Error,
-            Diagnostic::at_location(source_file.clone(), Location { line, col }),
+            Diagnostic::at_location(source_file, Location { line, col }),
         ));
     }
 
@@ -120,6 +304,34 @@ fn lex_token(
             chars.next();
             DiagnosticResult::ok(Token {
                 token_type: TokenType::RightParenthesis,
+                range: Location { line, col }.into(),
+            })
+        }
+        '[' => {
+            chars.next();
+            DiagnosticResult::ok(Token {
+                token_type: TokenType::LeftSquare,
+                range: Location { line, col }.into(),
+            })
+        }
+        ']' => {
+            chars.next();
+            DiagnosticResult::ok(Token {
+                token_type: TokenType::RightSquare,
+                range: Location { line, col }.into(),
+            })
+        }
+        '{' => {
+            chars.next();
+            DiagnosticResult::ok(Token {
+                token_type: TokenType::LeftBrace,
+                range: Location { line, col }.into(),
+            })
+        }
+        '}' => {
+            chars.next();
+            DiagnosticResult::ok(Token {
+                token_type: TokenType::RightBrace,
                 range: Location { line, col }.into(),
             })
         }
@@ -244,6 +456,6 @@ mod test {
         // If the lex fails, the test will fail.
         let lexed = lexed.unwrap();
 
-        println!("lexed: {:?}", lexed);
+        println!("lexed: {:#?}", lexed);
     }
 }

@@ -256,7 +256,7 @@ impl<'fs> ErrorEmitter<'fs> {
                                 .lines()
                                 .enumerate()
                                 .skip(range.start.line as usize)
-                                .take((range.end.line - range.start.line - 1) as usize);
+                                .take((range.end.line - range.start.line + 1) as usize);
 
                             // Print out each relevant line of code, starting and finishing with an empty line.
 

@@ -50,6 +50,12 @@ pub trait Ranged {
     fn range(&self) -> Range;
 }
 
+impl Ranged for Range {
+    fn range(&self) -> Range {
+        *self
+    }
+}
+
 /// A fragment of the canonical name for a source file.
 /// This does not include things like slashes to separate directories, double periods to denote going up a directory, or file extensions.
 #[derive(Clone)]

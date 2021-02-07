@@ -1,6 +1,6 @@
 use std::iter::FromIterator;
 
-use crate::location::{Location, Range, SourceFileIdentifier};
+use crate::location::{Location, Range, Ranged, SourceFileIdentifier};
 
 #[derive(Debug)]
 pub struct Diagnostic {
@@ -10,24 +10,24 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn in_file(source_file: SourceFileIdentifier) -> Self {
+    pub fn in_file(source_file: &SourceFileIdentifier) -> Self {
         Self {
-            source_file,
+            source_file: source_file.clone(),
             range: None,
         }
     }
 
-    pub fn at_location(source_file: SourceFileIdentifier, location: Location) -> Self {
+    pub fn at_location(source_file: &SourceFileIdentifier, location: Location) -> Self {
         Self {
-            source_file,
+            source_file: source_file.clone(),
             range: Some(location.into()),
         }
     }
 
-    pub fn at(source_file: SourceFileIdentifier, range: Range) -> Self {
+    pub fn at(source_file: &SourceFileIdentifier, range: &impl Ranged) -> Self {
         Self {
-            source_file,
-            range: Some(range),
+            source_file: source_file.clone(),
+            range: Some(range.range()),
         }
     }
 }
