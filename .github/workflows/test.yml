@@ -7,7 +7,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v1
-      - uses: icepuma/rust-action@master
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Cache LLVM and clang
+        id: cache-llvm
+        uses: actions/cache@v2
         with:
-          args: cargo fmt -- --check && cargo clippy -- -Dwarnings && cargo test
+          path: ${{ runner.temp }}/llvm
+          key: llvm-11.0
+
+      - name: Install LLVM and clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "11.0"
+          directory: ${{ runner.temp }}/llvm
+          cached: ${{ steps.cache-llvm.outputs.cache-hit }}
+
+      - name: Install latest nightly rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          components: rustfmt, clippy
+          
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
+      
+      - name: Check warnings
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: -- -Dwarnings
+      
+      - name: Run test suite
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
