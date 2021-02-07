@@ -6,4 +6,6 @@ edition = "2018"
 description = "Manages contents of file resources while compiling"
 
 [dependencies]
-tokio = { version = "1.1", features = ["fs", "sync", "io-util"] }
+quill_common = { path = "../quill_common" }
+tokio = { version = "^1.0", features = ["fs", "sync", "io-util"] }
+console = "^0.14"

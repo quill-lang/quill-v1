@@ -1,0 +1,6 @@
+[package]
+name = "quill_common"
+version = "0.1.0"
+authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
+edition = "2018"
+description = "A small library containing common utilities useful for most components of the project"

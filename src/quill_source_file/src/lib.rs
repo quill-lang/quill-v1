@@ -1,109 +1,10 @@
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    path::PathBuf,
-    time::SystemTime,
+use std::{collections::HashMap, fmt::Debug, path::PathBuf, time::SystemTime};
+
+use quill_common::{
+    diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpType, Severity},
+    location::{ModuleIdentifier, SourceFileIdentifier, SourceFileIdentifierSegment},
 };
-
 use tokio::{fs::File, io::BufReader, sync::RwLock};
-
-/// A fragment of the canonical name for a source file.
-/// This does not include things like slashes to separate directories, double periods to denote going up a directory, or file extensions.
-#[derive(Clone)]
-pub struct SourceFileIdentifierSegment(pub String);
-
-impl Debug for SourceFileIdentifierSegment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Display for SourceFileIdentifierSegment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&self, f)
-    }
-}
-
-impl<S> From<S> for SourceFileIdentifierSegment
-where
-    S: Into<String>,
-{
-    fn from(s: S) -> Self {
-        SourceFileIdentifierSegment(s.into())
-    }
-}
-
-#[derive(Clone)]
-pub struct ModuleIdentifier {
-    segments: Vec<SourceFileIdentifierSegment>,
-}
-
-impl Debug for ModuleIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, fragment) in self.segments.iter().enumerate() {
-            if i != 0 {
-                write!(f, "::")?;
-            }
-            write!(f, "{}", fragment)?;
-        }
-        Ok(())
-    }
-}
-
-impl Display for ModuleIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&self, f)
-    }
-}
-
-impl From<Vec<String>> for ModuleIdentifier {
-    fn from(segments: Vec<String>) -> Self {
-        Self {
-            segments: segments
-                .into_iter()
-                .map(SourceFileIdentifierSegment)
-                .collect(),
-        }
-    }
-}
-
-impl From<ModuleIdentifier> for PathBuf {
-    fn from(identifier: ModuleIdentifier) -> Self {
-        identifier
-            .segments
-            .into_iter()
-            .map(|fragment| fragment.0)
-            .collect()
-    }
-}
-
-#[derive(Clone)]
-pub struct SourceFileIdentifier {
-    pub module: ModuleIdentifier,
-    pub file: SourceFileIdentifierSegment,
-}
-
-impl Debug for SourceFileIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.module.segments.is_empty() {
-            write!(f, "{}", self.file)
-        } else {
-            write!(f, "{}::{}", self.module, self.file)
-        }
-    }
-}
-
-impl Display for SourceFileIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&self, f)
-    }
-}
-
-impl From<SourceFileIdentifier> for PathBuf {
-    fn from(identifier: SourceFileIdentifier) -> Self {
-        PathBuf::from(identifier.module).join(identifier.file.0)
-    }
-}
 
 /// If a source file's contents could not be loaded, why was this?
 #[derive(Debug)]
@@ -229,5 +130,238 @@ impl PackageFileSystem {
             contents,
             modified_time,
         })
+    }
+}
+
+/// Prints error and warning messages, outputting the relevant lines of source code from the input files.
+#[must_use = "error messages must be emitted using the emit_all method"]
+pub struct ErrorEmitter<'fs> {
+    /// The error emitter caches messages and will not output them until `emit_all` is called.
+    /// This defers asynchronous (file reading) operations until after the compilation step is finished.
+    /// Order of emission of the messages is preserved.
+    messages: Vec<ErrorMessage>,
+
+    /// If this is true, warnings will not be cached or emitted.
+    has_emitted_error: bool,
+
+    package_file_system: &'fs PackageFileSystem,
+}
+
+impl<'fs> ErrorEmitter<'fs> {
+    pub fn new(package_file_system: &'fs PackageFileSystem) -> Self {
+        Self {
+            messages: Vec::new(),
+            has_emitted_error: false,
+            package_file_system,
+        }
+    }
+
+    /// Consumes the errors of a diagnostic result, yielding the encapsulated value.
+    pub fn consume_diagnostic<T>(&mut self, diagnostic_result: DiagnosticResult<T>) -> Option<T> {
+        let (value, messages) = diagnostic_result.destructure();
+        self.process(messages);
+        value
+    }
+
+    /// Adds some messages to this error emitter.
+    pub fn process(&mut self, messages: impl IntoIterator<Item = ErrorMessage>) {
+        for message in messages {
+            match message.severity {
+                Severity::Warning => {
+                    if !self.has_emitted_error {
+                        self.messages.push(message);
+                    }
+                }
+                Severity::Error => {
+                    self.has_emitted_error = true;
+                    self.messages.push(message);
+                }
+            }
+        }
+    }
+
+    async fn emit(&self, message: ErrorMessage) {
+        use console::style;
+
+        match message.severity {
+            Severity::Error => {
+                println!(
+                    "{}{} {}",
+                    style("error").red().bright(),
+                    style(":").white().bright(),
+                    style(message.message).white().bright()
+                );
+                self.print_message(message.diagnostic, |s| style(s).red().bright())
+                    .await;
+            }
+            Severity::Warning => {
+                println!(
+                    "{}: {}",
+                    style("warning").yellow().bright(),
+                    message.message
+                );
+                self.print_message(message.diagnostic, |s| style(s).yellow().bright())
+                    .await;
+            }
+        }
+
+        for help in message.help {
+            match help.help_type {
+                HelpType::Help => println!(
+                    "{} {}",
+                    style("help:").white().bright(),
+                    style(help.message).white().bright()
+                ),
+                HelpType::Note => println!(
+                    "{} {}",
+                    style("note:").white().bright(),
+                    style(help.message).white().bright()
+                ),
+            }
+            self.print_message(help.diagnostic, |s| style(s).cyan().bright())
+                .await;
+        }
+    }
+
+    async fn print_message(
+        &self,
+        diagnostic: Diagnostic,
+        style_arrows: impl Fn(String) -> console::StyledObject<String>,
+    ) {
+        use console::style;
+
+        if let Some(range) = diagnostic.range {
+            // We calculate the amount of digits in the line number.
+            let line_number_max_digits =
+                (range.start.line.max(range.end.line) + 1).to_string().len();
+
+            println!(
+                "{}{} {} @ {}:{}",
+                " ".repeat(line_number_max_digits),
+                style("-->").cyan().bright(),
+                diagnostic.source_file,
+                range.start.line + 1,
+                range.start.col + 1
+            );
+
+            // Let's get the contents of the offending source code file.
+            self.package_file_system
+                .with_source_file(&diagnostic.source_file, |source_file| {
+                    // We don't need to worry about optimising reads from the source file, since it's cached in memory anyway,
+                    // and this is the cold path because we're just handling errors.
+                    match source_file {
+                        Ok(source_file) => {
+                            let lines = source_file
+                                .get_contents()
+                                .lines()
+                                .enumerate()
+                                .skip(range.start.line as usize)
+                                .take((range.end.line - range.start.line - 1) as usize);
+
+                            // Print out each relevant line of code, starting and finishing with an empty line.
+
+                            // Empty line.
+                            println!(
+                                "{: >2$} {}",
+                                "",
+                                style("|").cyan().bright(),
+                                line_number_max_digits,
+                            );
+
+                            // Relevant lines.
+                            for (line_number, line_contents) in lines {
+                                let line_length = line_contents.chars().count();
+
+                                // Signal where on the line the error occured if we're on the first line.
+                                if line_number == range.start.line as usize {
+                                    // If the error was on a single line, we'll just underline where the error occured.
+                                    // We don't need an overline.
+                                    if range.start.line != range.end.line {
+                                        println!(
+                                            "{: >4$} {} {: >5$}{}",
+                                            "",
+                                            style("|").cyan().bright(),
+                                            "",
+                                            style_arrows(
+                                                "v".repeat(line_length - range.start.col as usize)
+                                            ),
+                                            line_number_max_digits,
+                                            range.start.col as usize,
+                                        );
+                                    }
+                                }
+
+                                println!(
+                                    "{: >3$} {} {}",
+                                    style((line_number + 1).to_string()).cyan().bright(),
+                                    style("|").cyan().bright(),
+                                    line_contents,
+                                    line_number_max_digits,
+                                );
+
+                                // Signal where on the line the error occured if we're on the last line.
+                                if line_number == range.end.line as usize {
+                                    if range.start.line == range.end.line {
+                                        // The error was on a single line. We'll just underline where the error occured.
+                                        println!(
+                                            "{: >4$} {} {: >5$}{}",
+                                            "",
+                                            style("|").cyan().bright(),
+                                            "",
+                                            style_arrows("^".repeat(
+                                                range.end.col as usize - range.start.col as usize
+                                            )),
+                                            line_number_max_digits,
+                                            range.start.col as usize,
+                                        );
+                                    } else {
+                                        // Underline from the start of the line to the end of the error.
+                                        println!(
+                                            "{: >3$} {} {}",
+                                            "",
+                                            style("|").cyan().bright(),
+                                            style_arrows("^".repeat(range.end.col as usize)),
+                                            line_number_max_digits,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Empty line.
+                            println!(
+                                "{: >2$} {}",
+                                "",
+                                style("|").cyan().bright(),
+                                line_number_max_digits,
+                            );
+                        }
+                        Err(_) => {
+                            println!(
+                                "{}",
+                                style("could not read file".to_string()).red().bright()
+                            );
+                        }
+                    }
+                })
+                .await;
+        } else {
+            println!(
+                "{} {}",
+                style("-->").cyan().bright(),
+                diagnostic.source_file
+            );
+        }
+    }
+
+    /// Displays all error and warning messages. If an error was emitted, returns true.
+    /// This function may read files from the disk in order to emit a more user-friendly error message, hence it is asynchronous.
+    pub async fn emit_all(mut self) -> bool {
+        let messages = std::mem::take(&mut self.messages);
+        for message in messages {
+            if message.severity == Severity::Error || !self.has_emitted_error {
+                self.emit(message).await;
+            }
+        }
+        self.has_emitted_error
     }
 }
