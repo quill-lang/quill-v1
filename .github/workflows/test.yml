@@ -5,6 +5,8 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      LLVM_SYS_110_PREFIX: ${{ runner.temp }}/llvm
 
     steps:
       - name: Checkout
