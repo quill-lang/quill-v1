@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      LLVM_SYS_110_PREFIX: ${{ runner.temp }}/llvm
+      LLVM_SYS_110_PREFIX: /llvm_110
 
     steps:
       - name: Checkout
@@ -16,14 +16,14 @@ jobs:
         id: cache-llvm
         uses: actions/cache@v2
         with:
-          path: ${{ runner.temp }}/llvm
+          path: /llvm_110
           key: llvm-11.0
 
       - name: Install LLVM and clang
         uses: KyleMayes/install-llvm-action@v1
         with:
           version: "11.0"
-          directory: ${{ runner.temp }}/llvm
+          directory: /llvm_110
           cached: ${{ steps.cache-llvm.outputs.cache-hit }}
 
       - name: Install latest nightly rust
