@@ -106,13 +106,11 @@ fn group_token_trees(
 
     // Every time we encounter an open bracket, put it on the stack.
     // When we encounter a closing bracket, pop off the top element of the stack and check that the bracket type matches.
-    let mut open_bracket_stack = Vec::new();
-
-    open_bracket_stack.push(OpenBracket {
+    let mut open_bracket_stack = vec![OpenBracket {
         open: Location { line: 0, col: 0 }.into(),
         tokens: Vec::new(),
         bracket_type: None,
-    });
+    }];
 
     for token in tokens {
         match token.token_type {
