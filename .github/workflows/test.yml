@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      LLVM_SYS_110_PREFIX: ~/llvm/11.0.0
+      LLVM_SYS_110_PREFIX: /home/runner/llvm/11.0.0
 
     steps:
       - name: Checkout
@@ -18,7 +18,6 @@ jobs:
           mkdir ~/llvm_110
           unzip llvm-11.0.0.zip -d ~/llvm
           find ~/llvm/11.0.0/bin -type f -exec chmod +x {} \;
-          ls -lah /home/runner/llvm/11.0.0/bin
 
       - name: Install latest nightly rust
         uses: actions-rs/toolchain@v1
