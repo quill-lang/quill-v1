@@ -11,3 +11,4 @@ console = "^0.14"
 indicatif = "^0.15"
 
 quill_lexer = { path = "../quill_lexer" }
+quill_parser = { path = "../quill_parser" }

@@ -123,6 +123,24 @@ impl<T> From<T> for DiagnosticResult<T> {
     }
 }
 
+impl<T> From<Result<T, ErrorMessage>> for DiagnosticResult<T> {
+    fn from(result: Result<T, ErrorMessage>) -> Self {
+        match result {
+            Ok(value) => Self::ok(value),
+            Err(error) => Self::fail(error),
+        }
+    }
+}
+
+impl<T> From<Result<T, Vec<ErrorMessage>>> for DiagnosticResult<T> {
+    fn from(result: Result<T, Vec<ErrorMessage>>) -> Self {
+        match result {
+            Ok(value) => Self::ok(value),
+            Err(errors) => Self::fail_many(errors),
+        }
+    }
+}
+
 impl<T> DiagnosticResult<T> {
     /// The computation succeeded with no messages.
     /// This is the monadic `return` operation.
@@ -284,6 +302,11 @@ impl<T> DiagnosticResult<T> {
     /// being considered correct.
     pub fn destructure(self) -> (Option<T>, Vec<ErrorMessage>) {
         (self.value, self.messages)
+    }
+
+    /// Retrieves the value for inspection.
+    pub fn value(&self) -> &Option<T> {
+        &self.value
     }
 }
 

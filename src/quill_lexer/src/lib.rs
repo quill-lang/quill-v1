@@ -10,11 +10,22 @@ use quill_source_file::PackageFileSystem;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenType {
+    /// `=`
     Assign,
+    /// `:`
     Type,
+    /// `->`
     Arrow,
+    /// `_`
     Underscore,
+    /// `.`
     Dot,
+    /// `::`
+    Scope,
+    /// `,`
+    Comma,
+    /// `|`
+    TypeOr,
 
     LeftParenthesis,
     RightParenthesis,
@@ -23,6 +34,9 @@ pub enum TokenType {
     LeftBrace,
     RightBrace,
 
+    Pub,
+    Data,
+    Def,
     Let,
 
     Identifier(String),
@@ -45,13 +59,19 @@ impl Ranged for Token {
 #[derive(Debug)]
 pub struct Tree {
     /// The range representing the open bracket.
-    open: Range,
+    pub open: Range,
     /// The range representing the close bracket.
-    close: Range,
+    pub close: Range,
     /// The actual tokens inside this tree node.
-    tokens: Vec<TokenTree>,
+    pub tokens: Vec<TokenTree>,
     /// What kind of brackets does this token tree represent?
-    bracket_type: BracketType,
+    pub bracket_type: BracketType,
+}
+
+impl Ranged for Tree {
+    fn range(&self) -> Range {
+        self.open.union(self.close)
+    }
 }
 
 /// A program (and by extension a line of code) is subdivided into token trees, which are essentially bracketed groups.
@@ -73,7 +93,7 @@ impl Ranged for TokenTree {
     fn range(&self) -> Range {
         match self {
             TokenTree::Token(token) => token.range,
-            TokenTree::Tree(Tree { open, close, .. }) => open.union(*close),
+            TokenTree::Tree(tree) => tree.range(),
         }
     }
 }
@@ -251,8 +271,19 @@ fn tokenise_line(
 
     while let Some(&(col, _)) = chars.peek() {
         let token = parse_token(source_file, line_number, &mut chars);
+        if matches!(token.value(), Some(ParseTokenResult::CommentLine)) {
+            break;
+        }
         let should_break = token.failed();
-        tokens.push(token);
+
+        tokens.push(token.map(|result| {
+            if let ParseTokenResult::Token(token) = result {
+                token
+            } else {
+                panic!("tried to push a non-token")
+            }
+        }));
+
         if should_break {
             break;
         }
@@ -269,6 +300,20 @@ fn tokenise_line(
     DiagnosticResult::sequence(tokens)
 }
 
+/// When we have parsed a token, what was the result?
+enum ParseTokenResult {
+    /// We got a token, as expected.
+    Token(Token),
+    /// We got a '//' token, which means we are starting a comment line.
+    CommentLine,
+}
+
+impl From<Token> for ParseTokenResult {
+    fn from(token: Token) -> Self {
+        Self::Token(token)
+    }
+}
+
 /// This function parses a single token from the input stream.
 /// It must consume at least one character from `chars` if it did not return a `DiagnosticResult::fail`,
 /// otherwise we'll end up in an infinite loop.
@@ -279,7 +324,7 @@ fn parse_token(
     source_file: &SourceFileIdentifier,
     line: u32,
     chars: &mut Peekable<impl Iterator<Item = (u32, char)>>,
-) -> DiagnosticResult<Token> {
+) -> DiagnosticResult<ParseTokenResult> {
     let (col, ch) = *chars.peek().unwrap();
 
     if ch.is_control() {
@@ -293,58 +338,81 @@ fn parse_token(
     match ch {
         '(' => {
             chars.next();
-            DiagnosticResult::ok(Token {
-                token_type: TokenType::LeftParenthesis,
-                range: Location { line, col }.into(),
-            })
+            DiagnosticResult::ok(
+                Token {
+                    token_type: TokenType::LeftParenthesis,
+                    range: Location { line, col }.into(),
+                }
+                .into(),
+            )
         }
         ')' => {
             chars.next();
-            DiagnosticResult::ok(Token {
-                token_type: TokenType::RightParenthesis,
-                range: Location { line, col }.into(),
-            })
+            DiagnosticResult::ok(
+                Token {
+                    token_type: TokenType::RightParenthesis,
+                    range: Location { line, col }.into(),
+                }
+                .into(),
+            )
         }
         '[' => {
             chars.next();
-            DiagnosticResult::ok(Token {
-                token_type: TokenType::LeftSquare,
-                range: Location { line, col }.into(),
-            })
+            DiagnosticResult::ok(
+                Token {
+                    token_type: TokenType::LeftSquare,
+                    range: Location { line, col }.into(),
+                }
+                .into(),
+            )
         }
         ']' => {
             chars.next();
-            DiagnosticResult::ok(Token {
-                token_type: TokenType::RightSquare,
-                range: Location { line, col }.into(),
-            })
+            DiagnosticResult::ok(
+                Token {
+                    token_type: TokenType::RightSquare,
+                    range: Location { line, col }.into(),
+                }
+                .into(),
+            )
         }
         '{' => {
             chars.next();
-            DiagnosticResult::ok(Token {
-                token_type: TokenType::LeftBrace,
-                range: Location { line, col }.into(),
-            })
+            DiagnosticResult::ok(
+                Token {
+                    token_type: TokenType::LeftBrace,
+                    range: Location { line, col }.into(),
+                }
+                .into(),
+            )
         }
         '}' => {
             chars.next();
-            DiagnosticResult::ok(Token {
-                token_type: TokenType::RightBrace,
-                range: Location { line, col }.into(),
-            })
+            DiagnosticResult::ok(
+                Token {
+                    token_type: TokenType::RightBrace,
+                    range: Location { line, col }.into(),
+                }
+                .into(),
+            )
         }
         _ => {
+            if ch == '/' && matches!(chars.peek(), Some((_, '/'))) {
+                // This is a comment line.
+                return DiagnosticResult::ok(ParseTokenResult::CommentLine);
+            }
+
             if ch.is_alphanumeric() {
                 let (identifier, range) =
                     consume_predicate_one(line, chars, |c| c.is_alphanumeric() || c == '_');
                 let token_type = token_type_alphabetic(identifier);
-                DiagnosticResult::ok(Token { token_type, range })
+                DiagnosticResult::ok(Token { token_type, range }.into())
             } else {
                 let (identifier, range) = consume_predicate_one(line, chars, |c| {
                     !c.is_alphanumeric() && !c.is_whitespace() && !vec!['(', ')'].contains(&c)
                 });
                 let token_type = token_type_symbol(identifier);
-                DiagnosticResult::ok(Token { token_type, range })
+                DiagnosticResult::ok(Token { token_type, range }.into())
             }
         }
     }
@@ -354,6 +422,9 @@ fn parse_token(
 /// If no specific in-built token type was deduced, the token is simply an `Identifier`.
 fn token_type_alphabetic(s: String) -> TokenType {
     match s.as_str() {
+        "pub" => TokenType::Pub,
+        "data" => TokenType::Data,
+        "def" => TokenType::Def,
         "let" => TokenType::Let,
         _ => TokenType::Identifier(s),
     }
@@ -368,6 +439,9 @@ fn token_type_symbol(s: String) -> TokenType {
         "->" => TokenType::Arrow,
         "_" => TokenType::Underscore,
         "." => TokenType::Dot,
+        "::" => TokenType::Scope,
+        "," => TokenType::Comma,
+        "|" => TokenType::TypeOr,
         _ => TokenType::Identifier(s),
     }
 }

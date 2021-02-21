@@ -263,6 +263,7 @@ dependencies = [
  "indicatif",
  "inkwell",
  "quill_lexer",
+ "quill_parser",
 ]
 
 [[package]]
@@ -274,6 +275,16 @@ name = "quill_lexer"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_source_file",
+ "tokio",
+]
+
+[[package]]
+name = "quill_parser"
+version = "0.1.0"
+dependencies = [
+ "quill_common",
+ "quill_lexer",
  "quill_source_file",
  "tokio",
 ]
