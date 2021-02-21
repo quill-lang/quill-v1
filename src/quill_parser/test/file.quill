@@ -4,6 +4,6 @@ pub data Either[T, U] = pub Left { value: T } | pub Right { value: U }
 
 pub data Unit = pub Unit {}
 
-pub def create_either[T]: T -> Either[T, Unit] = {
+pub def create_either[T]: T -> Either[T, Unit] {
     t -> Either::Left { value = t }
 }

@@ -110,7 +110,7 @@ impl<'input> Parser<'input> {
         vis.bind(|vis| {
             if let Some(item_type) = item_type {
                 match item_type.token_type {
-                    TokenType::Data => dbg!(self.parse_data(vis).map(ItemP::Data)),
+                    TokenType::Data => self.parse_data(vis).map(ItemP::Data),
                     TokenType::Def => self.parse_def(vis).map(ItemP::Definition),
                     _ => unreachable!(),
                 }
@@ -174,13 +174,13 @@ impl<'input> Parser<'input> {
         self.parse_name_with_message("expected a name for this new data type")
             .bind(|identifier| {
                 // We now need the list of named type parameters.
-                let type_params = if let Some(tree) = self.parse_tree(BracketType::Square) {
-                    self.parse_in_tree(tree, |parser| parser.parse_named_type_params())
+                let named_type_params = if let Some(tree) = self.parse_tree(BracketType::Square) {
+                    self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
                 } else {
                     DiagnosticResult::ok(Vec::new())
                 };
 
-                type_params.bind(|type_params| {
+                named_type_params.bind(|type_params| {
                     // We now need an `=` symbol, then a series of type constructors separated by `|` symbols.
                     let assign_symbol = self.require_token(
                         |ty| matches!(ty, TokenType::Assign),
@@ -197,80 +197,6 @@ impl<'input> Parser<'input> {
                     })
                 })
             })
-    }
-}
-
-/////////////////////////////////////
-//// DEFINITIONS AND EXPRESSIONS ////
-/////////////////////////////////////
-
-/// A `def` block. Defines a symbol's type and what values it takes under what circumstances.
-#[derive(Debug)]
-pub struct DefinitionP {
-    pub identifier: IdentifierP,
-    pub quantifiers: Vec<IdentifierP>,
-    pub symbol_type: TypeP,
-    pub cases: Vec<DefinitionCaseP>,
-}
-
-/// Represents a case in a definition where we can replace the left hand side of a pattern with the right hand side.
-#[derive(Debug)]
-pub struct DefinitionCaseP {
-    pub pattern: ExprPatP,
-    pub replacement: ExprPatP,
-}
-
-/// Represents either an expression or a pattern.
-#[derive(Debug)]
-pub enum ExprPatP {
-    /// A named variable e.g. `x` or `+`.
-    Variable(IdentifierP),
-    /// Apply the left hand side to the right hand side, e.g. `a b`.
-    /// More complicated expressions e.g. `a b c d` can be desugared into `((a b) c) d`.
-    Apply(Box<ExprPatP>, Box<ExprPatP>),
-    /// A lambda abstraction, specifically `lambda params -> expr`.
-    Lambda {
-        lambda_token: Range,
-        params: Vec<IdentifierP>,
-        expr: Box<ExprPatP>,
-    },
-    /// A let expression, specifically `let identifier = left_expr; right_expr`.
-    Let {
-        let_token: Range,
-        identifier: IdentifierP,
-        left_expr: Box<ExprPatP>,
-        right_expr: Box<ExprPatP>,
-    },
-    /// An underscore `_` representing an unknown.
-    /// This is valid only in patterns, not normal expressions.
-    Unknown(Range),
-}
-
-impl Ranged for ExprPatP {
-    fn range(&self) -> Range {
-        match self {
-            ExprPatP::Variable(identifier) => identifier.range(),
-            ExprPatP::Apply(left, right) => left.range().union(right.range()),
-            ExprPatP::Unknown(range) => *range,
-            ExprPatP::Lambda {
-                lambda_token, expr, ..
-            } => lambda_token.union(expr.range()),
-            ExprPatP::Let {
-                let_token,
-                right_expr,
-                ..
-            } => let_token.union(right_expr.range()),
-        }
-    }
-}
-
-impl<'input> Parser<'input> {
-    fn parse_def(&mut self, vis: Visibility) -> DiagnosticResult<DefinitionP> {
-        DiagnosticResult::fail(ErrorMessage::new(
-            "test".to_string(),
-            Severity::Error,
-            Diagnostic::at(self.source_file, &self.tokens.range()),
-        ))
     }
 
     /// `type_ctors ::= type_ctor ("|" type_ctors)?`
@@ -343,6 +269,95 @@ impl<'input> Parser<'input> {
     fn parse_field(&mut self, name: NameP) -> DiagnosticResult<FieldP> {
         self.require_token(|ty| matches!(ty, TokenType::Type), "expected colon")
             .bind(|_| self.parse_type().map(|ty| FieldP { name, ty }))
+    }
+}
+
+/////////////////////////////////////
+//// DEFINITIONS AND EXPRESSIONS ////
+/////////////////////////////////////
+
+/// A `def` block. Defines a symbol's type and what values it takes under what circumstances.
+#[derive(Debug)]
+pub struct DefinitionP {
+    pub vis: Visibility,
+    pub name: NameP,
+    /// This definition might be defined with certain quantified type variables, e.g. foo[A, B].
+    pub quantifiers: Vec<NameP>,
+    pub definition_type: TypeP,
+    pub cases: Vec<DefinitionCaseP>,
+}
+
+/// Represents a case in a definition where we can replace the left hand side of a pattern with the right hand side.
+#[derive(Debug)]
+pub struct DefinitionCaseP {
+    pub pattern: ExprPatP,
+    pub replacement: ExprPatP,
+}
+
+impl<'input> Parser<'input> {
+    /// `def ::= name named_type_params? ':' ty '{' def_body '}'
+    fn parse_def(&mut self, vis: Visibility) -> DiagnosticResult<DefinitionP> {
+        self.parse_name().bind(|name| {
+            let quantifiers = if let Some(tree) = self.parse_tree(BracketType::Square) {
+                self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
+            } else {
+                DiagnosticResult::ok(Vec::new())
+            };
+            quantifiers.bind(|quantifiers| {
+                self.require_token(|ty| matches!(ty, TokenType::Type), "expected colon")
+                    .bind(|_| {
+                        self.parse_type().bind(|definition_type| {
+                            if let Some(tree) = self.parse_tree(BracketType::Brace) {
+                                let cases =
+                                    self.parse_in_tree(tree, |parser| parser.parse_def_body());
+                                cases.map(|cases| DefinitionP {
+                                    vis,
+                                    name,
+                                    quantifiers,
+                                    definition_type,
+                                    cases,
+                                })
+                            } else {
+                                DiagnosticResult::fail(ErrorMessage::new(
+                                    "expected brace bracket block".to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(self.source_file, &self.tokens.range()),
+                                ))
+                            }
+                        })
+                    })
+            })
+        })
+    }
+
+    /// `def_body ::= def_case (',' def_body)?`
+    fn parse_def_body(&mut self) -> DiagnosticResult<Vec<DefinitionCaseP>> {
+        self.parse_def_case().bind(|first_case| {
+            if self
+                .parse_token(|ty| matches!(ty, TokenType::Comma))
+                .is_some()
+            {
+                self.parse_def_body().map(|mut remaining_body| {
+                    remaining_body.insert(0, first_case);
+                    remaining_body
+                })
+            } else {
+                DiagnosticResult::ok(vec![first_case])
+            }
+        })
+    }
+
+    /// `def_case ::= pattern -> expression`
+    fn parse_def_case(&mut self) -> DiagnosticResult<DefinitionCaseP> {
+        self.parse_expr().bind(|pattern| {
+            self.require_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow")
+                .bind(|_| {
+                    self.parse_expr().map(|replacement| DefinitionCaseP {
+                        pattern,
+                        replacement,
+                    })
+                })
+        })
     }
 }
 
@@ -439,14 +454,14 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// Parses a list of named type parameters, e.g. [A, B, C] but not something like [bool] because that is a type not a named type parameter.
-    fn parse_named_type_params(&mut self) -> DiagnosticResult<Vec<NameP>> {
+    /// Parses a list of names for type parameters, e.g. [A, B, C] but not something like [bool] because that is a type not a type parameter name.
+    fn parse_type_param_names(&mut self) -> DiagnosticResult<Vec<NameP>> {
         self.parse_name().bind(|first_param| {
             if self
                 .parse_token(|ty| matches!(ty, TokenType::Comma))
                 .is_some()
             {
-                self.parse_named_type_params().map(|mut remaining_params| {
+                self.parse_type_param_names().map(|mut remaining_params| {
                     remaining_params.insert(0, first_param);
                     remaining_params
                 })
@@ -456,7 +471,7 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// Parses a list of type parameters.
+    /// Parses a list of type parameters, e.g. [bool, T].
     fn parse_type_params(&mut self) -> DiagnosticResult<Vec<TypeP>> {
         self.parse_type().bind(|first_param| {
             if self
@@ -469,6 +484,219 @@ impl<'input> Parser<'input> {
                 })
             } else {
                 DiagnosticResult::ok(vec![first_param])
+            }
+        })
+    }
+}
+
+//////////////////////////////////
+//// EXPRESSIONS AND PATTERNS ////
+//////////////////////////////////
+
+/// Represents either an expression or a pattern.
+#[derive(Debug)]
+pub enum ExprPatP {
+    /// A named variable e.g. `x` or `+`.
+    Variable(IdentifierP),
+    /// Apply the left hand side to the right hand side, e.g. `a b`.
+    /// More complicated expressions e.g. `a b c d` can be desugared into `((a b) c) d`.
+    Apply(Box<ExprPatP>, Box<ExprPatP>),
+    /// A lambda abstraction, specifically `lambda params -> expr`.
+    Lambda {
+        lambda_token: Range,
+        params: Vec<NameP>,
+        expr: Box<ExprPatP>,
+    },
+    /// A let statement, specifically `let identifier = left_expr;`.
+    /// This kind of statement is only valid as an intermediate statement in a block.
+    Let {
+        let_token: Range,
+        name: NameP,
+        expr: Box<ExprPatP>,
+    },
+    /// A block of statements, inside parentheses, separated by semicolons,
+    /// where the final expression in the block is the type of the block as a whole.
+    /// If a semicolon is included as the last token in the block, the block implicitly returns the unit type instead;
+    /// in this case, the `final_semicolon` variable contains this semicolon and the block's return type is considered to just be unit.
+    Block {
+        open_bracket: Range,
+        close_bracket: Range,
+        statements: Vec<ExprPatP>,
+        final_semicolon: Option<Range>,
+    },
+    /// An underscore `_` representing an unknown.
+    /// This is valid only in patterns, not normal expressions.
+    Unknown(Range),
+}
+
+impl Ranged for ExprPatP {
+    fn range(&self) -> Range {
+        match self {
+            ExprPatP::Variable(identifier) => identifier.range(),
+            ExprPatP::Apply(left, right) => left.range().union(right.range()),
+            ExprPatP::Unknown(range) => *range,
+            ExprPatP::Lambda {
+                lambda_token, expr, ..
+            } => lambda_token.union(expr.range()),
+            ExprPatP::Let {
+                let_token, expr, ..
+            } => let_token.union(expr.range()),
+            ExprPatP::Block {
+                open_bracket,
+                close_bracket,
+                ..
+            } => open_bracket.union(*close_bracket),
+        }
+    }
+}
+
+/// An internal structure used when parsing expression blocks.
+struct ExprBlockBody {
+    statements: Vec<ExprPatP>,
+    final_semicolon: Option<Range>,
+}
+
+impl<'input> Parser<'input> {
+    /// Expressions may contain `_` tokens, which represent data that we don't care about.
+    /// We will evaluate patterns and normal expressions differently in a later parse step.
+    fn parse_expr(&mut self) -> DiagnosticResult<ExprPatP> {
+        // Check what kind of expression this is.
+        // - variable: one term
+        // - application: many terms, the leftmost one is considered a function applied to terms on the right
+        // - abstraction: a lambda abstraction beginning with the `\` lambda symbol
+        // - let: a `let` statement
+        // - block: a block of statements followed by a returned value
+        // Any expressions we add to the language in the future must reduce to one of these basic
+        // expression types, so that we can apply a Hindley-Milner-like type system solver.
+        if let Some(tk) = self.parse_token(|ty| matches!(ty, TokenType::Lambda)) {
+            // This is a lambda expression.
+            self.parse_expr_lambda(tk.range)
+        } else if let Some(tk) = self.parse_token(|ty| matches!(ty, TokenType::Let)) {
+            // This is a let statement.
+            self.parse_expr_let(tk.range)
+        } else {
+            // Default to a variable or application expression, since this will show a decent error message.
+            self.parse_expr_app()
+        }
+    }
+
+    /// Parses a variable or application expression.
+    fn parse_expr_app(&mut self) -> DiagnosticResult<ExprPatP> {
+        let mut terms = Vec::new();
+        while let Some(next_term) = self.parse_expr_term() {
+            terms.push(next_term);
+        }
+
+        if terms.is_empty() {
+            return DiagnosticResult::fail(ErrorMessage::new(
+                String::from("expected expression"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &self.tokens.range()),
+            ));
+        }
+
+        DiagnosticResult::sequence(terms).map(|terms| {
+            let mut terms = terms.into_iter();
+            let first = terms.next().unwrap();
+            terms
+                .into_iter()
+                .fold(first, |acc, i| ExprPatP::Apply(Box::new(acc), Box::new(i)))
+        })
+    }
+
+    /// Parses a lambda expression.
+    fn parse_expr_lambda(&mut self, lambda_token: Range) -> DiagnosticResult<ExprPatP> {
+        let mut params = Vec::new();
+        while let Some(token) = self.parse_token(|ty| matches!(ty, TokenType::Identifier(_))) {
+            if let TokenType::Identifier(name) = token.token_type {
+                params.push(NameP {
+                    name,
+                    range: token.range,
+                });
+            } else {
+                unreachable!()
+            }
+        }
+
+        self.require_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow symbol")
+            .bind(|_| {
+                self.parse_expr().map(|expr| ExprPatP::Lambda {
+                    lambda_token,
+                    params,
+                    expr: Box::new(expr),
+                })
+            })
+    }
+
+    /// Parses a let expression.
+    /// `expr_let ::= name '=' expr ';'`
+    fn parse_expr_let(&mut self, let_token: Range) -> DiagnosticResult<ExprPatP> {
+        self.parse_name().bind(|name| {
+            self.require_token(
+                |ty| matches!(ty, TokenType::Assign),
+                "expected assign symbol",
+            )
+            .bind(|_| {
+                self.parse_expr().map(|expr| ExprPatP::Let {
+                    let_token,
+                    name,
+                    expr: Box::new(expr),
+                })
+            })
+        })
+    }
+
+    /// Parses a single term from an expression by consuming either zero or one token trees from the input.
+    /// If the following token did not constitute an expression, nothing is consumed.
+    fn parse_expr_term(&mut self) -> Option<DiagnosticResult<ExprPatP>> {
+        if let Some(tree) = self.parse_tree(BracketType::Parentheses) {
+            // This is a block, containing statements followed by a final expression.
+            let open_bracket = tree.open;
+            let close_bracket = tree.close;
+            Some(
+                self.parse_in_tree(tree, |parser| parser.parse_expr_block_body())
+                    .map(|expr_block_body| ExprPatP::Block {
+                        open_bracket,
+                        close_bracket,
+                        statements: expr_block_body.statements,
+                        final_semicolon: expr_block_body.final_semicolon,
+                    }),
+            )
+        } else if let Some(token) = self.parse_token(|ty| matches!(ty, TokenType::Underscore)) {
+            // This is an unknown in a pattern.
+            Some(DiagnosticResult::ok(ExprPatP::Unknown(token.range)))
+        } else if let Some(identifier) = self.parse_identifier_maybe() {
+            Some(identifier.map(ExprPatP::Variable))
+        } else {
+            None
+        }
+    }
+
+    /// `expr_block_body ::= expr (';' expr_block_body?)?`
+    fn parse_expr_block_body(&mut self) -> DiagnosticResult<ExprBlockBody> {
+        self.parse_expr().bind(|expr| {
+            // Is the next token a semicolon?
+            if let Some(semicolon) = self.parse_token(|ty| matches!(ty, TokenType::Semicolon)) {
+                // We have a semicolon, so potentially there's another expression/statement in the block left to parse.
+                if self.tokens.peek().is_some() {
+                    // There are more expressions to consider.
+                    self.parse_expr_block_body().map(|mut remaining_body| {
+                        remaining_body.statements.insert(0, expr);
+                        remaining_body
+                    })
+                } else {
+                    // This is the final semicolon, and the end of this expression block.
+                    DiagnosticResult::ok(ExprBlockBody {
+                        statements: vec![expr],
+                        final_semicolon: Some(semicolon.range),
+                    })
+                }
+            } else {
+                // This is the end of this expression block, and there was no final semicolon.
+                DiagnosticResult::ok(ExprBlockBody {
+                    statements: vec![expr],
+                    final_semicolon: None,
+                })
             }
         })
     }
@@ -517,6 +745,20 @@ impl Debug for Visibility {
 }
 
 impl<'input> Parser<'input> {
+    /// Parses an identifier if the next token is an identifier fragment.
+    fn parse_identifier_maybe(&mut self) -> Option<DiagnosticResult<IdentifierP>> {
+        if let Some(TokenTree::Token(token)) = self.tokens.peek() {
+            if let TokenType::Identifier(_) = token.token_type {
+                // This should be an identifier.
+                Some(self.parse_identifier())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     fn parse_identifier(&mut self) -> DiagnosticResult<IdentifierP> {
         self.parse_name_with_message("expected identifier segment")
             .bind(|first_segment| {
@@ -642,7 +884,7 @@ impl<'input> Parser<'input> {
                 DiagnosticResult::ok_with(
                     result,
                     ErrorMessage::new(
-                        "unexpected extra tokens".to_string(),
+                        "did not understand this extra data".to_string(),
                         Severity::Error,
                         Diagnostic::at(self.source_file, &next_token.range()),
                     ),

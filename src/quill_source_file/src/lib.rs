@@ -9,7 +9,7 @@ use tokio::{fs::File, io::BufReader, sync::RwLock};
 /// If a source file's contents could not be loaded, why was this?
 #[derive(Debug)]
 pub enum SourceFileLoadError {
-    IO(std::io::Error),
+    Io(std::io::Error),
 }
 
 /// A single file of source code.
@@ -118,14 +118,14 @@ impl PackageFileSystem {
                 .join(PathBuf::from(identifier).with_extension("quill")),
         )
         .await
-        .map_err(SourceFileLoadError::IO)?;
-        let metadata = file.metadata().await.map_err(SourceFileLoadError::IO)?;
-        let modified_time = metadata.modified().map_err(SourceFileLoadError::IO)?;
+        .map_err(SourceFileLoadError::Io)?;
+        let metadata = file.metadata().await.map_err(SourceFileLoadError::Io)?;
+        let modified_time = metadata.modified().map_err(SourceFileLoadError::Io)?;
         let mut contents = Default::default();
         BufReader::new(file)
             .read_to_string(&mut contents)
             .await
-            .map_err(SourceFileLoadError::IO)?;
+            .map_err(SourceFileLoadError::Io)?;
         Ok(SourceFile {
             contents,
             modified_time,

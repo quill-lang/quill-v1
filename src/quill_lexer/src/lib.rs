@@ -26,6 +26,10 @@ pub enum TokenType {
     Comma,
     /// `|`
     TypeOr,
+    /// '\'
+    Lambda,
+    /// ';'
+    Semicolon,
 
     LeftParenthesis,
     RightParenthesis,
@@ -442,6 +446,8 @@ fn token_type_symbol(s: String) -> TokenType {
         "::" => TokenType::Scope,
         "," => TokenType::Comma,
         "|" => TokenType::TypeOr,
+        "\\" => TokenType::Lambda,
+        ";" => TokenType::Semicolon,
         _ => TokenType::Identifier(s),
     }
 }
