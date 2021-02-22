@@ -6,4 +6,5 @@ pub data Unit = pub Unit {}
 
 pub def create_either[T]: T -> Either[T, Unit] {
     t -> Either::Left { value = t }
+    a -> aaaa // this should error
 }

@@ -105,7 +105,7 @@ impl<'input> Parser<'input> {
         let vis = self.parse_visibility();
 
         // Then we require either the keyword `data` or `fn`.
-        let item_type = self.parse_token(|ty| matches!(ty, TokenType::Data | TokenType::Def));
+        let item_type = self.parse_token_maybe(|ty| matches!(ty, TokenType::Data | TokenType::Def));
 
         vis.bind(|vis| {
             if let Some(item_type) = item_type {
@@ -182,7 +182,7 @@ impl<'input> Parser<'input> {
 
                 named_type_params.bind(|type_params| {
                     // We now need an `=` symbol, then a series of type constructors separated by `|` symbols.
-                    let assign_symbol = self.require_token(
+                    let assign_symbol = self.parse_token(
                         |ty| matches!(ty, TokenType::Assign),
                         "expected assign symbol",
                     );
@@ -203,7 +203,7 @@ impl<'input> Parser<'input> {
     fn parse_type_ctors(&mut self) -> DiagnosticResult<Vec<TypeConstructorP>> {
         self.parse_type_ctor().bind(|type_ctor| {
             if self
-                .parse_token(|ty| matches!(ty, TokenType::TypeOr))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::TypeOr))
                 .is_some()
             {
                 // We have another type to parse.
@@ -237,7 +237,7 @@ impl<'input> Parser<'input> {
 
     /// `type_ctor_body ::= (field (',' type_ctor_body)?)?`
     fn parse_type_ctor_body(&mut self) -> DiagnosticResult<Vec<FieldP>> {
-        if let Some(token) = self.parse_token(|ty| matches!(ty, TokenType::Identifier(_))) {
+        if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Identifier(_))) {
             if let TokenType::Identifier(name) = token.token_type {
                 self.parse_field(NameP {
                     name,
@@ -245,7 +245,7 @@ impl<'input> Parser<'input> {
                 })
                 .bind(|field| {
                     if self
-                        .parse_token(|ty| matches!(ty, TokenType::Comma))
+                        .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                         .is_some()
                     {
                         self.parse_type_ctor_body().map(|mut remaining_body| {
@@ -267,7 +267,7 @@ impl<'input> Parser<'input> {
     /// `field ::= name ':' type`
     /// The name will have already been parsed; it is supplied to this function as a parameter.
     fn parse_field(&mut self, name: NameP) -> DiagnosticResult<FieldP> {
-        self.require_token(|ty| matches!(ty, TokenType::Type), "expected colon")
+        self.parse_token(|ty| matches!(ty, TokenType::Type), "expected colon")
             .bind(|_| self.parse_type().map(|ty| FieldP { name, ty }))
     }
 }
@@ -304,7 +304,7 @@ impl<'input> Parser<'input> {
                 DiagnosticResult::ok(Vec::new())
             };
             quantifiers.bind(|quantifiers| {
-                self.require_token(|ty| matches!(ty, TokenType::Type), "expected colon")
+                self.parse_token(|ty| matches!(ty, TokenType::Type), "expected colon")
                     .bind(|_| {
                         self.parse_type().bind(|definition_type| {
                             if let Some(tree) = self.parse_tree(BracketType::Brace) {
@@ -334,7 +334,7 @@ impl<'input> Parser<'input> {
     fn parse_def_body(&mut self) -> DiagnosticResult<Vec<DefinitionCaseP>> {
         self.parse_def_case().bind(|first_case| {
             if self
-                .parse_token(|ty| matches!(ty, TokenType::Comma))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                 .is_some()
             {
                 self.parse_def_body().map(|mut remaining_body| {
@@ -350,7 +350,7 @@ impl<'input> Parser<'input> {
     /// `def_case ::= pattern -> expression`
     fn parse_def_case(&mut self) -> DiagnosticResult<DefinitionCaseP> {
         self.parse_expr().bind(|pattern| {
-            self.require_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow")
+            self.parse_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow")
                 .bind(|_| {
                     self.parse_expr().map(|replacement| DefinitionCaseP {
                         pattern,
@@ -443,7 +443,7 @@ impl<'input> Parser<'input> {
 
         initial_type.bind(|parsed_type| {
             if self
-                .parse_token(|ty| matches!(ty, TokenType::Arrow))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::Arrow))
                 .is_some()
             {
                 self.parse_type()
@@ -458,7 +458,7 @@ impl<'input> Parser<'input> {
     fn parse_type_param_names(&mut self) -> DiagnosticResult<Vec<NameP>> {
         self.parse_name().bind(|first_param| {
             if self
-                .parse_token(|ty| matches!(ty, TokenType::Comma))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                 .is_some()
             {
                 self.parse_type_param_names().map(|mut remaining_params| {
@@ -475,7 +475,7 @@ impl<'input> Parser<'input> {
     fn parse_type_params(&mut self) -> DiagnosticResult<Vec<TypeP>> {
         self.parse_type().bind(|first_param| {
             if self
-                .parse_token(|ty| matches!(ty, TokenType::Comma))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                 .is_some()
             {
                 self.parse_type_params().map(|mut remaining_params| {
@@ -589,10 +589,10 @@ impl<'input> Parser<'input> {
         // - block: a block of statements followed by a returned value
         // Any expressions we add to the language in the future must reduce to one of these basic
         // expression types, so that we can apply a Hindley-Milner-like type system solver.
-        if let Some(tk) = self.parse_token(|ty| matches!(ty, TokenType::Lambda)) {
+        if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Lambda)) {
             // This is a lambda expression.
             self.parse_expr_lambda(tk.range)
-        } else if let Some(tk) = self.parse_token(|ty| matches!(ty, TokenType::Let)) {
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Let)) {
             // This is a let statement.
             self.parse_expr_let(tk.range)
         } else {
@@ -628,7 +628,8 @@ impl<'input> Parser<'input> {
     /// Parses a lambda expression.
     fn parse_expr_lambda(&mut self, lambda_token: Range) -> DiagnosticResult<ExprPatP> {
         let mut params = Vec::new();
-        while let Some(token) = self.parse_token(|ty| matches!(ty, TokenType::Identifier(_))) {
+        while let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Identifier(_)))
+        {
             if let TokenType::Identifier(name) = token.token_type {
                 params.push(NameP {
                     name,
@@ -639,7 +640,7 @@ impl<'input> Parser<'input> {
             }
         }
 
-        self.require_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow symbol")
+        self.parse_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow symbol")
             .bind(|_| {
                 self.parse_expr().map(|expr| ExprPatP::Lambda {
                     lambda_token,
@@ -653,7 +654,7 @@ impl<'input> Parser<'input> {
     /// `expr_let ::= name '=' expr ';'`
     fn parse_expr_let(&mut self, let_token: Range) -> DiagnosticResult<ExprPatP> {
         self.parse_name().bind(|name| {
-            self.require_token(
+            self.parse_token(
                 |ty| matches!(ty, TokenType::Assign),
                 "expected assign symbol",
             )
@@ -683,7 +684,8 @@ impl<'input> Parser<'input> {
                         final_semicolon: expr_block_body.final_semicolon,
                     }),
             )
-        } else if let Some(token) = self.parse_token(|ty| matches!(ty, TokenType::Underscore)) {
+        } else if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Underscore))
+        {
             // This is an unknown in a pattern.
             Some(DiagnosticResult::ok(ExprPatP::Unknown(token.range)))
         } else if let Some(identifier) = self.parse_identifier_maybe() {
@@ -713,7 +715,8 @@ impl<'input> Parser<'input> {
     fn parse_expr_block_body(&mut self) -> DiagnosticResult<ExprBlockBody> {
         self.parse_expr().bind(|expr| {
             // Is the next token a semicolon?
-            if let Some(semicolon) = self.parse_token(|ty| matches!(ty, TokenType::Semicolon)) {
+            if let Some(semicolon) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Semicolon))
+            {
                 // We have a semicolon, so potentially there's another expression/statement in the block left to parse.
                 if self.tokens.peek().is_some() {
                     // There are more expressions to consider.
@@ -742,7 +745,7 @@ impl<'input> Parser<'input> {
     fn parse_construct_data_body(&mut self) -> DiagnosticResult<ConstructDataFields> {
         self.parse_name().bind(|field_name| {
             let value = if self
-                .parse_token(|ty| matches!(ty, TokenType::Assign))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::Assign))
                 .is_some()
             {
                 // We're assigning an expression to this field.
@@ -753,7 +756,7 @@ impl<'input> Parser<'input> {
 
             value.bind(|value| {
                 if self
-                    .parse_token(|ty| matches!(ty, TokenType::Comma))
+                    .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                     .is_some()
                 {
                     // We might have more of the body to parse.
@@ -861,7 +864,7 @@ impl<'input> Parser<'input> {
         self.parse_name_with_message("expected identifier segment")
             .bind(|first_segment| {
                 if self
-                    .parse_token(|ty| matches!(ty, TokenType::Scope))
+                    .parse_token_maybe(|ty| matches!(ty, TokenType::Scope))
                     .is_some()
                 {
                     self.parse_identifier().map(|mut remaining_segments| {
@@ -882,7 +885,7 @@ impl<'input> Parser<'input> {
 
     /// Parses a name from the input stream. If the next token was not a name, this emits the given message.
     fn parse_name_with_message(&mut self, fail_message: &str) -> DiagnosticResult<NameP> {
-        self.parse_token(|ty| matches!(ty, TokenType::Identifier(_)))
+        self.parse_token_maybe(|ty| matches!(ty, TokenType::Identifier(_)))
             .map(|token| {
                 if let TokenType::Identifier(name) = token.token_type {
                     NameP {
@@ -906,7 +909,7 @@ impl<'input> Parser<'input> {
     /// A visibility declaration is either the keyword `pub`, or nothing at all.
     fn parse_visibility(&mut self) -> DiagnosticResult<Visibility> {
         DiagnosticResult::ok(
-            if let Some(token) = self.parse_token(|ty| matches!(ty, TokenType::Pub)) {
+            if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Pub)) {
                 Visibility::Public(token.range)
             } else {
                 Visibility::Private
@@ -914,12 +917,12 @@ impl<'input> Parser<'input> {
         )
     }
 
-    fn require_token(
+    fn parse_token(
         &mut self,
         predicate: impl FnOnce(&TokenType) -> bool,
         fail_message: &str,
     ) -> DiagnosticResult<Token> {
-        self.parse_token(predicate)
+        self.parse_token_maybe(predicate)
             .ok_or_else(|| {
                 ErrorMessage::new(
                     fail_message.to_string(),
@@ -945,7 +948,7 @@ impl<'input> Parser<'input> {
     }
 
     /// If the next token tree is a token matching this predicate, return it.
-    fn parse_token(&mut self, predicate: impl FnOnce(&TokenType) -> bool) -> Option<Token> {
+    fn parse_token_maybe(&mut self, predicate: impl FnOnce(&TokenType) -> bool) -> Option<Token> {
         if let Some(TokenTree::Token(token)) = self.tokens.peek() {
             if predicate(&token.token_type) {
                 if let Some(TokenTree::Token(token)) = self.tokens.next() {
