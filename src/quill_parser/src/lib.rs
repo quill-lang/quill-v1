@@ -330,17 +330,21 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// `def_body ::= def_case (',' def_body)?`
+    /// `def_body ::= def_case (',' def_body?)?`
     fn parse_def_body(&mut self) -> DiagnosticResult<Vec<DefinitionCaseP>> {
         self.parse_def_case().bind(|first_case| {
             if self
                 .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                 .is_some()
             {
-                self.parse_def_body().map(|mut remaining_body| {
-                    remaining_body.insert(0, first_case);
-                    remaining_body
-                })
+                if self.tokens.peek().is_some() {
+                    self.parse_def_body().map(|mut remaining_body| {
+                        remaining_body.insert(0, first_case);
+                        remaining_body
+                    })
+                } else {
+                    DiagnosticResult::ok(vec![first_case])
+                }
             } else {
                 DiagnosticResult::ok(vec![first_case])
             }
