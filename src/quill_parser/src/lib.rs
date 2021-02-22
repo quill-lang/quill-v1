@@ -524,9 +524,25 @@ pub enum ExprPatP {
         statements: Vec<ExprPatP>,
         final_semicolon: Option<Range>,
     },
+    /// The name of a data type, followed by brace brackets containing the data structure's fields.
+    ConstructData {
+        data_constructor: IdentifierP,
+        open_brace: Range,
+        close_brace: Range,
+        fields: ConstructDataFields,
+    },
     /// An underscore `_` representing an unknown.
     /// This is valid only in patterns, not normal expressions.
     Unknown(Range),
+}
+
+#[derive(Debug)]
+pub struct ConstructDataFields {
+    /// Fields that have been assigned values, e.g. `foo = 1`.
+    fields: Vec<(NameP, ExprPatP)>,
+    /// Fields that have not been assigned values (so will inherit their value from the local variable with that name), e.g. `foo`.
+    /// This is useful in patterns, where fields are often not assigned different names.
+    auto_fields: Vec<NameP>,
 }
 
 impl Ranged for ExprPatP {
@@ -546,6 +562,11 @@ impl Ranged for ExprPatP {
                 close_bracket,
                 ..
             } => open_bracket.union(*close_bracket),
+            ExprPatP::ConstructData {
+                data_constructor,
+                close_brace,
+                ..
+            } => data_constructor.range().union(close_brace.range()),
         }
     }
 }
@@ -666,7 +687,23 @@ impl<'input> Parser<'input> {
             // This is an unknown in a pattern.
             Some(DiagnosticResult::ok(ExprPatP::Unknown(token.range)))
         } else if let Some(identifier) = self.parse_identifier_maybe() {
-            Some(identifier.map(ExprPatP::Variable))
+            // If this is followed by a brace bracket, we are trying to construct an instance of a data type.
+            if let Some(tree) = self.parse_tree(BracketType::Brace) {
+                // We are constructing a data type.
+                Some(identifier.bind(|identifier| {
+                    let open_brace = tree.open;
+                    let close_brace = tree.close;
+                    self.parse_in_tree(tree, |parser| parser.parse_construct_data_body())
+                        .map(|fields| ExprPatP::ConstructData {
+                            data_constructor: identifier,
+                            open_brace,
+                            close_brace,
+                            fields,
+                        })
+                }))
+            } else {
+                Some(identifier.map(ExprPatP::Variable))
+            }
         } else {
             None
         }
@@ -698,6 +735,67 @@ impl<'input> Parser<'input> {
                     final_semicolon: None,
                 })
             }
+        })
+    }
+
+    /// `construct_data_body = name ('=' expr)? (',' expr_block_body?)?`
+    fn parse_construct_data_body(&mut self) -> DiagnosticResult<ConstructDataFields> {
+        self.parse_name().bind(|field_name| {
+            let value = if self
+                .parse_token(|ty| matches!(ty, TokenType::Assign))
+                .is_some()
+            {
+                // We're assigning an expression to this field.
+                self.parse_expr().map(Some)
+            } else {
+                DiagnosticResult::ok(None)
+            };
+
+            value.bind(|value| {
+                if self
+                    .parse_token(|ty| matches!(ty, TokenType::Comma))
+                    .is_some()
+                {
+                    // We might have more of the body to parse.
+                    if self.tokens.peek().is_some() {
+                        // There is more of the body to parse.
+                        self.parse_construct_data_body().map(|mut remaining_body| {
+                            if let Some(value) = value {
+                                remaining_body.fields.insert(0, (field_name, value));
+                            } else {
+                                remaining_body.auto_fields.insert(0, field_name);
+                            }
+                            remaining_body
+                        })
+                    } else {
+                        // That's the end of the body.
+                        if let Some(value) = value {
+                            DiagnosticResult::ok(ConstructDataFields {
+                                fields: vec![(field_name, value)],
+                                auto_fields: Vec::new(),
+                            })
+                        } else {
+                            DiagnosticResult::ok(ConstructDataFields {
+                                fields: Vec::new(),
+                                auto_fields: vec![field_name],
+                            })
+                        }
+                    }
+                } else {
+                    // That's the end of the body.
+                    if let Some(value) = value {
+                        DiagnosticResult::ok(ConstructDataFields {
+                            fields: vec![(field_name, value)],
+                            auto_fields: Vec::new(),
+                        })
+                    } else {
+                        DiagnosticResult::ok(ConstructDataFields {
+                            fields: Vec::new(),
+                            auto_fields: vec![field_name],
+                        })
+                    }
+                }
+            })
         })
     }
 }
