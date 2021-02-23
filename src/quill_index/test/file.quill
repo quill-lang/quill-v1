@@ -8,3 +8,9 @@ pub def create_either[T]: T -> Either[T, Unit] {
     t -> Either::Left { value = t },
     a -> aaaa,
 }
+
+def fmap[F[_], A, B]: (A -> B) -> F[A] -> F[B] {
+    fn -> \a -> b
+}
+
+data Container[C[_], T, U] = Units { container: C[Unit] } | Eithers { container: C[Either[T, U]] }

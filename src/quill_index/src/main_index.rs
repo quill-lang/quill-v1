@@ -43,7 +43,7 @@ pub enum TypeDeclarationTypeI {
 pub struct DataI {
     /// Where was this data statement written?
     pub range: Range,
-    pub type_params: Vec<NameP>,
+    pub type_params: Vec<TypeParameter>,
     /// A list of all the type constructors for a `data` statement. For example, in `data Bool = True {} | False {}`, the two
     /// type constructors are `True` and `False`.
     pub type_ctors: Vec<TypeConstructorI>,
@@ -60,8 +60,16 @@ pub struct TypeConstructorI {
 #[derive(Debug)]
 pub struct DefinitionI {
     pub name: NameP,
-    pub type_variables: Vec<NameP>,
+    pub type_variables: Vec<TypeParameter>,
     pub symbol_type: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeParameter {
+    pub name: String,
+    /// A type variable may have one or more unnamed parameters, e.g. `F[_]` is a common type for a functor.
+    /// This field stores how many such parameters the type variable has.
+    pub parameters: u32,
 }
 
 /// Returns a generic error message about multiply defined symbols, making sure that the "earlier" symbol
@@ -109,9 +117,9 @@ pub fn index(
                     source_file,
                     &definition.definition_type,
                     &definition
-                        .quantifiers
+                        .type_parameters
                         .iter()
-                        .map(|id| id.name.clone())
+                        .map(|id| id.name.name.clone())
                         .collect(),
                     project_types,
                 );
@@ -120,7 +128,14 @@ pub fn index(
                 if let Some(symbol_type) = symbol_type {
                     let definition = DefinitionI {
                         name: definition.name.clone(),
-                        type_variables: definition.quantifiers.clone(),
+                        type_variables: definition
+                            .type_parameters
+                            .iter()
+                            .map(|param| TypeParameter {
+                                name: param.name.name.clone(),
+                                parameters: param.parameters,
+                            })
+                            .collect(),
                         symbol_type,
                     };
                     vacant.insert(definition);
@@ -143,7 +158,7 @@ pub fn index(
                 let type_params = data
                     .type_params
                     .iter()
-                    .map(|ident| ident.name.clone())
+                    .map(|ident| ident.name.name.clone())
                     .collect::<HashSet<_>>();
 
                 let type_ctors = data
@@ -173,7 +188,14 @@ pub fn index(
                     .map(|type_ctors| {
                         let datai = DataI {
                             range: data.identifier.range,
-                            type_params: data.type_params.clone(),
+                            type_params: data
+                                .type_params
+                                .iter()
+                                .map(|param| TypeParameter {
+                                    name: param.name.name.clone(),
+                                    parameters: param.parameters,
+                                })
+                                .collect(),
                             type_ctors,
                         };
                         vacant.insert(TypeDeclarationI {

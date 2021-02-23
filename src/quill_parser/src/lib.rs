@@ -138,7 +138,7 @@ enum ItemP {
 pub struct DataP {
     pub vis: Visibility,
     pub identifier: NameP,
-    pub type_params: Vec<NameP>,
+    pub type_params: Vec<TypeParameterP>,
     pub type_ctors: Vec<TypeConstructorP>,
 }
 
@@ -271,9 +271,17 @@ pub struct DefinitionP {
     pub vis: Visibility,
     pub name: NameP,
     /// This definition might be defined with certain quantified type variables, e.g. foo[A, B].
-    pub quantifiers: Vec<NameP>,
+    pub type_parameters: Vec<TypeParameterP>,
     pub definition_type: TypeP,
     pub cases: Vec<DefinitionCaseP>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeParameterP {
+    pub name: NameP,
+    /// A type variable may have one or more unnamed parameters, e.g. `F[_]` is a common type for a functor.
+    /// This field stores how many such parameters the type variable has.
+    pub parameters: u32,
 }
 
 /// Represents a case in a definition where we can replace the left hand side of a pattern with the right hand side.
@@ -302,7 +310,7 @@ impl<'input> Parser<'input> {
                                 cases.map(|cases| DefinitionP {
                                     vis,
                                     name,
-                                    quantifiers,
+                                    type_parameters: quantifiers,
                                     definition_type,
                                     cases,
                                 })
@@ -360,7 +368,7 @@ impl<'input> Parser<'input> {
 
 #[derive(Debug)]
 pub enum TypeP {
-    /// An explicitly named type possibly with type parameters, e.g. `Bool` or `Either[T, U]`.
+    /// An explicitly named type possibly with type parameters, e.g. `Bool`, `Either[T, U]` or `Foo[T[_]]`.
     Named {
         identifier: IdentifierP,
         params: Vec<TypeP>,
@@ -447,19 +455,54 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// Parses a list of names for type parameters, e.g. [A, B, C] but not something like [bool] because that is a type not a type parameter name.
-    fn parse_type_param_names(&mut self) -> DiagnosticResult<Vec<NameP>> {
+    /// Parses a list of names for type parameters, e.g. [A, B, C[_]] but not something like [bool] because that is a type not a type parameter name.
+    fn parse_type_param_names(&mut self) -> DiagnosticResult<Vec<TypeParameterP>> {
         self.parse_name().bind(|first_param| {
+            // Check if this is a higher-kinded type, i.e. we have parameters for this type variable.
+            let type_parameters = if let Some(tree) = self.parse_tree(BracketType::Square) {
+                self.parse_in_tree(tree, |parser| parser.parse_type_param_params())
+            } else {
+                DiagnosticResult::ok(0)
+            };
+
+            type_parameters.bind(|type_parameters| {
+                let first_param = TypeParameterP {
+                    name: first_param,
+                    parameters: type_parameters,
+                };
+
+                if self
+                    .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
+                    .is_some()
+                {
+                    self.parse_type_param_names().map(|mut remaining_params| {
+                        remaining_params.insert(0, first_param);
+                        remaining_params
+                    })
+                } else {
+                    DiagnosticResult::ok(vec![first_param])
+                }
+            })
+        })
+    }
+
+    /// Parse a list of underscores. This amount of underscores is the amount of unnamed type parameters in this higher kinded type.
+    /// We are never going to need to nest deeper than higher-kinded types of order 1.
+    /// In other words, `F[_]` is valid, but `F[_[_]]` will never be valid.
+    /// Therefore, we don't need to use any kind of recursion into parsing higher and higher kinded types.
+    fn parse_type_param_params(&mut self) -> DiagnosticResult<u32> {
+        self.parse_token(
+            |ty| matches!(ty, TokenType::Underscore),
+            "expected underscore in higher kinded type parameter",
+        )
+        .bind(|_| {
             if self
                 .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                 .is_some()
             {
-                self.parse_type_param_names().map(|mut remaining_params| {
-                    remaining_params.insert(0, first_param);
-                    remaining_params
-                })
+                self.parse_type_param_params().map(|value| value + 1)
             } else {
-                DiagnosticResult::ok(vec![first_param])
+                DiagnosticResult::ok(1)
             }
         })
     }

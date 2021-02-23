@@ -413,7 +413,9 @@ fn parse_token(
                 DiagnosticResult::ok(Token { token_type, range }.into())
             } else {
                 let (identifier, range) = consume_predicate_one(line, chars, |c| {
-                    !c.is_alphanumeric() && !c.is_whitespace() && !vec!['(', ')'].contains(&c)
+                    !c.is_alphanumeric()
+                        && !c.is_whitespace()
+                        && !vec!['(', ')', '{', '}', '[', ']'].contains(&c)
                 });
                 let token_type = token_type_symbol(identifier);
                 DiagnosticResult::ok(Token { token_type, range }.into())
