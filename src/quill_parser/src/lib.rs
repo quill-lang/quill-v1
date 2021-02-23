@@ -1,14 +1,3 @@
-//! Types may have certain suffixes to declare what information they contain and where they should be used:
-//! - `P`: just been Parsed, no extra information has been deduced.
-//!   No type has been deduced, and no effort has been made to ensure syntactic correctness
-//!   past the (lenient) parser.
-//! - `C`: an intermediate data Cache, used when we're still in the middle of computing the index.
-//!   After the index has been computed, we should not need to use `P` or `C` data,
-//!   only `I` data should be required.
-//! - `I`: an Index entry for the item.
-//! - `T`: currently being type checked.
-//! - (no suffix): types have been deduced and references have been resolved.
-
 use std::{
     fmt::Debug,
     iter::Peekable,
@@ -55,7 +44,7 @@ impl DerefMut for TokenStream {
 pub fn parse(
     tokens: Vec<TokenTree>,
     source_file: &SourceFileIdentifier,
-) -> DiagnosticResult<ModuleP> {
+) -> DiagnosticResult<FileP> {
     let last_location = tokens
         .last()
         .map(|token| token.range().end)
@@ -88,7 +77,7 @@ pub fn parse(
                 ItemP::Definition(i) => definitions.push(i),
             }
         }
-        ModuleP { data, definitions }
+        FileP { data, definitions }
     })
 }
 
@@ -125,10 +114,10 @@ impl<'input> Parser<'input> {
     }
 }
 
-/// A single `.quill` file is called a module. It may export data types and definitions.
-/// This `Module` struct contains the parsed abstract syntax tree of a module.
+/// A single `.quill` file may export data types and definitions.
+/// This `File` struct contains the parsed abstract syntax tree of a file.
 #[derive(Debug)]
-pub struct ModuleP {
+pub struct FileP {
     pub data: Vec<DataP>,
     pub definitions: Vec<DefinitionP>,
 }

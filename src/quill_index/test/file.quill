@@ -1,0 +1,10 @@
+// The data types and its constructors are private by default.
+// Each data type must have at least one data constructor, which may or may not contain values.
+pub data Either[T, U] = pub Left { value: T } | pub Right { value: U }
+
+pub data Unit = pub Unit {}
+
+pub def create_either[T]: T -> Either[T, Unit] {
+    t -> Either::Left { value = t },
+    a -> aaaa,
+}

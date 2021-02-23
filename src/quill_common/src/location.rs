@@ -58,7 +58,7 @@ impl Ranged for Range {
 
 /// A fragment of the canonical name for a source file.
 /// This does not include things like slashes to separate directories, double periods to denote going up a directory, or file extensions.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SourceFileIdentifierSegment(pub String);
 
 impl Debug for SourceFileIdentifierSegment {
@@ -82,7 +82,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ModuleIdentifier {
     pub segments: Vec<SourceFileIdentifierSegment>,
 }
@@ -126,7 +126,7 @@ impl From<ModuleIdentifier> for PathBuf {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SourceFileIdentifier {
     pub module: ModuleIdentifier,
     pub file: SourceFileIdentifierSegment,
