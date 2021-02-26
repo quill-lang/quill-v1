@@ -575,10 +575,10 @@ pub enum ExprPatP {
 #[derive(Debug)]
 pub struct ConstructDataFields {
     /// Fields that have been assigned values, e.g. `foo = 1`.
-    fields: Vec<(NameP, ExprPatP)>,
+    pub fields: Vec<(NameP, ExprPatP)>,
     /// Fields that have not been assigned values (so will inherit their value from the local variable with that name), e.g. `foo`.
     /// This is useful in patterns, where fields are often not assigned different names.
-    auto_fields: Vec<NameP>,
+    pub auto_fields: Vec<NameP>,
 }
 
 impl Ranged for ExprPatP {

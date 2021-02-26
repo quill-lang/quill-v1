@@ -267,6 +267,7 @@ dependencies = [
  "quill_index",
  "quill_lexer",
  "quill_parser",
+ "quill_type_deduce",
 ]
 
 [[package]]
@@ -318,6 +319,19 @@ name = "quill_type"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+]
+
+[[package]]
+name = "quill_type_deduce"
+version = "0.1.0"
+dependencies = [
+ "quill_common",
+ "quill_index",
+ "quill_lexer",
+ "quill_parser",
+ "quill_source_file",
+ "quill_type",
+ "tokio",
 ]
 
 [[package]]

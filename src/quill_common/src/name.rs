@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display};
 
 use crate::location::{Range, SourceFileIdentifier};
 
-/// A fully qualified name referring to a top-level item declared in a `.shoumei` module.
+/// A fully qualified name referring to a top-level item declared in a `.quill` file.
 /// This should not be used for qualified identifiers, since in this case we need to also keep track
 /// of where the identifier was written; this type is concerned only with the name itself.
 #[derive(Clone, PartialEq, Eq)]

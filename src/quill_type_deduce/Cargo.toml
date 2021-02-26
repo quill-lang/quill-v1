@@ -1,0 +1,17 @@
+[package]
+name = "quill_type_deduce"
+version = "0.1.0"
+authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
+edition = "2018"
+description = "Deduces the type of expressions"
+
+[dependencies]
+quill_common = { path = "../quill_common" }
+quill_parser = { path = "../quill_parser" }
+quill_type = { path = "../quill_type" }
+quill_index = { path = "../quill_index" }
+
+# These deps are used for tests.
+quill_source_file = { path = "../quill_source_file" }
+quill_lexer = { path = "../quill_lexer" }
+tokio = { version = "^1.0", features = ["macros", "rt"] }
