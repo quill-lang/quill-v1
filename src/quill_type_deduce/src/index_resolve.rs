@@ -23,8 +23,8 @@ pub struct TypeConstructorInvocation {
     pub range: Range,
 }
 
-/// Replaces named type parameters e.g. `a` with their concrete types.
-/// For example, calling this function on `Just a`, when `named_type_parameters = [a]` and `concrete_type_parameters = [Bool]` gives `Just Bool`.
+/// Replaces named type parameters e.g. `T` with their concrete types.
+/// For example, calling this function on `Just[T]`, when `named_type_parameters = [T]` and `concrete_type_parameters = [Bool]` gives `Just[Bool]`.
 pub fn replace_type_variables(
     ty: Type,
     named_type_parameters: &[TypeParameter],
@@ -71,13 +71,44 @@ pub fn replace_type_variables(
                         parameters: replacement_parameters,
                     } => {
                         if replacement_parameters.is_empty() {
-                            Type::Named { name, parameters }
+                            Type::Named {
+                                name,
+                                parameters: parameters
+                                    .into_iter()
+                                    .map(|param| {
+                                        replace_type_variables(
+                                            param,
+                                            named_type_parameters,
+                                            concrete_type_parameters,
+                                        )
+                                    })
+                                    .collect(),
+                            }
                         } else {
                             panic!("can't apply type parameters to an already-quantified type")
                         }
                     }
-                    Type::Variable { .. } => {
-                        panic!("can't apply type parameters to variables")
+                    Type::Variable {
+                        variable,
+                        parameters: replacement_parameters,
+                    } => {
+                        if replacement_parameters.is_empty() {
+                            Type::Variable {
+                                variable,
+                                parameters: parameters
+                                    .into_iter()
+                                    .map(|param| {
+                                        replace_type_variables(
+                                            param,
+                                            named_type_parameters,
+                                            concrete_type_parameters,
+                                        )
+                                    })
+                                    .collect(),
+                            }
+                        } else {
+                            panic!("can't apply type parameters to an already-quantified type")
+                        }
                     }
                     Type::Function(_, _) => {
                         panic!("can't apply type parameters to functions")
@@ -186,12 +217,7 @@ pub fn resolve_type_constructor(
                     range: datai.range,
                 };
                 let ctor_name = data_name.name.name.clone();
-                if datai
-                    .type_ctors
-                    .iter()
-                    .find(|ctor| ctor.name == ctor_name)
-                    .is_some()
-                {
+                if datai.type_ctors.iter().any(|ctor| ctor.name == ctor_name) {
                     DiagnosticResult::ok(TypeConstructorInvocation {
                         data_type,
                         type_ctor: ctor_name,
@@ -224,12 +250,7 @@ pub fn resolve_type_constructor(
                     range: datai.range,
                 };
                 let ctor_name = identifier.segments[1].name.clone();
-                if datai
-                    .type_ctors
-                    .iter()
-                    .find(|ctor| ctor.name == ctor_name)
-                    .is_some()
-                {
+                if datai.type_ctors.iter().any(|ctor| ctor.name == ctor_name) {
                     DiagnosticResult::ok(TypeConstructorInvocation {
                         data_type,
                         type_ctor: ctor_name,
@@ -283,5 +304,100 @@ pub fn resolve_definition<'a>(
         }
     } else {
         panic!("module was not in index")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quill_common::name::QualifiedName;
+    use quill_index::TypeParameter;
+    use quill_type::Type;
+
+    use super::replace_type_variables;
+
+    #[test]
+    fn replace_type_variables_test() {
+        // Replace A[T] with A[_]=Vec[_] and T=Bool to give Vec[Bool].
+        let replacement = replace_type_variables(
+            Type::Variable {
+                variable: "A".to_string(),
+                parameters: vec![Type::Variable {
+                    variable: "T".to_string(),
+                    parameters: Vec::new(),
+                }],
+            },
+            &[
+                TypeParameter {
+                    name: "A".to_string(),
+                    parameters: 1,
+                },
+                TypeParameter {
+                    name: "T".to_string(),
+                    parameters: 0,
+                },
+            ],
+            &[
+                Type::Named {
+                    name: QualifiedName::test_name("Vec"),
+                    // Empty list of params because we don't know what the parameters are yet - not even as named variables.
+                    parameters: Vec::new(),
+                },
+                Type::Named {
+                    name: QualifiedName::test_name("Bool"),
+                    parameters: Vec::new(),
+                },
+            ],
+        );
+        let expected = Type::Named {
+            name: QualifiedName::test_name("Vec"),
+            parameters: vec![Type::Named {
+                name: QualifiedName::test_name("Bool"),
+                parameters: Vec::new(),
+            }],
+        };
+        assert_eq!(replacement, expected);
+    }
+
+    #[test]
+    fn replace_type_variables_test2() {
+        // Replace A[T] with A[_]=F[_] and T=R to give F[R].
+        let replacement = replace_type_variables(
+            Type::Variable {
+                variable: "A".to_string(),
+                parameters: vec![Type::Variable {
+                    variable: "T".to_string(),
+                    parameters: Vec::new(),
+                }],
+            },
+            &[
+                TypeParameter {
+                    name: "A".to_string(),
+                    parameters: 1,
+                },
+                TypeParameter {
+                    name: "T".to_string(),
+                    parameters: 0,
+                },
+            ],
+            &[
+                Type::Variable {
+                    variable: "F".to_string(),
+                    // Empty list of params because we don't know what the parameters are yet - not even as named variables.
+                    parameters: Vec::new(),
+                },
+                Type::Variable {
+                    variable: "R".to_string(),
+                    parameters: Vec::new(),
+                },
+            ],
+        );
+        let expected = Type::Variable {
+            variable: "F".to_string(),
+            parameters: vec![Type::Variable {
+                variable: "R".to_string(),
+                parameters: Vec::new(),
+            }],
+        };
+        assert_eq!(replacement, expected);
     }
 }

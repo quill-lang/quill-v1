@@ -508,34 +508,3 @@ where
 {
     consume_predicate(line, chars, |c| c.is_whitespace())
 }
-
-mod test {
-    #[tokio::test]
-    async fn test_lexer() {
-        use quill_common::location::SourceFileIdentifier;
-        use quill_source_file::ErrorEmitter;
-        use quill_source_file::PackageFileSystem;
-        use std::path::PathBuf;
-
-        use crate::lex;
-
-        let fs = PackageFileSystem::new(PathBuf::from("test"));
-        let lexed = lex(
-            &fs,
-            &SourceFileIdentifier {
-                module: vec![].into(),
-                file: "file".into(),
-            },
-        )
-        .await;
-
-        let mut error_emitter = ErrorEmitter::new(&fs);
-        let lexed = error_emitter.consume_diagnostic(lexed);
-        error_emitter.emit_all().await;
-
-        // If the lex fails, the test will fail.
-        let lexed = lexed.unwrap();
-
-        println!("lexed: {:#?}", lexed);
-    }
-}

@@ -26,3 +26,20 @@ impl Debug for QualifiedName {
         write!(f, "{}", self)
     }
 }
+
+impl QualifiedName {
+    /// A utility function for tests, to create new names quickly.
+    pub fn test_name(s: &str) -> QualifiedName {
+        use crate::location::{Location, ModuleIdentifier};
+        QualifiedName {
+            source_file: SourceFileIdentifier {
+                module: ModuleIdentifier {
+                    segments: Vec::new(),
+                },
+                file: "test_file".into(),
+            },
+            name: s.to_string(),
+            range: Location { line: 0, col: 0 }.into(),
+        }
+    }
+}

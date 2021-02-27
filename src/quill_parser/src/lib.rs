@@ -348,16 +348,19 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// `def_case ::= pattern -> expression`
+    /// `def_case ::= pattern = expression`
     fn parse_def_case(&mut self) -> DiagnosticResult<DefinitionCaseP> {
         self.parse_expr().bind(|pattern| {
-            self.parse_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow")
-                .bind(|_| {
-                    self.parse_expr().map(|replacement| DefinitionCaseP {
-                        pattern,
-                        replacement,
-                    })
+            self.parse_token(
+                |ty| matches!(ty, TokenType::Assign),
+                "expected assign symbol `=`",
+            )
+            .bind(|_| {
+                self.parse_expr().map(|replacement| DefinitionCaseP {
+                    pattern,
+                    replacement,
                 })
+            })
         })
     }
 }
@@ -777,8 +780,15 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// `construct_data_body = name ('=' expr)? (',' expr_block_body?)?`
+    /// `construct_data_body = (name ('=' expr)? (',' expr_block_body?)?)?`
     fn parse_construct_data_body(&mut self) -> DiagnosticResult<ConstructDataFields> {
+        if self.tokens.peek().is_none() {
+            return DiagnosticResult::ok(ConstructDataFields {
+                fields: Vec::new(),
+                auto_fields: Vec::new(),
+            });
+        }
+
         self.parse_name().bind(|field_name| {
             let value = if self
                 .parse_token_maybe(|ty| matches!(ty, TokenType::Assign))
@@ -1030,36 +1040,5 @@ impl<'input> Parser<'input> {
                 DiagnosticResult::ok(result)
             }
         })
-    }
-}
-
-mod test {
-    #[tokio::test]
-    async fn test_parser() {
-        use quill_common::location::SourceFileIdentifier;
-        use quill_lexer::lex;
-        use quill_source_file::ErrorEmitter;
-        use quill_source_file::PackageFileSystem;
-        use std::path::PathBuf;
-
-        use crate::parse;
-
-        let fs = PackageFileSystem::new(PathBuf::from("test"));
-        let file_ident = SourceFileIdentifier {
-            module: vec![].into(),
-            file: "file".into(),
-        };
-
-        let lexed = lex(&fs, &file_ident).await;
-        let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
-
-        let mut error_emitter = ErrorEmitter::new(&fs);
-        let parsed = error_emitter.consume_diagnostic(parsed);
-        error_emitter.emit_all().await;
-
-        // If the parse fails, the test will fail.
-        let parsed = parsed.unwrap();
-
-        println!("parsed: {:#?}", parsed);
     }
 }
