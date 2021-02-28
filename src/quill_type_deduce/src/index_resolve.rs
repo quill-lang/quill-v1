@@ -147,7 +147,7 @@ pub fn instantiate(
 /// While we're instantiating a type, we need to keep track of all of the named type variables
 /// and which IDs we've assigned them.
 /// The map of higher kinded IDs maps variable names to lists of parameters to IDs.
-fn instantiate_with(
+pub fn instantiate_with(
     ty: &Type,
     ids: &mut HashMap<String, TypeVariableId>,
     higher_kinded_ids: &mut HashMap<String, HashMap<Vec<Type>, TypeVariableId>>,
@@ -169,15 +169,23 @@ fn instantiate_with(
             variable,
             parameters,
         } => {
-            // Higher kinded types get one type variable for each instantiation.
-            // For instance, `F[T]` and `F[K]` are given *different* type variables.
-            // The precise distribution of type variables is specified in the third parameter to this function.
-            TypeVariable::Unknown {
-                id: *higher_kinded_ids
-                    .entry(variable.clone())
-                    .or_default()
-                    .entry(parameters.clone())
-                    .or_insert_with(TypeVariableId::default),
+            if parameters.is_empty() {
+                TypeVariable::Unknown {
+                    id: *ids
+                        .entry(variable.clone())
+                        .or_insert_with(TypeVariableId::default),
+                }
+            } else {
+                // Higher kinded types get one type variable for each instantiation.
+                // For instance, `F[T]` and `F[K]` are given *different* type variables.
+                // The precise distribution of type variables is specified in the third parameter to this function.
+                TypeVariable::Unknown {
+                    id: *higher_kinded_ids
+                        .entry(variable.clone())
+                        .or_default()
+                        .entry(parameters.clone())
+                        .or_insert_with(TypeVariableId::default),
+                }
             }
         }
     }

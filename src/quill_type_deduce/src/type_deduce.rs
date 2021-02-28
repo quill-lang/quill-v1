@@ -5,12 +5,14 @@ use quill_common::{
     location::{Location, ModuleIdentifier, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_index::ProjectIndex;
+use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{ExprPatP, IdentifierP, NameP};
 use quill_type::Type;
 
 use crate::{
-    index_resolve::{as_variable, instantiate, resolve_definition, resolve_type_constructor},
+    index_resolve::{
+        as_variable, instantiate, instantiate_with, resolve_definition, resolve_type_constructor,
+    },
     type_check::{
         AbstractionVariable, BoundVariable, Expression, ExpressionContents, ExpressionContentsT,
         ExpressionT, TypeVariable, TypeVariablePrinter,
@@ -138,6 +140,17 @@ enum ConstraintEqualityReason {
         expr: Range,
         /// The definition that shows what type it must have.
         definition: Range,
+    },
+    /// The expression was used as a field in a data constructor, and we know the type of the field.
+    Field {
+        /// The expression we're type checking.
+        expr: Range,
+        /// The data type we're constructing.
+        data_type: QualifiedName,
+        /// The type constructor.
+        type_ctor: String,
+        /// The field name.
+        field: String,
     },
 }
 
@@ -770,14 +783,27 @@ fn generate_constraints(
             resolve_type_constructor(source_file, &data_constructor, project_index).bind(
                 |type_constructor_invocation| {
                     // Generate a type variable for this data type.
+                    let type_parameter_variables = (0..type_constructor_invocation.num_parameters)
+                        .map(|_| TypeVariableId::default())
+                        .collect::<Vec<_>>();
                     let type_variable = TypeVariable::Named {
                         name: type_constructor_invocation.data_type.clone(),
-                        parameters: (0..type_constructor_invocation.num_parameters)
-                            .map(|_| TypeVariable::Unknown {
-                                id: TypeVariableId::default(),
-                            })
+                        parameters: type_parameter_variables
+                            .iter()
+                            .map(|id| TypeVariable::Unknown { id: *id })
                             .collect(),
                     };
+
+                    // Find the type constructor.
+                    let TypeDeclarationTypeI::Data(datai) = &project_index
+                        [&type_constructor_invocation.data_type.source_file]
+                        .types[&type_constructor_invocation.data_type.name]
+                        .decl_type;
+                    let invoked_ctor = datai
+                        .type_ctors
+                        .iter()
+                        .find(|ctor| type_constructor_invocation.type_ctor == ctor.name)
+                        .expect("type constructor did not exist");
 
                     // Generate constraints for each field.
                     let mut fields_with_constraints = Vec::new();
@@ -802,6 +828,43 @@ fn generate_constraints(
                                 .extend(result.type_variable_definition_ranges);
                             assumptions = assumptions.union(result.assumptions);
                             constraints = constraints.union(result.constraints);
+
+                            // Add the constraint that the field has the required type.
+                            let (_, field_type) = invoked_ctor
+                                .fields
+                                .iter()
+                                .find(|(name, _)| name.name == field_name.name)
+                                .expect("could not find named field");
+
+                            // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
+                            let mut ids = HashMap::new();
+                            for (i, type_param) in datai.type_params.iter().enumerate() {
+                                ids.insert(type_param.name.clone(), type_parameter_variables[i]);
+                            }
+                            println!("IDs were {:#?}", ids);
+                            // TODO deal with higher kinded type variables here.
+                            let mut higher_kinded_ids = HashMap::new();
+                            let field_type_variable =
+                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+                            println!("Instantiation gave {:#?}", field_type_variable);
+                            println!("IDs became {:#?}", ids);
+
+                            constraints.0.push((
+                                result.expr.type_variable.clone(),
+                                Constraint::Equality {
+                                    ty: field_type_variable,
+                                    reason: ConstraintEqualityReason::Field {
+                                        expr: result.expr.range(),
+                                        data_type: type_constructor_invocation.data_type.clone(),
+                                        type_ctor: type_constructor_invocation
+                                            .data_type
+                                            .name
+                                            .clone(),
+                                        field: field_name.name.clone(),
+                                    },
+                                },
+                            ));
+
                             fields_with_constraints.push((field_name, result.expr));
                         }
                     }
@@ -935,10 +998,10 @@ fn solve_type_constraint_queue(
     mut substitution: HashMap<TypeVariableId, TypeVariable>,
 ) -> DiagnosticResult<HashMap<TypeVariableId, TypeVariable>> {
     while let Some((type_variable, constraint)) = constraint_queue.pop_front() {
-        println!(
-            "Solving constraint {:#?} => {:#?}",
-            type_variable, constraint
-        );
+        // println!(
+        //     "Solving constraint {:#?} => {:#?}",
+        //     type_variable, constraint
+        // );
         match constraint {
             Constraint::Equality { ty: other, reason } => {
                 // This constraint specifies that `type_variable === other`.
