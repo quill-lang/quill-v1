@@ -12,6 +12,7 @@ use quill_type::Type;
 use crate::{
     index_resolve::{
         as_variable, instantiate, instantiate_with, resolve_definition, resolve_type_constructor,
+        InstantiationResult,
     },
     type_check::{
         AbstractionVariable, BoundVariable, Expression, ExpressionContents, ExpressionContentsT,
@@ -306,8 +307,11 @@ fn generate_constraints(
             {
                 Some((symbol_source_file, symbol)) => {
                     // We don't need an assumption, we know what the type of this symbol is.
-                    let (type_variable, type_variables, higher_kinded_type_variables) =
-                        instantiate(&symbol.symbol_type);
+                    let InstantiationResult {
+                        result: type_variable,
+                        ids: type_variables,
+                        ..
+                    } = instantiate(&symbol.symbol_type);
                     DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
                             type_variable,
@@ -841,13 +845,10 @@ fn generate_constraints(
                             for (i, type_param) in datai.type_params.iter().enumerate() {
                                 ids.insert(type_param.name.clone(), type_parameter_variables[i]);
                             }
-                            println!("IDs were {:#?}", ids);
                             // TODO deal with higher kinded type variables here.
                             let mut higher_kinded_ids = HashMap::new();
                             let field_type_variable =
                                 instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
-                            println!("Instantiation gave {:#?}", field_type_variable);
-                            println!("IDs became {:#?}", ids);
 
                             constraints.0.push((
                                 result.expr.type_variable.clone(),
@@ -890,6 +891,40 @@ fn generate_constraints(
                                 .extend(result.type_variable_definition_ranges);
                             assumptions = assumptions.union(result.assumptions);
                             constraints = constraints.union(result.constraints);
+
+                            // Add the constraint that the field has the required type.
+                            let (_, field_type) = invoked_ctor
+                                .fields
+                                .iter()
+                                .find(|(name, _)| name.name == auto_field.name)
+                                .expect("could not find named field");
+
+                            // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
+                            let mut ids = HashMap::new();
+                            for (i, type_param) in datai.type_params.iter().enumerate() {
+                                ids.insert(type_param.name.clone(), type_parameter_variables[i]);
+                            }
+                            // TODO deal with higher kinded type variables here.
+                            let mut higher_kinded_ids = HashMap::new();
+                            let field_type_variable =
+                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+
+                            constraints.0.push((
+                                result.expr.type_variable.clone(),
+                                Constraint::Equality {
+                                    ty: field_type_variable,
+                                    reason: ConstraintEqualityReason::Field {
+                                        expr: result.expr.range(),
+                                        data_type: type_constructor_invocation.data_type.clone(),
+                                        type_ctor: type_constructor_invocation
+                                            .data_type
+                                            .name
+                                            .clone(),
+                                        field: auto_field.name.clone(),
+                                    },
+                                },
+                            ));
+
                             fields_with_constraints.push((auto_field, result.expr));
                         }
                     }
@@ -948,8 +983,8 @@ fn solve_type_constraints(
     expr: ExpressionT,
     constraints: Constraints,
 ) -> DiagnosticResult<Expression> {
-    println!("Deducing type of {:#?}", expr);
-    println!("Constraints: {:#?}", constraints);
+    // println!("Deducing type of {:#?}", expr);
+    // println!("Constraints: {:#?}", constraints);
 
     // We implement the `SOLVE` algorithm from the above paper.
     // The substitutions are defined to be idempotent, so a map instead of an ordered vec shall suffice.
@@ -986,8 +1021,8 @@ fn solve_type_constraints(
         solve_type_constraint_queue(source_file, low_priority_constraints, substitution)
     })
     .bind(|substitution| {
-        println!("Sub was:");
-        println!("{:#?}", substitution);
+        // println!("Sub was:");
+        // println!("{:#?}", substitution);
         substitute(&substitution, expr, source_file)
     })
 }
@@ -1058,7 +1093,7 @@ fn solve_type_constraint_queue(
                     .copied()
                     .collect::<HashSet<_>>();
                 let active = activevars(&constraint_queue);
-                println!("Polytype vars are {:#?}", polytype_variables);
+                // println!("Polytype vars are {:#?}", polytype_variables);
                 if polytype_variables.intersection(&active).next().is_some() {
                     // The variables are still live. Delay solving this constraint.
                     constraint_queue.push_back((
@@ -1082,12 +1117,12 @@ fn solve_type_constraint_queue(
                         );
                     }
                     let mut generalised_instance = scheme.clone();
-                    println!(
-                        "Instantiating {:#?} with {:#?}",
-                        generalised_instance, instantiate
-                    );
+                    // println!(
+                    //     "Instantiating {:#?} with {:#?}",
+                    //     generalised_instance, instantiate
+                    // );
                     apply_substitution(&instantiate, &mut generalised_instance);
-                    println!("Got {:#?}", generalised_instance);
+                    // println!("Got {:#?}", generalised_instance);
                     constraint_queue.push_back((
                         type_variable,
                         Constraint::Equality {
@@ -1493,16 +1528,15 @@ fn most_general_unifier(
                         func_ty: TypeVariable::Function(right_param, right_result),
                     })
                 }
-                TypeVariable::Variable {
-                    variable,
-                    parameters: right_parameters,
-                } => Err(UnificationError::NamedNotVariable {
-                    named_ty: TypeVariable::Named {
-                        name: left_name,
-                        parameters: left_parameters,
-                    },
-                    name: variable,
-                }),
+                TypeVariable::Variable { variable, .. } => {
+                    Err(UnificationError::NamedNotVariable {
+                        named_ty: TypeVariable::Named {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                        name: variable,
+                    })
+                }
             }
         }
         TypeVariable::Unknown { id: left } => {
@@ -1529,13 +1563,12 @@ fn most_general_unifier(
                     map.insert(right, TypeVariable::Function(left_param, left_result));
                     Ok(map)
                 }
-                TypeVariable::Variable {
-                    variable,
-                    parameters: right_parameters,
-                } => Err(UnificationError::FunctionNotVariable {
-                    func_ty: TypeVariable::Function(left_param, left_result),
-                    name: variable,
-                }),
+                TypeVariable::Variable { variable, .. } => {
+                    Err(UnificationError::FunctionNotVariable {
+                        func_ty: TypeVariable::Function(left_param, left_result),
+                        name: variable,
+                    })
+                }
             }
         }
         TypeVariable::Variable {
@@ -1552,7 +1585,7 @@ fn most_general_unifier(
             }),
             TypeVariable::Variable {
                 variable: other_variable,
-                parameters: right_parameters,
+                ..
             } => {
                 if other_variable == variable {
                     Ok(HashMap::new())

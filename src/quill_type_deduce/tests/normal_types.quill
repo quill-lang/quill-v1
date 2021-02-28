@@ -23,3 +23,10 @@ pub def block: Option[Option[Unit]] {
         Option::Some { value = next }
     )
 }
+
+pub data Bool = pub True {} | pub False {}
+
+pub def or: Bool -> Bool -> Bool {
+    or Bool::True {} = \a -> a,
+    or _ = \a -> Bool::False {}
+}

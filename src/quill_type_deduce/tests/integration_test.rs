@@ -10,29 +10,31 @@ async fn test_parser() {
     use std::path::PathBuf;
 
     let fs = PackageFileSystem::new(PathBuf::from("tests"));
-    let file_ident = SourceFileIdentifier {
-        module: vec![].into(),
-        file: "file".into(),
-    };
+    for &fname in &["normal_types", "higher_kinded_types"] {
+        let file_ident = SourceFileIdentifier {
+            module: vec![].into(),
+            file: fname.into(),
+        };
 
-    let lexed = lex(&fs, &file_ident).await;
-    let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
-    let typeck = parsed
-        .bind(|parsed| {
-            index_single_file(&file_ident, &parsed).bind(|index| {
-                let mut project_index = ProjectIndex::new();
-                project_index.insert(file_ident.clone(), index);
-                quill_type_deduce::check(&file_ident, &project_index, parsed)
+        let lexed = lex(&fs, &file_ident).await;
+        let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
+        let typeck = parsed
+            .bind(|parsed| {
+                index_single_file(&file_ident, &parsed).bind(|index| {
+                    let mut project_index = ProjectIndex::new();
+                    project_index.insert(file_ident.clone(), index);
+                    quill_type_deduce::check(&file_ident, &project_index, parsed)
+                })
             })
-        })
-        .deny();
+            .deny();
 
-    let mut error_emitter = ErrorEmitter::new(&fs);
-    let typeck = error_emitter.consume_diagnostic(typeck);
-    error_emitter.emit_all().await;
+        let mut error_emitter = ErrorEmitter::new(&fs);
+        let typeck = error_emitter.consume_diagnostic(typeck);
+        error_emitter.emit_all().await;
 
-    // If the type check fails, the test will fail.
-    let typeck = typeck.unwrap();
+        // If the type check fails, the test will fail.
+        let typeck = typeck.unwrap();
 
-    println!("typeck: {:#?}", typeck);
+        println!("typeck: {:#?}", typeck);
+    }
 }

@@ -127,21 +127,25 @@ pub fn replace_type_variables(
     }
 }
 
+pub struct InstantiationResult {
+    pub result: TypeVariable,
+    pub ids: HashMap<String, TypeVariableId>,
+    pub higher_kinded_ids: HashMap<String, HashMap<Vec<Type>, TypeVariableId>>,
+}
+
 /// You can instantiate a type into a type variable,
 /// by letting all unknown variables be polymorphic type variables, over which the type is quantified.
 /// This function returns the type variable, along with the map of quantifier names to type variable IDs,
 /// and the map of higher-kinded quantifier names to the map converting lists of parameters to their assigned IDs.
-pub fn instantiate(
-    ty: &Type,
-) -> (
-    TypeVariable,
-    HashMap<String, TypeVariableId>,
-    HashMap<String, HashMap<Vec<Type>, TypeVariableId>>,
-) {
+pub fn instantiate(ty: &Type) -> InstantiationResult {
     let mut ids = HashMap::new();
     let mut higher_kinded_ids = HashMap::new();
     let result = instantiate_with(ty, &mut ids, &mut higher_kinded_ids);
-    (result, ids, higher_kinded_ids)
+    InstantiationResult {
+        result,
+        ids,
+        higher_kinded_ids,
+    }
 }
 
 /// While we're instantiating a type, we need to keep track of all of the named type variables

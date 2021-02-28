@@ -11,7 +11,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
-use quill_parser::{DefinitionCaseP, ExprPatP, FileP, IdentifierP, NameP};
+use quill_parser::{DefinitionCaseP, ExprPatP, FileP, NameP};
 use quill_type::Type;
 
 use crate::{
@@ -95,7 +95,7 @@ impl Ranged for Pattern {
                 fields: args,
             } => args
                 .iter()
-                .fold(type_ctor.range, |acc, (name, pat)| acc.union(pat.range())),
+                .fold(type_ctor.range, |acc, (_name, pat)| acc.union(pat.range())),
             Pattern::Unknown(range) => *range,
             Pattern::Function { args, .. } => args
                 .iter()
@@ -329,9 +329,9 @@ impl PatternExhaustionCheck {
                     new_args.push(arg.clone());
                 }
                 new_args.push((name.clone(), complement));
-                for j in (i + 1)..args.len() {
+                for (arg_name, _) in args.iter().skip(i) {
                     new_args.push((
-                        args[j].0.clone(),
+                        arg_name.clone(),
                         Pattern::Unknown(Location { line: 0, col: 0 }.into()),
                     ));
                 }
@@ -1042,7 +1042,7 @@ impl<'a> TypeChecker<'a> {
                             .bind(|result| {
                                 // Check that all of the fields were actually referenced.
                                 let mut messages = Vec::new();
-                                for (field_name, _) in &expected_fields {
+                                for field_name in expected_fields.keys() {
                                     if !provided_fields.contains_key(field_name) {
                                         messages.push(ErrorMessage::new(
                                             format!(
@@ -1220,21 +1220,13 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &let_token),
             )),
-            ExprPatP::Block {
-                open_bracket,
-                close_bracket,
-                statements,
-                final_semicolon,
-            } => DiagnosticResult::fail(ErrorMessage::new(
+            ExprPatP::Block { open_bracket, .. } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("blocks are not allowed in patterns"),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &open_bracket),
             )),
             ExprPatP::ConstructData {
-                data_constructor,
-                open_brace,
-                close_brace,
-                fields,
+                data_constructor, ..
             } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("data constructors are not allowed in function patterns"),
                 Severity::Error,
@@ -1260,27 +1252,11 @@ impl<'a> TypeChecker<'a> {
                     ))
                 }
             }
-            ExprPatP::Apply(left, right) => self.resolve_type_pattern(*left).bind(|left| {
-                // self.resolve_type_pattern(*right).bind(|right| match left {
-                //     Pattern::TypeConstructor {
-                //         type_ctor,
-                //         mut fields,
-                //     } => {
-                //         args.push(right);
-                //         DiagnosticResult::ok(Pattern::TypeConstructor { type_ctor, fields: args })
-                //     }
-                //     _ => DiagnosticResult::fail(ErrorMessage::new(
-                //         String::from("expected a type constructor on the left of this application"),
-                //         Severity::Error,
-                //         Diagnostic::at(self.source_file, &left.range()),
-                //     )),
-                // })
-                DiagnosticResult::fail(ErrorMessage::new(
-                    String::from("expected a type constructor pattern"),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, &left),
-                ))
-            }),
+            ExprPatP::Apply(left, _right) => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("expected a type constructor pattern"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &*left),
+            )),
             ExprPatP::Unknown(range) => DiagnosticResult::ok(Pattern::Unknown(range)),
             ExprPatP::Lambda { lambda_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("lambda abstractions are not allowed in patterns"),
@@ -1292,21 +1268,15 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &let_token),
             )),
-            ExprPatP::Block {
-                open_bracket,
-                close_bracket,
-                statements,
-                final_semicolon,
-            } => DiagnosticResult::fail(ErrorMessage::new(
+            ExprPatP::Block { open_bracket, .. } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("blocks are not allowed in patterns"),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &open_bracket),
             )),
             ExprPatP::ConstructData {
                 data_constructor,
-                open_brace,
-                close_brace,
                 fields,
+                ..
             } => {
                 let fields = fields
                     .fields
