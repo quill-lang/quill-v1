@@ -995,6 +995,7 @@ fn solve_type_constraint_queue(
                     .copied()
                     .collect::<HashSet<_>>();
                 let active = activevars(&constraint_queue);
+                println!("Polytype vars are {:#?}", polytype_variables);
                 if polytype_variables.intersection(&active).next().is_some() {
                     // The variables are still live. Delay solving this constraint.
                     constraint_queue.push_back((
@@ -1017,8 +1018,13 @@ fn solve_type_constraint_queue(
                             },
                         );
                     }
-                    let mut generalised_instance = type_variable.clone();
+                    let mut generalised_instance = scheme.clone();
+                    println!(
+                        "Instantiating {:#?} with {:#?}",
+                        generalised_instance, instantiate
+                    );
                     apply_substitution(&instantiate, &mut generalised_instance);
+                    println!("Got {:#?}", generalised_instance);
                     constraint_queue.push_back((
                         type_variable,
                         Constraint::Equality {
