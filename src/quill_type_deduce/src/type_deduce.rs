@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -98,14 +98,6 @@ enum Constraint {
         ty: TypeVariable,
         reason: ConstraintEqualityReason,
     },
-    /// `ty` must be a generic instance of the polytype `scheme`, when
-    /// generalising `scheme` with respect to the given monotypes, i.e. generalising
-    /// over all the polymorphic type variables.
-    ImplicitInstance {
-        scheme: TypeVariable,
-        monotypes: HashSet<TypeVariableId>,
-        reason: ConstraintImplicitReason,
-    },
 }
 
 #[derive(Debug)]
@@ -133,8 +125,6 @@ enum ConstraintEqualityReason {
     /// This constraint was generated as a result of specifying that a let expression's
     /// type must be equal to the right hand expression's type.
     LetType { let_token: Range, expression: Range },
-    /// This constraint is a generalised version of an implicit instance constraint.
-    Implicit(ConstraintImplicitReason),
     /// The expression was defined to be a specific type.
     ByDefinition {
         /// The expression we're type checking.
@@ -153,16 +143,24 @@ enum ConstraintEqualityReason {
         /// The field name.
         field: String,
     },
+    /// This expression is an instance of the variable bound in a let expression.
+    InstanceLet {
+        /// The name of the variable.
+        variable_name: String,
+        /// The variable's type.
+        variable_type: TypeVariable,
+        /// The expression we're type checking.
+        expr: Range,
+        /// The token `let` that we're using the variable from.
+        let_token: Range,
+    },
 }
 
 #[derive(Debug)]
 enum ConstraintExplicitReason {}
 
 #[derive(Debug)]
-enum ConstraintImplicitReason {
-    /// This expression is an implicit instance of the variable bound in a let expression.
-    InstanceLet { let_token: Range },
-}
+enum ConstraintImplicitReason {}
 
 pub fn deduce_expr_type(
     source_file: &SourceFileIdentifier,
@@ -608,72 +606,6 @@ fn generate_constraints(
                     },
                     messages,
                 )
-
-                // DiagnosticResult::ok_with_many((), messages).bind(|_| {
-                //     generate_constraints(
-                //         source_file,
-                //         project_index,
-                //         args,
-                //         monotype_variables.clone(),
-                //         polytype_variables.clone(),
-                //         *right_expr,
-                //     )
-                //     .map(|mut right_expr| {
-                //         // First, let's remove and store the assumptions about the variable that we created in this let statement.
-                //         let let_assumptions = right_expr
-                //             .assumptions
-                //             .0
-                //             .remove(&identifier.name)
-                //             .unwrap_or_else(Vec::new);
-
-                //         let mut constraints = left_expr.constraints.union(right_expr.constraints);
-
-                //         constraints.0.push((
-                //             TypeVariable::Unknown(identifier_type),
-                //             Constraint::Equality {
-                //                 ty: left_expr.expr.type_variable.clone(),
-                //                 reason: ConstraintEqualityReason::LetType {
-                //                     let_token,
-                //                     right_expr: right_expr.expr.range(),
-                //                 },
-                //             },
-                //         ));
-
-                //         for assumption in let_assumptions {
-                //             constraints.0.push((
-                //                 TypeVariable::Unknown(assumption.0),
-                //                 Constraint::ImplicitInstance {
-                //                     scheme: TypeVariable::Unknown(identifier_type),
-                //                     monotypes: monotype_variables
-                //                         .values()
-                //                         .map(|monotype| monotype.var_type)
-                //                         .collect(),
-                //                     reason: ConstraintImplicitReason::InstanceLet { let_token },
-                //                 },
-                //             ));
-                //         }
-
-                //         type_variable_definition_ranges
-                //             .extend(left_expr.type_variable_definition_ranges);
-                //         type_variable_definition_ranges
-                //             .extend(right_expr.type_variable_definition_ranges);
-
-                //         ExprTypeCheck {
-                //             expr: ExpressionT {
-                //                 type_variable: right_expr.expr.type_variable.clone(),
-                //                 contents: ExpressionContentsT::Let {
-                //                     let_token,
-                //                     identifier,
-                //                     left_expr: Box::new(left_expr.expr),
-                //                     right_expr: Box::new(right_expr.expr),
-                //                 },
-                //             },
-                //             type_variable_definition_ranges,
-                //             assumptions: left_expr.assumptions.union(right_expr.assumptions),
-                //             constraints,
-                //         }
-                //     })
-                // })
             })
         }
         ExprPatP::Block {
@@ -719,16 +651,17 @@ fn generate_constraints(
                             for assumption in let_assumptions {
                                 constraints.0.push((
                                     TypeVariable::Unknown { id: assumption.0 },
-                                    Constraint::ImplicitInstance {
-                                        scheme: TypeVariable::Unknown {
+                                    Constraint::Equality {
+                                        ty: TypeVariable::Unknown {
                                             id: *variable_type_var_id,
                                         },
-                                        monotypes: monotype_variables
-                                            .values()
-                                            .map(|monotype| monotype.var_type)
-                                            .collect(),
-                                        reason: ConstraintImplicitReason::InstanceLet {
+                                        reason: ConstraintEqualityReason::InstanceLet {
                                             let_token: some_new_variables.let_token,
+                                            expr: result.expr.range(),
+                                            variable_name: variable_name.name.to_string(),
+                                            variable_type: TypeVariable::Unknown {
+                                                id: *variable_type_var_id,
+                                            },
                                         },
                                     },
                                 ));
@@ -1003,7 +936,6 @@ fn solve_type_constraints(
                 }
                 _ => mid_priority_constraints.push_back(constraint),
             },
-            Constraint::ImplicitInstance { .. } => mid_priority_constraints.push_back(constraint),
         }
     }
     // To solve the constraints, we will pop entries off the front of the queue, process them, and if needed push them to the back of the queue.
@@ -1078,58 +1010,6 @@ fn solve_type_constraint_queue(
                             substitution,
                         ));
                     }
-                }
-            }
-            Constraint::ImplicitInstance {
-                scheme,
-                monotypes,
-                reason,
-            } => {
-                // Instantiate the given type scheme with respect to the given monotypes.
-                // First, work out what the free variables are in the type scheme.
-                let free_scheme = freevars(&scheme);
-                let polytype_variables = free_scheme
-                    .difference(&monotypes)
-                    .copied()
-                    .collect::<HashSet<_>>();
-                let active = activevars(&constraint_queue);
-                // println!("Polytype vars are {:#?}", polytype_variables);
-                if polytype_variables.intersection(&active).next().is_some() {
-                    // The variables are still live. Delay solving this constraint.
-                    constraint_queue.push_back((
-                        type_variable,
-                        Constraint::ImplicitInstance {
-                            scheme,
-                            monotypes,
-                            reason,
-                        },
-                    ));
-                } else {
-                    // The variables are not live. We can solve this constraint now.
-                    // For each polytype variable, generate a new monotype variable to substitute for it.
-                    let mut instantiate = HashMap::<TypeVariableId, TypeVariable>::new();
-                    for v in polytype_variables {
-                        instantiate.insert(
-                            v,
-                            TypeVariable::Unknown {
-                                id: TypeVariableId::default(),
-                            },
-                        );
-                    }
-                    let mut generalised_instance = scheme.clone();
-                    // println!(
-                    //     "Instantiating {:#?} with {:#?}",
-                    //     generalised_instance, instantiate
-                    // );
-                    apply_substitution(&instantiate, &mut generalised_instance);
-                    // println!("Got {:#?}", generalised_instance);
-                    constraint_queue.push_back((
-                        type_variable,
-                        Constraint::Equality {
-                            ty: generalised_instance,
-                            reason: ConstraintEqualityReason::Implicit(reason),
-                        },
-                    ));
                 }
             }
         }
@@ -1250,6 +1130,23 @@ fn process_constraint_reason(
             }];
             (lambda, messages)
         }
+        ConstraintEqualityReason::InstanceLet {
+            variable_name,
+            variable_type,
+            expr,
+            let_token,
+        } => {
+            let messages = vec![HelpMessage {
+                message: format!(
+                    "error was raised because of the use of the variable {} which has type {}",
+                    variable_name,
+                    ty_printer.print(variable_type)
+                ),
+                help_type: HelpType::Note,
+                diagnostic: Diagnostic::at(source_file, &let_token),
+            }];
+            (expr, messages)
+        }
         _ => {
             println!("Could not print error message reason {:#?}", reason);
             (Location { line: 0, col: 0 }.into(), Vec::new())
@@ -1369,47 +1266,6 @@ fn process_unification_error(
     }
 }
 
-fn freevars(ty: &TypeVariable) -> HashSet<TypeVariableId> {
-    match ty {
-        TypeVariable::Named { parameters, .. } => {
-            parameters.iter().map(|ty| freevars(ty)).flatten().collect()
-        }
-        TypeVariable::Function(l, r) => {
-            let mut result = freevars(&l);
-            result.extend(freevars(&r));
-            result
-        }
-        TypeVariable::Unknown { id } => {
-            let mut result = HashSet::new();
-            result.insert(*id);
-            result
-        }
-        // A type variable is not a free variable. It is bound by the function's signature, and
-        // cannot be quantified over. However, its parameters can be quantified over.
-        TypeVariable::Variable { parameters, .. } => {
-            parameters.iter().map(|ty| freevars(ty)).flatten().collect()
-        }
-    }
-}
-
-fn activevars(constraint_queue: &VecDeque<(TypeVariable, Constraint)>) -> HashSet<TypeVariableId> {
-    let mut result = HashSet::new();
-    for (ty, constraint) in constraint_queue {
-        result.extend(freevars(ty));
-        match constraint {
-            Constraint::Equality { ty: other, .. } => {
-                result.extend(freevars(other));
-            }
-            Constraint::ImplicitInstance {
-                scheme, monotypes, ..
-            } => {
-                result.extend(freevars(scheme).intersection(monotypes));
-            }
-        }
-    }
-    result
-}
-
 fn apply_substitution_to_constraints(
     mgu: &HashMap<TypeVariableId, TypeVariable>,
     constraint_queue: &mut VecDeque<(TypeVariable, Constraint)>,
@@ -1418,21 +1274,6 @@ fn apply_substitution_to_constraints(
         apply_substitution(mgu, ty);
         match constraint {
             Constraint::Equality { ty: other, .. } => apply_substitution(mgu, other),
-            Constraint::ImplicitInstance {
-                scheme, monotypes, ..
-            } => {
-                apply_substitution(mgu, scheme);
-                let original_monotypes = std::mem::take(monotypes);
-                monotypes.extend(original_monotypes.into_iter().map(|monotype| {
-                    let mut ty = TypeVariable::Unknown { id: monotype };
-                    apply_substitution(mgu, &mut ty);
-                    if let TypeVariable::Unknown { id: monotype } = ty {
-                        monotype
-                    } else {
-                        panic!("substitution converted a monotype into a bound variable");
-                    }
-                }));
-            }
         }
     }
 }

@@ -4,3 +4,6 @@ pub data Option[T] = pub Some { value: T } | pub None {}
 pub def id[F[_]]: F[Bool] -> F[Bool] {
     id x = x
 }
+
+// More higher-kinded test cases will be inserted here, once traits are done.
+// After all, we can't operate generically over types if we have no typeclasses!
