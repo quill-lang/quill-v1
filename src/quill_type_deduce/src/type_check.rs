@@ -543,7 +543,6 @@ pub enum TypeVariable {
     /// `TypeVariablePrinter`.
     Unknown {
         id: TypeVariableId,
-        parameters: Vec<TypeVariable>,
     },
 }
 
@@ -589,20 +588,7 @@ impl TypeVariablePrinter {
                 // TODO sort out precedence
                 format!("{} -> ({})", self.print(*l), self.print(*r))
             }
-            TypeVariable::Unknown { id, parameters } => {
-                let mut result = self.get_name(&id);
-                if !parameters.is_empty() {
-                    result += "[";
-                    for (i, param) in parameters.into_iter().enumerate() {
-                        if i != 0 {
-                            result += ", ";
-                        }
-                        result += &self.print(param);
-                    }
-                    result += "]";
-                }
-                result
-            }
+            TypeVariable::Unknown { id } => self.get_name(&id),
             TypeVariable::Variable {
                 variable,
                 parameters,
@@ -628,21 +614,11 @@ impl TypeVariablePrinter {
             let cloned = result.clone();
             // If the substitution doesn't do anything, don't stick in an infinite loop.
             // We don't need to worry about cycles - the substitution is defined to be idempotent.
-            if let TypeVariable::Unknown {
-                id: other_id,
-                parameters: other_parameters,
-            } = cloned
-            {
-                if !other_parameters.is_empty() {
-                    unimplemented!("how to deal with params?")
-                }
+            if let TypeVariable::Unknown { id: other_id } = cloned {
                 if other_id == *ty {
                     // The substitution exists, but maps the value to itself.
                 } else {
-                    return self.print(TypeVariable::Unknown {
-                        id: other_id,
-                        parameters: other_parameters,
-                    });
+                    return self.print(TypeVariable::Unknown { id: other_id });
                 }
             } else {
                 return self.print(cloned);
@@ -737,6 +713,8 @@ pub enum ExpressionContentsGeneric<E, T> {
         data_type_name: QualifiedName,
         type_ctor: String,
         fields: Vec<(NameP, E)>,
+        open_brace: Range,
+        close_brace: Range,
     },
 }
 
@@ -757,7 +735,11 @@ where
             ExpressionContentsGeneric::Let {
                 let_token, expr, ..
             } => let_token.union(expr.range()),
-            ExpressionContentsGeneric::ConstructData { .. } => Location { line: 0, col: 0 }.into(),
+            ExpressionContentsGeneric::ConstructData {
+                open_brace,
+                close_brace,
+                ..
+            } => open_brace.union(*close_brace),
             ExpressionContentsGeneric::Block {
                 open_bracket,
                 close_bracket,

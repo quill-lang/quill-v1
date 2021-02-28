@@ -1,11 +1,12 @@
 use std::fmt::{Debug, Display};
+use std::hash::Hash;
 
 use crate::location::{Range, SourceFileIdentifier};
 
 /// A fully qualified name referring to a top-level item declared in a `.quill` file.
 /// This should not be used for qualified identifiers, since in this case we need to also keep track
 /// of where the identifier was written; this type is concerned only with the name itself.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Eq)]
 pub struct QualifiedName {
     /// The source file path that the name was defined at, not the path at which the name was used.
     pub source_file: SourceFileIdentifier,
@@ -13,6 +14,19 @@ pub struct QualifiedName {
     pub name: String,
     /// The range that the name was defined at, not the range the name was used.
     pub range: Range,
+}
+
+impl PartialEq for QualifiedName {
+    fn eq(&self, other: &Self) -> bool {
+        self.source_file == other.source_file && self.name == other.name
+    }
+}
+
+impl Hash for QualifiedName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source_file.hash(state);
+        self.name.hash(state);
+    }
 }
 
 impl Display for QualifiedName {

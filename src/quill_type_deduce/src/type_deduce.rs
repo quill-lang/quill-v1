@@ -250,10 +250,7 @@ fn generate_constraints(
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: TypeVariable::Unknown {
-                                id: type_variable,
-                                parameters: Vec::new(),
-                            },
+                            type_variable: TypeVariable::Unknown { id: type_variable },
                             contents: ExpressionContentsT::MonotypeVariable(name),
                         },
                         type_variable_definition_ranges,
@@ -274,10 +271,7 @@ fn generate_constraints(
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: TypeVariable::Unknown {
-                                id: type_variable,
-                                parameters: Vec::new(),
-                            },
+                            type_variable: TypeVariable::Unknown { id: type_variable },
                             contents: ExpressionContentsT::PolytypeVariable(name),
                         },
                         type_variable_definition_ranges,
@@ -299,7 +293,8 @@ fn generate_constraints(
             {
                 Some((symbol_source_file, symbol)) => {
                     // We don't need an assumption, we know what the type of this symbol is.
-                    let (type_variable, type_variables) = instantiate(&symbol.symbol_type);
+                    let (type_variable, type_variables, higher_kinded_type_variables) =
+                        instantiate(&symbol.symbol_type);
                     DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
                             type_variable,
@@ -351,7 +346,6 @@ fn generate_constraints(
                     let right_type = right.expr.type_variable.clone();
                     let result_type = TypeVariable::Unknown {
                         id: TypeVariableId::default(),
-                        parameters: Vec::new(),
                     };
 
                     let function_range = left.expr.contents.range();
@@ -454,16 +448,12 @@ fn generate_constraints(
                         for param in param_types.iter().rev() {
                             let lambda_step_type = TypeVariable::Unknown {
                                 id: TypeVariableId::default(),
-                                parameters: Vec::new(),
                             };
                             expr.constraints.0.push((
                                 lambda_step_type.clone(),
                                 Constraint::Equality {
                                     ty: TypeVariable::Function(
-                                        Box::new(TypeVariable::Unknown {
-                                            id: *param,
-                                            parameters: Vec::new(),
-                                        }),
+                                        Box::new(TypeVariable::Unknown { id: *param }),
                                         Box::new(lambda_type),
                                     ),
                                     reason: ConstraintEqualityReason::LambdaType {
@@ -487,15 +477,9 @@ fn generate_constraints(
                         {
                             for assumption in assumptions {
                                 new_constraints.push((
-                                    TypeVariable::Unknown {
-                                        id: param_type,
-                                        parameters: Vec::new(),
-                                    },
+                                    TypeVariable::Unknown { id: param_type },
                                     Constraint::Equality {
-                                        ty: TypeVariable::Unknown {
-                                            id: assumption.0,
-                                            parameters: Vec::new(),
-                                        },
+                                        ty: TypeVariable::Unknown { id: assumption.0 },
                                         reason: ConstraintEqualityReason::LambdaParameter {
                                             lambda: lambda_token,
                                             param_name: param.name.clone(),
@@ -576,7 +560,6 @@ fn generate_constraints(
                 constraints.0.push((
                     TypeVariable::Unknown {
                         id: new_variable_type,
-                        parameters: Vec::new(),
                     },
                     Constraint::Equality {
                         ty: expr.expr.type_variable.clone(),
@@ -718,14 +701,10 @@ fn generate_constraints(
 
                             for assumption in let_assumptions {
                                 constraints.0.push((
-                                    TypeVariable::Unknown {
-                                        id: assumption.0,
-                                        parameters: Vec::new(),
-                                    },
+                                    TypeVariable::Unknown { id: assumption.0 },
                                     Constraint::ImplicitInstance {
                                         scheme: TypeVariable::Unknown {
                                             id: *variable_type_var_id,
-                                            parameters: Vec::new(),
                                         },
                                         monotypes: monotype_variables
                                             .values()
@@ -784,7 +763,8 @@ fn generate_constraints(
         ExprPatP::ConstructData {
             data_constructor,
             fields,
-            ..
+            open_brace,
+            close_brace,
         } => {
             // Resolve the type constructor that was invoked.
             resolve_type_constructor(source_file, &data_constructor, project_index).bind(
@@ -795,7 +775,6 @@ fn generate_constraints(
                         parameters: (0..type_constructor_invocation.num_parameters)
                             .map(|_| TypeVariable::Unknown {
                                 id: TypeVariableId::default(),
-                                parameters: Vec::new(),
                             })
                             .collect(),
                     };
@@ -860,6 +839,8 @@ fn generate_constraints(
                                     data_type_name: type_constructor_invocation.data_type,
                                     type_ctor: type_constructor_invocation.type_ctor,
                                     fields: fields_with_constraints,
+                                    open_brace,
+                                    close_brace,
                                 },
                             },
                             type_variable_definition_ranges,
@@ -1033,7 +1014,6 @@ fn solve_type_constraint_queue(
                             v,
                             TypeVariable::Unknown {
                                 id: TypeVariableId::default(),
-                                parameters: Vec::new(),
                             },
                         );
                     }
@@ -1078,7 +1058,6 @@ fn fix_infinite_type(
             // This is a valid deduction, but must be removed since it results in an infinite loop.
             if let TypeVariable::Unknown {
                 id: substitution_replacement_id,
-                parameters: substitution_replacement_parameters,
             } = substitution_replacement
             {
                 substitution_replacement_id != substitution_id
@@ -1103,10 +1082,7 @@ fn contains_id(v: &TypeVariable, id: &TypeVariableId) -> bool {
         TypeVariable::Named { parameters, .. } => parameters.iter().any(|p| contains_id(p, id)),
         TypeVariable::Function(l, r) => contains_id(&l, id) || contains_id(&r, id),
         TypeVariable::Variable { parameters, .. } => parameters.iter().any(|v| contains_id(v, id)),
-        TypeVariable::Unknown {
-            id: other_id,
-            parameters,
-        } => (other_id == id) || parameters.iter().any(|v| contains_id(v, id)),
+        TypeVariable::Unknown { id: other_id } => other_id == id,
     }
 }
 
@@ -1192,7 +1168,6 @@ fn process_infinite_type_error(
             "a self-referential type {} ~ {} was created",
             ty_printer.print(TypeVariable::Unknown {
                 id: error.erroneous_substitutions[0].0,
-                parameters: Vec::new(),
             }),
             ty_printer.print(error.erroneous_substitutions[0].1.clone()),
         ),
@@ -1300,12 +1275,9 @@ fn freevars(ty: &TypeVariable) -> HashSet<TypeVariableId> {
             result.extend(freevars(&r));
             result
         }
-        TypeVariable::Unknown { id, parameters } => {
+        TypeVariable::Unknown { id } => {
             let mut result = HashSet::new();
             result.insert(*id);
-            for p in parameters {
-                result.extend(freevars(p));
-            }
             result
         }
         // A type variable is not a free variable. It is bound by the function's signature, and
@@ -1348,16 +1320,9 @@ fn apply_substitution_to_constraints(
                 apply_substitution(mgu, scheme);
                 let original_monotypes = std::mem::take(monotypes);
                 monotypes.extend(original_monotypes.into_iter().map(|monotype| {
-                    let mut ty = TypeVariable::Unknown {
-                        id: monotype,
-                        parameters: Vec::new(),
-                    };
+                    let mut ty = TypeVariable::Unknown { id: monotype };
                     apply_substitution(mgu, &mut ty);
-                    if let TypeVariable::Unknown {
-                        id: monotype,
-                        parameters,
-                    } = ty
-                    {
+                    if let TypeVariable::Unknown { id: monotype } = ty {
                         monotype
                     } else {
                         panic!("substitution converted a monotype into a bound variable");
@@ -1369,7 +1334,7 @@ fn apply_substitution_to_constraints(
 }
 
 fn apply_substitution(sub: &HashMap<TypeVariableId, TypeVariable>, ty: &mut TypeVariable) {
-    if let TypeVariable::Unknown { id, parameters } = ty {
+    if let TypeVariable::Unknown { id } = ty {
         if let Some(sub_value) = sub.get(id) {
             *ty = sub_value.clone();
         }
@@ -1439,10 +1404,7 @@ fn most_general_unifier(
                         })
                     }
                 }
-                TypeVariable::Unknown {
-                    id: right,
-                    parameters: right_parameters,
-                } => {
+                TypeVariable::Unknown { id: right } => {
                     let mut map = HashMap::new();
                     map.insert(
                         right,
@@ -1474,10 +1436,7 @@ fn most_general_unifier(
                 }),
             }
         }
-        TypeVariable::Unknown {
-            id: left,
-            parameters: left_parameters,
-        } => {
+        TypeVariable::Unknown { id: left } => {
             let mut map = HashMap::new();
             map.insert(left, right);
             Ok(map)
@@ -1496,10 +1455,7 @@ fn most_general_unifier(
                     let mgu2 = most_general_unifier(*left_result, *right_result)?;
                     unify(mgu1, mgu2)
                 }
-                TypeVariable::Unknown {
-                    id: right,
-                    parameters: right_parameters,
-                } => {
+                TypeVariable::Unknown { id: right } => {
                     let mut map = HashMap::new();
                     map.insert(right, TypeVariable::Function(left_param, left_result));
                     Ok(map)
@@ -1538,10 +1494,7 @@ fn most_general_unifier(
                     })
                 }
             }
-            TypeVariable::Unknown {
-                id: right,
-                parameters: right_parameters,
-            } => {
+            TypeVariable::Unknown { id: right } => {
                 let mut map = HashMap::new();
                 map.insert(
                     right,
@@ -1635,12 +1588,9 @@ fn substitute_contents(
                 .map(|(ty_name, ty_id)| {
                     let (ty, messages) = substitute_type(
                         substitution,
-                        TypeVariable::Unknown {
-                            id: *ty_id,
-                            parameters: Vec::new(),
-                        },
+                        TypeVariable::Unknown { id: *ty_id },
                         source_file,
-                        Location { line: 0, col: 0 }.into(),
+                        range,
                     )
                     .destructure();
                     // The error message, if present, needs to be customised to state that the problem is with the type variable.
@@ -1705,6 +1655,8 @@ fn substitute_contents(
             data_type_name,
             type_ctor,
             fields,
+            open_brace,
+            close_brace,
         } => fields
             .into_iter()
             .map(|(field_name, field_expr)| {
@@ -1716,6 +1668,8 @@ fn substitute_contents(
                 data_type_name,
                 type_ctor,
                 fields,
+                open_brace,
+                close_brace,
             }),
     }
 }
@@ -1740,16 +1694,12 @@ fn substitute_type(
                     .map(|r| Type::Function(Box::new(l), Box::new(r)))
             })
         }
-        TypeVariable::Unknown { id, parameters } => match substitution.get(&id) {
+        TypeVariable::Unknown { id } => match substitution.get(&id) {
             Some(value) => {
                 // Sometimes, we can have a substitution that substitutes some type variable for itself.
                 // The substitution is idempotent, so there are no cycles.
                 // So we'll check if `value == TypeVariable::Unknown(id)`.
-                if let TypeVariable::Unknown {
-                    id: other_id,
-                    parameters: other_parameters,
-                } = value
-                {
+                if let TypeVariable::Unknown { id: other_id } = value {
                     if *other_id == id {
                         return DiagnosticResult::fail(ErrorMessage::new(
                             String::from("could not deduce type of this expression"),

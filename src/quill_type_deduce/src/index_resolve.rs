@@ -129,41 +129,57 @@ pub fn replace_type_variables(
 
 /// You can instantiate a type into a type variable,
 /// by letting all unknown variables be polymorphic type variables, over which the type is quantified.
-/// This function returns the type variable, along with the map of quantifier names to type variable IDs.
-pub fn instantiate(ty: &Type) -> (TypeVariable, HashMap<String, TypeVariableId>) {
-    let mut map = HashMap::new();
-    let result = instantiate_with(ty, &mut map);
-    (result, map)
+/// This function returns the type variable, along with the map of quantifier names to type variable IDs,
+/// and the map of higher-kinded quantifier names to the map converting lists of parameters to their assigned IDs.
+pub fn instantiate(
+    ty: &Type,
+) -> (
+    TypeVariable,
+    HashMap<String, TypeVariableId>,
+    HashMap<String, HashMap<Vec<Type>, TypeVariableId>>,
+) {
+    let mut ids = HashMap::new();
+    let mut higher_kinded_ids = HashMap::new();
+    let result = instantiate_with(ty, &mut ids, &mut higher_kinded_ids);
+    (result, ids, higher_kinded_ids)
 }
 
 /// While we're instantiating a type, we need to keep track of all of the named type variables
 /// and which IDs we've assigned them.
-fn instantiate_with(ty: &Type, ids: &mut HashMap<String, TypeVariableId>) -> TypeVariable {
+/// The map of higher kinded IDs maps variable names to lists of parameters to IDs.
+fn instantiate_with(
+    ty: &Type,
+    ids: &mut HashMap<String, TypeVariableId>,
+    higher_kinded_ids: &mut HashMap<String, HashMap<Vec<Type>, TypeVariableId>>,
+) -> TypeVariable {
     match ty {
         Type::Named { name, parameters } => TypeVariable::Named {
             name: name.clone(),
             parameters: parameters
                 .iter()
-                .map(|p| instantiate_with(p, ids))
+                .map(|p| instantiate_with(p, ids, higher_kinded_ids))
                 .collect::<Vec<_>>(),
         },
         Type::Function(l, r) => {
-            let l2 = instantiate_with(l, ids);
-            let r2 = instantiate_with(r, ids);
+            let l2 = instantiate_with(l, ids, higher_kinded_ids);
+            let r2 = instantiate_with(r, ids, higher_kinded_ids);
             TypeVariable::Function(Box::new(l2), Box::new(r2))
         }
         Type::Variable {
             variable,
             parameters,
-        } => TypeVariable::Unknown {
-            id: *ids
-                .entry(variable.clone())
-                .or_insert_with(TypeVariableId::default),
-            parameters: parameters
-                .iter()
-                .map(|p| instantiate_with(p, ids))
-                .collect(),
-        },
+        } => {
+            // Higher kinded types get one type variable for each instantiation.
+            // For instance, `F[T]` and `F[K]` are given *different* type variables.
+            // The precise distribution of type variables is specified in the third parameter to this function.
+            TypeVariable::Unknown {
+                id: *higher_kinded_ids
+                    .entry(variable.clone())
+                    .or_default()
+                    .entry(parameters.clone())
+                    .or_insert_with(TypeVariableId::default),
+            }
+        }
     }
 }
 

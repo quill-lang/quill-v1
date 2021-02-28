@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use quill_common::name::QualifiedName;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     /// An explicitly named type possibly with type parameters, e.g. `Bool` or `Either[T, U]`.
     Named {
