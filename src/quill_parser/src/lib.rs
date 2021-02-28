@@ -1,5 +1,6 @@
 use std::{
     fmt::Debug,
+    hash::Hash,
     iter::Peekable,
     ops::{Deref, DerefMut},
 };
@@ -871,10 +872,22 @@ impl Ranged for IdentifierP {
 }
 
 /// A name for an item, which cannot be qualified.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub struct NameP {
     pub name: String,
     pub range: Range,
+}
+
+impl PartialEq for NameP {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Hash for NameP {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state)
+    }
 }
 
 pub enum Visibility {

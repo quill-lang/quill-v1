@@ -30,16 +30,25 @@ struct ExprTypeCheck {
     /// When `generate_constraints` is called, typically the `polytype_variables` map is simply moved into this field here.
     /// However, if we were generating constraints for a let statement, the polytype variables list will have this new variable added to it.
     polytype_variables: HashMap<String, AbstractionVariable>,
+    /// If this expression was a `let` statement, this will contain a list of all the new variables we defined in this statement,
+    new_variables: Option<LetStatementNewVariables>,
+}
+
+#[derive(Debug)]
+struct LetStatementNewVariables {
+    let_token: Range,
+    /// A list of the new variables we made, with the type variable we assigned to it.
+    new_variables: Vec<(NameP, TypeVariableId)>,
 }
 
 /// A list of assumptions about each variable's type.
 /// Assumptions are applied only to the current list of monomorphic and polymorphic variables,
 /// i.e. exactly the list of variables introduced by lambda and let statements respectively.
 #[derive(Debug, Default)]
-struct Assumptions(HashMap<String, Vec<Assumption>>);
+struct Assumptions(HashMap<NameP, Vec<Assumption>>);
 
 impl Assumptions {
-    fn new_with(var: String, assumption: Assumption) -> Self {
+    fn new_with(var: NameP, assumption: Assumption) -> Self {
         let mut map = HashMap::new();
         map.insert(var, vec![assumption]);
         Self(map)
@@ -120,7 +129,7 @@ enum ConstraintEqualityReason {
     },
     /// This constraint was generated as a result of specifying that a let expression's
     /// type must be equal to the right hand expression's type.
-    LetType { let_token: Range, right_expr: Range },
+    LetType { let_token: Range, expression: Range },
     /// This constraint is a generalised version of an implicit instance constraint.
     Implicit(ConstraintImplicitReason),
     /// The expression was defined to be a specific type.
@@ -229,13 +238,14 @@ fn generate_constraints(
                         assumptions: Assumptions::default(),
                         constraints: Constraints::default(),
                         polytype_variables,
+                        new_variables: None,
                     });
                 }
 
                 // Now, check the monotype variables.
                 if monotype_variables.get(&name.name).is_some() {
                     let type_variable = TypeVariableId::default();
-                    let identifier_name = name.name.clone();
+                    let identifier_name = name.clone();
                     let mut type_variable_definition_ranges = HashMap::new();
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
@@ -253,12 +263,13 @@ fn generate_constraints(
                         ),
                         constraints: Constraints::default(),
                         polytype_variables,
+                        new_variables: None,
                     });
                 }
                 // Now, check the polytype variables.
                 if polytype_variables.get(&name.name).is_some() {
                     let type_variable = TypeVariableId::default();
-                    let identifier_name = name.name.clone();
+                    let identifier_name = name.clone();
                     let mut type_variable_definition_ranges = HashMap::new();
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
@@ -276,6 +287,7 @@ fn generate_constraints(
                         ),
                         constraints: Constraints::default(),
                         polytype_variables,
+                        new_variables: None,
                     });
                 }
             }
@@ -305,6 +317,7 @@ fn generate_constraints(
                         assumptions: Assumptions::default(),
                         constraints: Constraints::default(),
                         polytype_variables,
+                        new_variables: None,
                     })
                 }
                 // If None, we couldn't find a symbol in scope.
@@ -379,6 +392,7 @@ fn generate_constraints(
                             ),
                         ),
                         polytype_variables,
+                        new_variables: None,
                     }
                 })
             })
@@ -467,10 +481,7 @@ fn generate_constraints(
                         for ((param, assumptions), param_type) in params
                             .iter()
                             .map(|param| {
-                                (
-                                    param,
-                                    expr.assumptions.0.remove(&param.name).unwrap_or_default(),
-                                )
+                                (param, expr.assumptions.0.remove(&param).unwrap_or_default())
                             })
                             .zip(param_types)
                         {
@@ -512,6 +523,7 @@ fn generate_constraints(
                             assumptions: expr.assumptions,
                             constraints: expr.constraints,
                             polytype_variables,
+                            new_variables: None,
                         }
                     })
                 })
@@ -532,7 +544,7 @@ fn generate_constraints(
             .bind(|expr| {
                 // This introduces new polytype variables, so we'll need to edit the `polytype_variables` map.
                 let mut messages = Vec::new();
-                let identifier_type = TypeVariableId::default();
+                let new_variable_type = TypeVariableId::default();
                 let mut type_variable_definition_ranges = HashMap::new();
 
                 let NameP { name, range } = &name;
@@ -549,11 +561,31 @@ fn generate_constraints(
                         }
                         vacant.insert(AbstractionVariable {
                             range: *range,
-                            var_type: identifier_type,
+                            var_type: new_variable_type,
                         });
-                        type_variable_definition_ranges.insert(identifier_type, *range);
+                        type_variable_definition_ranges.insert(new_variable_type, *range);
                     }
                 }
+
+                let name = NameP {
+                    name: name.clone(),
+                    range: *range,
+                };
+
+                let mut constraints = expr.constraints;
+                constraints.0.push((
+                    TypeVariable::Unknown {
+                        id: new_variable_type,
+                        parameters: Vec::new(),
+                    },
+                    Constraint::Equality {
+                        ty: expr.expr.type_variable.clone(),
+                        reason: ConstraintEqualityReason::LetType {
+                            let_token,
+                            expression: expr.expr.range(),
+                        },
+                    },
+                ));
 
                 DiagnosticResult::ok_with_many(
                     ExprTypeCheck {
@@ -561,17 +593,18 @@ fn generate_constraints(
                             type_variable: unit_type_variable(),
                             contents: ExpressionContentsT::Let {
                                 let_token,
-                                name: NameP {
-                                    name: name.clone(),
-                                    range: *range,
-                                },
+                                name: name.clone(),
                                 expr: Box::new(expr.expr),
                             },
                         },
                         type_variable_definition_ranges,
                         assumptions: expr.assumptions,
-                        constraints: expr.constraints,
+                        constraints,
                         polytype_variables,
+                        new_variables: Some(LetStatementNewVariables {
+                            let_token,
+                            new_variables: vec![(name, new_variable_type)],
+                        }),
                     },
                     messages,
                 )
@@ -593,8 +626,6 @@ fn generate_constraints(
                 //             .remove(&identifier.name)
                 //             .unwrap_or_else(Vec::new);
 
-                //         // This expression was: lambda params -> expr : (input_types -> expr.type)
-                //         // Constraints: ts === input_types, for all assumptions that params : ts
                 //         let mut constraints = left_expr.constraints.union(right_expr.constraints);
 
                 //         constraints.0.push((
@@ -658,6 +689,8 @@ fn generate_constraints(
             let mut type_variable_definition_ranges = HashMap::new();
             let mut assumptions = Assumptions::default();
             let mut constraints = Constraints::default();
+            // The list of new variables is updated whenever we introduce a `let` statement in this block.
+            let mut new_variables = Vec::<LetStatementNewVariables>::new();
             for statement in statements {
                 let (result, inner_messages) = generate_constraints(
                     source_file,
@@ -669,12 +702,52 @@ fn generate_constraints(
                 )
                 .destructure();
                 messages.extend(inner_messages);
-                if let Some(result) = result {
+                if let Some(mut result) = result {
+                    constraints = constraints.union(result.constraints);
+
+                    for some_new_variables in &new_variables {
+                        for (variable_name, variable_type_var_id) in
+                            &some_new_variables.new_variables
+                        {
+                            // First, let's remove and store the assumptions about the variables that we created in previous let statements.
+                            let let_assumptions = result
+                                .assumptions
+                                .0
+                                .remove(&variable_name)
+                                .unwrap_or_else(Vec::new);
+
+                            for assumption in let_assumptions {
+                                constraints.0.push((
+                                    TypeVariable::Unknown {
+                                        id: assumption.0,
+                                        parameters: Vec::new(),
+                                    },
+                                    Constraint::ImplicitInstance {
+                                        scheme: TypeVariable::Unknown {
+                                            id: *variable_type_var_id,
+                                            parameters: Vec::new(),
+                                        },
+                                        monotypes: monotype_variables
+                                            .values()
+                                            .map(|monotype| monotype.var_type)
+                                            .collect(),
+                                        reason: ConstraintImplicitReason::InstanceLet {
+                                            let_token: some_new_variables.let_token,
+                                        },
+                                    },
+                                ));
+                            }
+                        }
+                    }
+
                     polytype_variables = result.polytype_variables;
                     type_variable_definition_ranges.extend(result.type_variable_definition_ranges);
                     assumptions = assumptions.union(result.assumptions);
-                    constraints = constraints.union(result.constraints);
                     statements_with_constraints.push(result.expr);
+
+                    if let Some(more_new_variables) = result.new_variables {
+                        new_variables.push(more_new_variables);
+                    }
                 }
             }
 
@@ -703,15 +776,15 @@ fn generate_constraints(
                     assumptions,
                     constraints,
                     polytype_variables,
+                    new_variables: None,
                 },
                 messages,
             )
         }
         ExprPatP::ConstructData {
             data_constructor,
-            open_brace,
-            close_brace,
             fields,
+            ..
         } => {
             // Resolve the type constructor that was invoked.
             resolve_type_constructor(source_file, &data_constructor, project_index).bind(
@@ -719,8 +792,12 @@ fn generate_constraints(
                     // Generate a type variable for this data type.
                     let type_variable = TypeVariable::Named {
                         name: type_constructor_invocation.data_type.clone(),
-                        // TODO these parameters will need to be added and given type variables.
-                        parameters: Vec::new(),
+                        parameters: (0..type_constructor_invocation.num_parameters)
+                            .map(|_| TypeVariable::Unknown {
+                                id: TypeVariableId::default(),
+                                parameters: Vec::new(),
+                            })
+                            .collect(),
                     };
 
                     // Generate constraints for each field.
@@ -789,6 +866,7 @@ fn generate_constraints(
                             assumptions,
                             constraints,
                             polytype_variables,
+                            new_variables: None,
                         },
                         messages,
                     )
@@ -826,8 +904,8 @@ fn solve_type_constraints(
     expr: ExpressionT,
     constraints: Constraints,
 ) -> DiagnosticResult<Expression> {
-    //println!("Deducing type of {:#?}", expr);
-    //println!("Constraints: {:#?}", constraints);
+    println!("Deducing type of {:#?}", expr);
+    println!("Constraints: {:#?}", constraints);
 
     // We implement the `SOLVE` algorithm from the above paper.
     // The substitutions are defined to be idempotent, so a map instead of an ordered vec shall suffice.
@@ -863,7 +941,11 @@ fn solve_type_constraints(
     .bind(|substitution| {
         solve_type_constraint_queue(source_file, low_priority_constraints, substitution)
     })
-    .bind(|substitution| substitute(&substitution, expr, source_file))
+    .bind(|substitution| {
+        println!("Sub was:");
+        println!("{:#?}", substitution);
+        substitute(&substitution, expr, source_file)
+    })
 }
 
 fn solve_type_constraint_queue(
@@ -872,6 +954,10 @@ fn solve_type_constraint_queue(
     mut substitution: HashMap<TypeVariableId, TypeVariable>,
 ) -> DiagnosticResult<HashMap<TypeVariableId, TypeVariable>> {
     while let Some((type_variable, constraint)) = constraint_queue.pop_front() {
+        println!(
+            "Solving constraint {:#?} => {:#?}",
+            type_variable, constraint
+        );
         match constraint {
             Constraint::Equality { ty: other, reason } => {
                 // This constraint specifies that `type_variable === other`.
@@ -1217,6 +1303,9 @@ fn freevars(ty: &TypeVariable) -> HashSet<TypeVariableId> {
         TypeVariable::Unknown { id, parameters } => {
             let mut result = HashSet::new();
             result.insert(*id);
+            for p in parameters {
+                result.extend(freevars(p));
+            }
             result
         }
         // A type variable is not a free variable. It is bound by the function's signature, and
@@ -1554,7 +1643,7 @@ fn substitute_contents(
                         Location { line: 0, col: 0 }.into(),
                     )
                     .destructure();
-                    // The error message, if present, needs to be customised to state that the proble, is with the type variable.
+                    // The error message, if present, needs to be customised to state that the problem is with the type variable.
                     if let Some(ty) = ty {
                         DiagnosticResult::ok_with_many(ty, messages)
                     } else {

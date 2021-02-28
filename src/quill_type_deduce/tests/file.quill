@@ -15,3 +15,11 @@ pub def unwrap_or[T]: T -> Option[T] -> T {
     unwrap_or _ Option::Some { value } = value,
     unwrap_or t Option::None {} = t
 }
+
+pub def block: Option[Option[Unit]] {
+    block = (
+        let inner = Unit {};
+        let next = Option::Some { value = inner };
+        Option::Some { value = next }
+    )
+}

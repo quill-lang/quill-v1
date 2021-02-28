@@ -17,6 +17,8 @@ use crate::{type_check::TypeVariable, type_resolve::TypeVariableId};
 pub struct TypeConstructorInvocation {
     /// The data type that the type constructor belongs to.
     pub data_type: QualifiedName,
+    /// How many type parameters does this data type have?
+    pub num_parameters: u32,
     /// The name of the type constructor that was called.
     pub type_ctor: String,
     /// The range where the type ctor was used in code.
@@ -222,6 +224,7 @@ pub fn resolve_type_constructor(
                         data_type,
                         type_ctor: ctor_name,
                         range: identifier.range(),
+                        num_parameters: datai.type_params.len() as u32,
                     })
                 } else {
                     DiagnosticResult::fail(ErrorMessage::new(
@@ -255,6 +258,7 @@ pub fn resolve_type_constructor(
                         data_type,
                         type_ctor: ctor_name,
                         range: identifier.range(),
+                        num_parameters: datai.type_params.len() as u32,
                     })
                 } else {
                     DiagnosticResult::fail(ErrorMessage::new(

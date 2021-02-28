@@ -260,6 +260,7 @@ impl PatternExhaustionCheck {
                                         data_type: type_ctor.data_type.clone(),
                                         type_ctor: known_type_ctor.name.clone(),
                                         range: Location { line: 0, col: 0 }.into(),
+                                        num_parameters: type_ctor.num_parameters,
                                     },
                                     fields: arg_list,
                                 }),
@@ -271,6 +272,7 @@ impl PatternExhaustionCheck {
                                 data_type: type_ctor.data_type.clone(),
                                 type_ctor: known_type_ctor.name.clone(),
                                 range: Location { line: 0, col: 0 }.into(),
+                                num_parameters: type_ctor.num_parameters,
                             },
                             fields: known_type_ctor
                                 .fields
