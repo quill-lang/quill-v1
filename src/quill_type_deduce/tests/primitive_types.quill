@@ -1,0 +1,34 @@
+// The data types and its constructors are private by default.
+// Each data type must have at least one data constructor, which may or may not contain values.
+pub data Either[T, U] = pub Left { value: T } | pub Right { value: U }
+
+pub def create_either[T]: T -> Either[T, unit] {
+    create_either t = Either::Left { value = t },
+    //create_either a = Either::Right { value = a },
+}
+
+pub data Option[T] = pub Some { value: T } | pub None {}
+
+pub def unwrap_or[T]: T -> Option[T] -> T {
+    unwrap_or _ Option::Some { value } = value,
+    unwrap_or t Option::None {} = t
+}
+
+pub def block: Option[Option[unit]] {
+    block = (
+        let inner = unit;
+        let next = Option::Some { value = inner };
+        Option::Some { value = next }
+    )
+}
+
+pub data Bool = pub True {} | pub False {}
+
+pub def or: Bool -> Bool -> Bool {
+    or Bool::True {} = \a -> a,
+    or _ = \a -> Bool::False {}
+}
+
+pub def one: int {
+    one = 1
+}

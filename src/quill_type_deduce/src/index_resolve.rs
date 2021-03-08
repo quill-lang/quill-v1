@@ -115,6 +115,9 @@ pub fn replace_type_variables(
                     Type::Function(_, _) => {
                         panic!("can't apply type parameters to functions")
                     }
+                    Type::Primitive(_) => {
+                        panic!("can't apply type parameters to primitive types")
+                    }
                 }
             } else {
                 // This was not in the list; just return it verbatim.
@@ -124,6 +127,7 @@ pub fn replace_type_variables(
                 }
             }
         }
+        Type::Primitive(prim) => Type::Primitive(prim),
     }
 }
 
@@ -192,6 +196,7 @@ pub fn instantiate_with(
                 }
             }
         }
+        Type::Primitive(prim) => TypeVariable::Primitive(*prim),
     }
 }
 
@@ -222,6 +227,7 @@ pub fn as_variable(ty: &Type) -> TypeVariable {
                 .map(|p| as_variable(p))
                 .collect::<Vec<_>>(),
         },
+        Type::Primitive(prim) => TypeVariable::Primitive(*prim),
     }
 }
 

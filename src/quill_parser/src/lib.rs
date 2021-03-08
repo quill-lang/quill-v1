@@ -1,5 +1,5 @@
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::Hash,
     iter::Peekable,
     ops::{Deref, DerefMut},
@@ -871,6 +871,18 @@ impl Ranged for IdentifierP {
     }
 }
 
+impl Display for IdentifierP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, segment) in self.segments.iter().enumerate() {
+            if i != 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{}", segment)?;
+        }
+        Ok(())
+    }
+}
+
 /// A name for an item, which cannot be qualified.
 #[derive(Debug, Clone, Eq)]
 pub struct NameP {
@@ -887,6 +899,12 @@ impl PartialEq for NameP {
 impl Hash for NameP {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.hash(state)
+    }
+}
+
+impl Display for NameP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 

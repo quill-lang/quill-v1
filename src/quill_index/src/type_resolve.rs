@@ -12,7 +12,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_parser::{IdentifierP, TypeP};
-use quill_type::Type;
+use quill_type::{PrimitiveType, Type};
 
 use crate::type_index::ProjectTypesC;
 
@@ -51,8 +51,7 @@ pub fn resolve_typep(
                         parameters,
                     })
                 } else {
-                    resolve_type_identifier(source_file, identifier, project_types)
-                        .map(|name| Type::Named { name, parameters })
+                    resolve_type_identifier(source_file, identifier, project_types, parameters)
                 }
             }),
         TypeP::Function(left, right) => {
@@ -68,14 +67,40 @@ pub fn resolve_type_identifier(
     source_file: &SourceFileIdentifier,
     identifier: &IdentifierP,
     project_types: &ProjectTypesC,
-) -> DiagnosticResult<QualifiedName> {
+    parameters: Vec<Type>,
+) -> DiagnosticResult<Type> {
+    // First, check if this identifier matches a primitive type. These are always searched first.
+    if identifier.segments.len() == 1 {
+        if let Some(primitive_type) = match identifier.segments[0].name.as_str() {
+            "unit" => Some(PrimitiveType::Unit),
+            "int" => Some(PrimitiveType::Int),
+            _ => None,
+        } {
+            if parameters.is_empty() {
+                return DiagnosticResult::ok(Type::Primitive(primitive_type));
+            } else {
+                return DiagnosticResult::ok_with(
+                    Type::Primitive(primitive_type),
+                    ErrorMessage::new(
+                        "type parameters are not allowed on primitive types".to_string(),
+                        Severity::Error,
+                        Diagnostic::at(source_file, identifier),
+                    ),
+                );
+            }
+        }
+    }
+
     // We don't have `import`-style statements yet, so let's just only search for types in the current module path, in an incredibly naive way.
     let module_types = &project_types[source_file];
     match module_types.get(&identifier.segments[0].name) {
-        Some(type_decl) => DiagnosticResult::ok(QualifiedName {
-            source_file: source_file.clone(),
-            name: type_decl.name.name.clone(),
-            range: type_decl.name.range,
+        Some(type_decl) => DiagnosticResult::ok(Type::Named {
+            name: QualifiedName {
+                source_file: source_file.clone(),
+                name: type_decl.name.name.clone(),
+                range: type_decl.name.range,
+            },
+            parameters,
         }),
         None => DiagnosticResult::fail(ErrorMessage::new(
             String::from("could not resolve type"),

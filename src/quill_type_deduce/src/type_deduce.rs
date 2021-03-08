@@ -16,7 +16,7 @@ use crate::{
     },
     type_check::{
         AbstractionVariable, BoundVariable, Expression, ExpressionContents, ExpressionContentsT,
-        ExpressionT, TypeVariable, TypeVariablePrinter,
+        ExpressionT, ImmediateValue, TypeVariable, TypeVariablePrinter,
     },
     type_resolve::TypeVariableId,
 };
@@ -331,11 +331,73 @@ fn generate_constraints(
                     })
                 }
                 // If None, we couldn't find a symbol in scope.
-                None => DiagnosticResult::fail(ErrorMessage::new(
-                    format!("variable `{:?}` not recognised", identifier),
-                    Severity::Error,
-                    Diagnostic::at(source_file, &identifier),
-                )),
+                None => {
+                    // Now, check to see if this is an immediate variable like `unit`, which always produces a value.
+                    let immediate = if identifier.segments.len() == 1 {
+                        if identifier.segments[0].name == "unit" {
+                            // This is a unit literal.
+                            Some(ImmediateValue::Unit)
+                        } else if identifier.segments[0]
+                            .name
+                            .chars()
+                            .all(|c| ('0'..='9').contains(&c))
+                        {
+                            // This is an integer literal.
+                            match identifier.segments[0].name.parse::<i64>() {
+                                Ok(integer) => Some(ImmediateValue::Int(integer)),
+                                Err(_) => return DiagnosticResult::fail(ErrorMessage::new(
+                                    "integer literal was out of range (expected between -2^64 and 2^64-1)".to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &identifier),
+                                )),
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    match immediate {
+                        Some(ImmediateValue::Unit) => DiagnosticResult::ok(ExprTypeCheck {
+                            expr: ExpressionT {
+                                type_variable: TypeVariable::Primitive(
+                                    quill_type::PrimitiveType::Unit,
+                                ),
+                                contents: ExpressionContentsT::ImmediateValue {
+                                    value: ImmediateValue::Unit,
+                                    range: identifier.range(),
+                                },
+                            },
+                            type_variable_definition_ranges: HashMap::new(),
+                            assumptions: Assumptions::default(),
+                            constraints: Constraints::default(),
+                            polytype_variables,
+                            new_variables: None,
+                        }),
+                        Some(ImmediateValue::Int(integer)) => DiagnosticResult::ok(ExprTypeCheck {
+                            expr: ExpressionT {
+                                type_variable: TypeVariable::Primitive(
+                                    quill_type::PrimitiveType::Int,
+                                ),
+                                contents: ExpressionContentsT::ImmediateValue {
+                                    value: ImmediateValue::Int(integer),
+                                    range: identifier.range(),
+                                },
+                            },
+                            type_variable_definition_ranges: HashMap::new(),
+                            assumptions: Assumptions::default(),
+                            constraints: Constraints::default(),
+                            polytype_variables,
+                            new_variables: None,
+                        }),
+                        None => DiagnosticResult::fail(ErrorMessage::new(
+                            format!("variable `{}` not recognised", identifier),
+                            Severity::Error,
+                            Diagnostic::at(source_file, &identifier),
+                        )),
+                    }
+                }
             }
         }
         ExprPatP::Apply(left, right) => {
@@ -1067,6 +1129,7 @@ fn contains_id(v: &TypeVariable, id: &TypeVariableId) -> bool {
         TypeVariable::Function(l, r) => contains_id(&l, id) || contains_id(&r, id),
         TypeVariable::Variable { parameters, .. } => parameters.iter().any(|v| contains_id(v, id)),
         TypeVariable::Unknown { id: other_id } => other_id == id,
+        TypeVariable::Primitive(_) => false,
     }
 }
 
@@ -1192,72 +1255,27 @@ fn process_unification_error(
 
     // Now emit the error.
     match error {
-        UnificationError::TypeNameMismatch { left, right } => {
-            /*println!("TVDR: {:#?}", type_variable_definition_ranges);
-            println!("Q: {:#?}", quantifiers);
-            println!("L R {:#?} {:#?}", left, right);
-            // When trying to unify types, two types could not be unified.
-            let error_range = if let TypeVariable::Unknown(left_id) = left {
-                type_variable_definition_ranges[left_id]
-            } else if let TypeVariable::Unknown(right_id) = right {
-                type_variable_definition_ranges[right_id]
-            } else if let TypeVariable::Known(Type::Variable(left_name)) = left {
-                quantifiers
-                    .iter()
-                    .find(|q| q.name == *left_name)
-                    .unwrap()
-                    .range
-            } else if let TypeVariable::Known(Type::Variable(right_name)) = right {
-                quantifiers
-                    .iter()
-                    .find(|q| q.name == *right_name)
-                    .unwrap()
-                    .range
-            } else {
-                Location { line: 0, col: 0 }.into()
-            };*/
-            ErrorMessage::new_with_many(
-                format!(
-                    "types {} and {} did not match",
-                    ty_printer.print(left),
-                    ty_printer.print(right)
-                ),
-                Severity::Error,
-                Diagnostic::at(source_file, &error_range),
-                help,
-            )
-        }
         UnificationError::VariableNameMismatch { name, other_name } => ErrorMessage::new_with_many(
             format!("type variables {} and {} did not match", name, other_name,),
             Severity::Error,
             Diagnostic::at(source_file, &error_range),
             help,
         ),
-        UnificationError::NamedNotFunction { named_ty, func_ty } => ErrorMessage::new_with_many(
+        UnificationError::ExpectedDifferent { expected, actual } => ErrorMessage::new_with_many(
             format!(
-                "a data type {} was found, but it was expected to be a function of type {}",
-                ty_printer.print(named_ty),
-                ty_printer.print(func_ty)
+                "expected type {} was found, but found type {}",
+                ty_printer.print(expected),
+                ty_printer.print(actual)
             ),
             Severity::Error,
             Diagnostic::at(source_file, &error_range),
             help,
         ),
-        UnificationError::NamedNotVariable { named_ty, name } => ErrorMessage::new_with_many(
+        UnificationError::ExpectedVariable { actual, variable } => ErrorMessage::new_with_many(
             format!(
                 "a data type {} was found, but it was expected to be the type variable {}",
-                ty_printer.print(named_ty),
-                name,
-            ),
-            Severity::Error,
-            Diagnostic::at(source_file, &error_range),
-            help,
-        ),
-        UnificationError::FunctionNotVariable { func_ty, name } => ErrorMessage::new_with_many(
-            format!(
-                "a function of type {} was found, but it was expected to be the type variable {}",
-                ty_printer.print(func_ty),
-                name,
+                ty_printer.print(actual),
+                variable,
             ),
             Severity::Error,
             Diagnostic::at(source_file, &error_range),
@@ -1287,38 +1305,32 @@ fn apply_substitution(sub: &HashMap<TypeVariableId, TypeVariable>, ty: &mut Type
 }
 
 enum UnificationError {
-    TypeNameMismatch {
-        left: TypeVariable,
-        right: TypeVariable,
+    /// We expected a certain type, but we actually got a different type.
+    ExpectedDifferent {
+        expected: TypeVariable,
+        actual: TypeVariable,
     },
     /// An expression was found to be of the type of two distinct variables.
     VariableNameMismatch { name: String, other_name: String },
-    /// One type was a named data type, the other type was a function.
-    NamedNotFunction {
-        named_ty: TypeVariable,
-        func_ty: TypeVariable,
-    },
     /// One type was a named data type, the other type was a type variable quantified in the function signature.
-    NamedNotVariable {
-        named_ty: TypeVariable,
-        name: String,
+    ExpectedVariable {
+        actual: TypeVariable,
+        variable: String,
     },
-    /// One type was a named data type, the other type was a type variable quantified in the function signature.
-    FunctionNotVariable { func_ty: TypeVariable, name: String },
 }
 
 /// Returns a substitution which unifies the two types. If one could not be found, this is a type error, and None will be returned.
 fn most_general_unifier(
-    left: TypeVariable,
-    right: TypeVariable,
+    expected: TypeVariable,
+    actual: TypeVariable,
 ) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
     // If one of them is an unknown type variable, just set it to the other one.
-    match left {
+    match expected {
         TypeVariable::Named {
             name: left_name,
             parameters: left_parameters,
         } => {
-            match right {
+            match actual {
                 TypeVariable::Named {
                     name: right_name,
                     parameters: right_parameters,
@@ -1337,12 +1349,12 @@ fn most_general_unifier(
                         }
                         Ok(mgu)
                     } else {
-                        Err(UnificationError::TypeNameMismatch {
-                            left: TypeVariable::Named {
+                        Err(UnificationError::ExpectedDifferent {
+                            expected: TypeVariable::Named {
                                 name: left_name,
                                 parameters: left_parameters,
                             },
-                            right: TypeVariable::Named {
+                            actual: TypeVariable::Named {
                                 name: right_name,
                                 parameters: right_parameters,
                             },
@@ -1361,36 +1373,43 @@ fn most_general_unifier(
                     Ok(map)
                 }
                 TypeVariable::Function(right_param, right_result) => {
-                    Err(UnificationError::NamedNotFunction {
-                        named_ty: TypeVariable::Named {
+                    Err(UnificationError::ExpectedDifferent {
+                        expected: TypeVariable::Named {
                             name: left_name,
                             parameters: left_parameters,
                         },
-                        func_ty: TypeVariable::Function(right_param, right_result),
+                        actual: TypeVariable::Function(right_param, right_result),
                     })
                 }
                 TypeVariable::Variable { variable, .. } => {
-                    Err(UnificationError::NamedNotVariable {
-                        named_ty: TypeVariable::Named {
+                    Err(UnificationError::ExpectedVariable {
+                        actual: TypeVariable::Named {
                             name: left_name,
                             parameters: left_parameters,
                         },
-                        name: variable,
+                        variable,
                     })
                 }
+                prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
+                    expected: TypeVariable::Named {
+                        name: left_name,
+                        parameters: left_parameters,
+                    },
+                    actual: prim,
+                }),
             }
         }
-        TypeVariable::Unknown { id: left } => {
+        TypeVariable::Unknown { id } => {
             let mut map = HashMap::new();
-            map.insert(left, right);
+            map.insert(id, actual);
             Ok(map)
         }
         TypeVariable::Function(left_param, left_result) => {
-            match right {
+            match actual {
                 TypeVariable::Named { name, parameters } => {
-                    Err(UnificationError::NamedNotFunction {
-                        func_ty: TypeVariable::Function(left_param, left_result),
-                        named_ty: TypeVariable::Named { name, parameters },
+                    Err(UnificationError::ExpectedDifferent {
+                        expected: TypeVariable::Function(left_param, left_result),
+                        actual: TypeVariable::Named { name, parameters },
                     })
                 }
                 TypeVariable::Function(right_param, right_result) => {
@@ -1405,24 +1424,28 @@ fn most_general_unifier(
                     Ok(map)
                 }
                 TypeVariable::Variable { variable, .. } => {
-                    Err(UnificationError::FunctionNotVariable {
-                        func_ty: TypeVariable::Function(left_param, left_result),
-                        name: variable,
+                    Err(UnificationError::ExpectedVariable {
+                        actual: TypeVariable::Function(left_param, left_result),
+                        variable,
                     })
                 }
+                prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
+                    expected: TypeVariable::Function(left_param, left_result),
+                    actual: prim,
+                }),
             }
         }
         TypeVariable::Variable {
             variable,
             parameters: left_parameters,
-        } => match right {
-            named_ty @ TypeVariable::Named { .. } => Err(UnificationError::NamedNotVariable {
-                named_ty,
-                name: variable,
+        } => match actual {
+            named_ty @ TypeVariable::Named { .. } => Err(UnificationError::ExpectedVariable {
+                actual: named_ty,
+                variable,
             }),
-            func_ty @ TypeVariable::Function(_, _) => Err(UnificationError::FunctionNotVariable {
-                func_ty,
-                name: variable,
+            func_ty @ TypeVariable::Function(_, _) => Err(UnificationError::ExpectedVariable {
+                actual: func_ty,
+                variable,
             }),
             TypeVariable::Variable {
                 variable: other_variable,
@@ -1448,6 +1471,39 @@ fn most_general_unifier(
                 );
                 Ok(map)
             }
+            prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedVariable {
+                actual: prim,
+                variable,
+            }),
+        },
+        TypeVariable::Primitive(prim) => match actual {
+            named @ TypeVariable::Named { .. } => Err(UnificationError::ExpectedDifferent {
+                expected: TypeVariable::Primitive(prim),
+                actual: named,
+            }),
+            func @ TypeVariable::Function(_, _) => Err(UnificationError::ExpectedDifferent {
+                expected: TypeVariable::Primitive(prim),
+                actual: func,
+            }),
+            variable @ TypeVariable::Variable { .. } => Err(UnificationError::ExpectedDifferent {
+                expected: TypeVariable::Primitive(prim),
+                actual: variable,
+            }),
+            TypeVariable::Unknown { id } => {
+                let mut map = HashMap::new();
+                map.insert(id, TypeVariable::Primitive(prim));
+                Ok(map)
+            }
+            TypeVariable::Primitive(actual) => {
+                if prim == actual {
+                    Ok(HashMap::new())
+                } else {
+                    Err(UnificationError::ExpectedDifferent {
+                        expected: TypeVariable::Primitive(prim),
+                        actual: TypeVariable::Primitive(actual),
+                    })
+                }
+            }
         },
     }
 }
@@ -1470,6 +1526,8 @@ fn unify(
     Ok(a)
 }
 
+/// Apply the given type variable substitution to this expression.
+/// This should replace all unknown types with known types, if the type check succeeded.
 fn substitute(
     substitution: &HashMap<TypeVariableId, TypeVariable>,
     expr: ExpressionT,
@@ -1614,6 +1672,9 @@ fn substitute_contents(
                 open_brace,
                 close_brace,
             }),
+        ExpressionContentsT::ImmediateValue { value, range } => {
+            DiagnosticResult::ok(ExpressionContents::ImmediateValue { value, range })
+        }
     }
 }
 
@@ -1671,5 +1732,6 @@ fn substitute_type(
                 variable,
                 parameters,
             }),
+        TypeVariable::Primitive(prim) => DiagnosticResult::ok(Type::Primitive(prim)),
     }
 }

@@ -12,7 +12,7 @@ use quill_common::{
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{DefinitionCaseP, ExprPatP, FileP, NameP};
-use quill_type::Type;
+use quill_type::{PrimitiveType, Type};
 
 use crate::{
     index_resolve::{
@@ -544,6 +544,8 @@ pub enum TypeVariable {
     Unknown {
         id: TypeVariableId,
     },
+    /// A primitive type, built in to the core of the type system.
+    Primitive(PrimitiveType),
 }
 
 /// A utility for printing type variables to screen.
@@ -606,6 +608,7 @@ impl TypeVariablePrinter {
                 }
                 result
             }
+            TypeVariable::Primitive(prim) => format!("{}", prim),
         }
     }
 
@@ -716,6 +719,14 @@ pub enum ExpressionContentsGeneric<E, T> {
         open_brace: Range,
         close_brace: Range,
     },
+    /// A raw value, such as a string literal, the `unit` keyword, or an integer literal.
+    ImmediateValue { value: ImmediateValue, range: Range },
+}
+
+#[derive(Debug)]
+pub enum ImmediateValue {
+    Unit,
+    Int(i64),
 }
 
 impl<E, T> Ranged for ExpressionContentsGeneric<E, T>
@@ -745,6 +756,7 @@ where
                 close_bracket,
                 ..
             } => open_bracket.union(*close_bracket),
+            ExpressionContentsGeneric::ImmediateValue { range, .. } => *range,
         }
     }
 }
@@ -1077,6 +1089,14 @@ impl<'a> TypeChecker<'a> {
                     Severity::Error,
                     Diagnostic::at(self.source_file, &type_ctor.range),
                 )),
+                Type::Primitive(prim) => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "expected a name for a variable of type {}, not a type constructor",
+                        prim
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &type_ctor.range),
+                )),
             },
             Pattern::Unknown(_) => DiagnosticResult::ok(HashMap::new()),
             Pattern::Function { .. } => unimplemented!(),
@@ -1346,6 +1366,7 @@ fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
             (args, out)
         }
         Type::Variable { .. } => (Vec::new(), symbol_type.clone()),
+        Type::Primitive(_) => (Vec::new(), symbol_type.clone()),
     }
 }
 
