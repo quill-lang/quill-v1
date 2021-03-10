@@ -264,10 +264,25 @@ dependencies = [
  "guess_host_triple",
  "indicatif",
  "inkwell",
+ "quill_borrow_check",
  "quill_index",
  "quill_lexer",
  "quill_parser",
  "quill_type_deduce",
+]
+
+[[package]]
+name = "quill_borrow_check"
+version = "0.1.0"
+dependencies = [
+ "quill_common",
+ "quill_index",
+ "quill_lexer",
+ "quill_parser",
+ "quill_source_file",
+ "quill_type",
+ "quill_type_deduce",
+ "tokio",
 ]
 
 [[package]]

@@ -23,15 +23,15 @@ use crate::{
     type_resolve::TypeVariableId,
 };
 
-/// A parsed and fully type checked file_parsed.
+/// A parsed and fully type checked source file.
 /// No effort has been made to ensure semantic consistency or correctness,
 /// just syntactic and type correctness.
 #[derive(Debug)]
-pub struct Module {
+pub struct SourceFileHIR {
     pub definitions: HashMap<String, Definition>,
 }
 
-impl Display for Module {
+impl Display for SourceFileHIR {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Definitions:")?;
         for (def_name, def) in &self.definitions {
@@ -481,7 +481,7 @@ pub fn check(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
     file_parsed: FileP,
-) -> DiagnosticResult<Module> {
+) -> DiagnosticResult<SourceFileHIR> {
     let type_checker = TypeChecker {
         source_file,
         project_index,
@@ -652,6 +652,8 @@ impl TypeVariablePrinter {
     }
 }
 
+/// The Expression type is central to the HIR, or high-level intermediate representation.
+/// In an expression in HIR, the type of each object is known.
 #[derive(Debug)]
 pub struct Expression {
     pub ty: Type,
@@ -674,6 +676,9 @@ pub enum ExpressionContentsGeneric<E, T> {
     /// A local variable declared by a `lambda` expression.
     MonotypeVariable(NameP),
     /// A local variable declared by a `let` expression.
+    ///
+    /// TODO change this! This is now a misnomer, since `let`-polymorphism
+    /// was removed from the language.
     PolytypeVariable(NameP),
     /// A symbol in global scope e.g. `+` or `fold`.
     Symbol {
@@ -766,7 +771,7 @@ pub type ExpressionContentsT =
     ExpressionContentsGeneric<ExpressionT, HashMap<String, TypeVariableId>>;
 
 impl<'a> TypeChecker<'a> {
-    fn compute(mut self, file_parsed: FileP) -> DiagnosticResult<Module> {
+    fn compute(mut self, file_parsed: FileP) -> DiagnosticResult<SourceFileHIR> {
         let mut definitions = HashMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
@@ -906,7 +911,7 @@ impl<'a> TypeChecker<'a> {
             }
         }*/
 
-        DiagnosticResult::ok_with_many(Module { definitions }, self.messages)
+        DiagnosticResult::ok_with_many(SourceFileHIR { definitions }, self.messages)
     }
 
     fn resolve_case(
