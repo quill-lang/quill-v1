@@ -35,19 +35,38 @@ impl Display for SourceFileHIR {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Definitions:")?;
         for (def_name, def) in &self.definitions {
-            writeln!(f, "  {} : {}", def_name, def.symbol_type)?;
+            writeln!(
+                f,
+                "  {} : {:?} -> {}",
+                def_name, def.arg_types, def.return_type
+            )?;
         }
         Ok(())
     }
 }
 
 /// A definition for a symbol, i.e. a function or constant.
+/// The function's type is `arg_types -> return_type`.
+/// For example, if we defined a function
+/// ```notrust
+/// def foo: int -> int -> int {
+///     foo a b = a
+/// }
+/// ```
+/// then `arg_types` would be `[int, int]` and `return_type` would be `int`. If instead we defined it as
+/// ```notrust
+/// def foo: int -> int -> int {
+///     foo a = \b -> a
+/// }
+/// ```
+/// then `arg_types` would be `[int]` and `return_type` would be `int -> int`.
 #[derive(Debug)]
 pub struct Definition {
     range: Range,
     /// The type variables at the start of this definition.
     pub type_variables: Vec<String>,
-    pub symbol_type: Type,
+    pub arg_types: Vec<Type>,
+    pub return_type: Type,
     pub cases: Vec<DefinitionCase>,
 }
 
@@ -73,7 +92,7 @@ pub enum Pattern {
     TypeConstructor {
         type_ctor: TypeConstructorInvocation,
         /// The list of fields. If a pattern is provided, the pattern is matched against the named field.
-        /// If no pattern is provided, an automatic pattern is created, that simply assigns the field to a new variable with the same name.
+        /// If no pattern is provided in Quill code, an automatic pattern is created, that simply assigns the field to a new variable with the same name.
         fields: Vec<(NameP, Pattern)>,
     },
     /// A function pattern. This cannot be used directly in code,
@@ -673,13 +692,8 @@ impl Ranged for Expression {
 pub enum ExpressionContentsGeneric<E, T> {
     /// An argument to this function e.g. `x`.
     Argument(NameP),
-    /// A local variable declared by a `lambda` expression.
-    MonotypeVariable(NameP),
-    /// A local variable declared by a `let` expression.
-    ///
-    /// TODO change this! This is now a misnomer, since `let`-polymorphism
-    /// was removed from the language.
-    PolytypeVariable(NameP),
+    /// A local variable declared by a `lambda` or `let` expression.
+    Local(NameP),
     /// A symbol in global scope e.g. `+` or `fold`.
     Symbol {
         /// The name that the symbol refers to.
@@ -741,8 +755,7 @@ where
     fn range(&self) -> Range {
         match self {
             ExpressionContentsGeneric::Argument(arg) => arg.range,
-            ExpressionContentsGeneric::MonotypeVariable(var) => var.range,
-            ExpressionContentsGeneric::PolytypeVariable(var) => var.range,
+            ExpressionContentsGeneric::Local(var) => var.range,
             ExpressionContentsGeneric::Symbol { range, .. } => *range,
             ExpressionContentsGeneric::Apply(l, r) => l.range().union(r.range()),
             ExpressionContentsGeneric::Lambda {
@@ -801,6 +814,7 @@ impl<'a> TypeChecker<'a> {
             });
             // Check that the patterns we have generated are exhaustive.
             let validated = cases_validated.deny().bind(|cases_validated| {
+                let arity = cases_validated[0].1.len();
                 self.check_cases_exhaustive(
                     &symbol_type,
                     cases_validated
@@ -809,12 +823,13 @@ impl<'a> TypeChecker<'a> {
                         .collect(),
                     &def_name,
                 )
-                .map(|_| cases_validated)
+                .map(|_| (cases_validated, arity))
             });
 
             let (definition_parsed, mut inner_messages) = validated.destructure();
             self.messages.append(&mut inner_messages);
-            if let Some(cases) = definition_parsed {
+            if let Some((cases, arity)) = definition_parsed {
+                let (arg_types, return_type) = get_args_of_type_arity(symbol_type, arity);
                 definitions.insert(
                     def_name.name,
                     Definition {
@@ -823,7 +838,8 @@ impl<'a> TypeChecker<'a> {
                             .iter()
                             .map(|id| id.name.name.clone())
                             .collect(),
-                        symbol_type: symbol_type.clone(),
+                        arg_types,
+                        return_type,
                         cases: cases
                             .into_iter()
                             .map(|(range, arg_patterns, replacement)| DefinitionCase {

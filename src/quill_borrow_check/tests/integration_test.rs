@@ -1,5 +1,6 @@
 #[tokio::test]
-async fn test_parser() {
+async fn test_borrow_check() {
+    use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
@@ -7,6 +8,7 @@ async fn test_parser() {
     use quill_parser::parse;
     use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
+    use quill_type_deduce::check;
     use std::path::PathBuf;
 
     let fs = PackageFileSystem::new(PathBuf::from("tests"));
@@ -18,23 +20,24 @@ async fn test_parser() {
 
         let lexed = lex(&fs, &file_ident).await;
         let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
-        let typeck = parsed
+        let borrowck = parsed
             .bind(|parsed| {
                 index_single_file(&file_ident, &parsed).bind(|index| {
                     let mut project_index = ProjectIndex::new();
                     project_index.insert(file_ident.clone(), index);
-                    quill_type_deduce::check(&file_ident, &project_index, parsed)
+                    check(&file_ident, &project_index, parsed)
+                        .bind(|typeck| borrow_check(&file_ident, typeck))
                 })
             })
             .deny();
 
         let mut error_emitter = ErrorEmitter::new(&fs);
-        let typeck = error_emitter.consume_diagnostic(typeck);
+        let borrowck = error_emitter.consume_diagnostic(borrowck);
         error_emitter.emit_all().await;
 
-        // If the type check fails, the test will fail.
-        let typeck = typeck.unwrap();
+        // If the borrow check fails, the test will fail.
+        let borrowck = borrowck.unwrap();
 
-        println!("typeck: {:#?}", typeck);
+        println!("borrowck: {:#?}", borrowck);
     }
 }

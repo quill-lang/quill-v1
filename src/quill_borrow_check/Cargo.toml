@@ -8,11 +8,11 @@ description = "Checks where objects are moved and borrowed, and outputs MIR"
 [dependencies]
 quill_common = { path = "../quill_common" }
 quill_type = { path = "../quill_type" }
+quill_type_deduce = { path = "../quill_type_deduce" }
+quill_parser = { path = "../quill_parser" }
 
 [dev-dependencies]
 quill_source_file = { path = "../quill_source_file" }
 quill_lexer = { path = "../quill_lexer" }
-quill_parser = { path = "../quill_parser" }
 quill_index = { path = "../quill_index" }
-quill_type_deduce = { path = "../quill_type_deduce" }
 tokio = { version = "^1.0", features = ["macros", "rt"] }
