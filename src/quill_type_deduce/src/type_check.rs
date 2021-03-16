@@ -262,7 +262,7 @@ impl PatternExhaustionCheck {
                     [&type_ctor.data_type.name];
 
                 match &data_type_decl.decl_type {
-                    TypeDeclarationTypeI::Data(datai) => {
+                    TypeDeclarationTypeI::Data(_) => {
                         // This is a data type.
                         // The complement of a type constructor e.g. `Foo { a, b, c }` is the intersection of all possible combinations of
                         // complements of a, b and c except for `Foo { a, b, c }` itself. In this example, it would be
@@ -293,7 +293,7 @@ impl PatternExhaustionCheck {
 
                         for alternative in &enumi.alternatives {
                             match alternative {
-                                Type::Named { name, parameters } => {
+                                Type::Named { name, .. } => {
                                     if *name == type_ctor.data_type {
                                         // This is the type constructor we want to find the complement of.
                                         complement.extend(
@@ -341,7 +341,7 @@ impl PatternExhaustionCheck {
                                                         .collect(),
                                                 });
                                             }
-                                            TypeDeclarationTypeI::Enum(enumi) => {
+                                            TypeDeclarationTypeI::Enum(_) => {
                                                 add_generic_case = true;
                                             }
                                         }
@@ -831,7 +831,7 @@ where
 
 pub type ExpressionContents = ExpressionContentsGeneric<Expression, Vec<Type>>;
 pub type ExpressionContentsT =
-    ExpressionContentsGeneric<ExpressionT, HashMap<String, TypeVariableId>>;
+    ExpressionContentsGeneric<ExpressionT, HashMap<String, TypeVariable>>;
 
 impl<'a> TypeChecker<'a> {
     fn compute(mut self, file_parsed: FileP) -> DiagnosticResult<SourceFileHIR> {

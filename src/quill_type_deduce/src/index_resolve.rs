@@ -131,8 +131,8 @@ pub fn replace_type_variables(
 
 pub struct InstantiationResult {
     pub result: TypeVariable,
-    pub ids: HashMap<String, TypeVariableId>,
-    pub higher_kinded_ids: HashMap<String, HashMap<Vec<Type>, TypeVariableId>>,
+    pub ids: HashMap<String, TypeVariable>,
+    pub higher_kinded_ids: HashMap<String, HashMap<Vec<Type>, TypeVariable>>,
 }
 
 /// You can instantiate a type into a type variable,
@@ -151,12 +151,12 @@ pub fn instantiate(ty: &Type) -> InstantiationResult {
 }
 
 /// While we're instantiating a type, we need to keep track of all of the named type variables
-/// and which IDs we've assigned them.
-/// The map of higher kinded IDs maps variable names to lists of parameters to IDs.
+/// and which type variables we've assigned them.
+/// The map of higher kinded IDs maps variable names to lists of parameters to type variables.
 pub fn instantiate_with(
     ty: &Type,
-    ids: &mut HashMap<String, TypeVariableId>,
-    higher_kinded_ids: &mut HashMap<String, HashMap<Vec<Type>, TypeVariableId>>,
+    ids: &mut HashMap<String, TypeVariable>,
+    higher_kinded_ids: &mut HashMap<String, HashMap<Vec<Type>, TypeVariable>>,
 ) -> TypeVariable {
     match ty {
         Type::Named { name, parameters } => TypeVariable::Named {
@@ -176,22 +176,23 @@ pub fn instantiate_with(
             parameters,
         } => {
             if parameters.is_empty() {
-                TypeVariable::Unknown {
-                    id: *ids
-                        .entry(variable.clone())
-                        .or_insert_with(TypeVariableId::default),
-                }
+                ids.entry(variable.clone())
+                    .or_insert_with(|| TypeVariable::Unknown {
+                        id: TypeVariableId::default(),
+                    })
+                    .clone()
             } else {
                 // Higher kinded types get one type variable for each instantiation.
                 // For instance, `F[T]` and `F[K]` are given *different* type variables.
                 // The precise distribution of type variables is specified in the third parameter to this function.
-                TypeVariable::Unknown {
-                    id: *higher_kinded_ids
-                        .entry(variable.clone())
-                        .or_default()
-                        .entry(parameters.clone())
-                        .or_insert_with(TypeVariableId::default),
-                }
+                higher_kinded_ids
+                    .entry(variable.clone())
+                    .or_default()
+                    .entry(parameters.clone())
+                    .or_insert_with(|| TypeVariable::Unknown {
+                        id: TypeVariableId::default(),
+                    })
+                    .clone()
             }
         }
         Type::Primitive(prim) => TypeVariable::Primitive(*prim),

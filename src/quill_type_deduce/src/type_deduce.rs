@@ -5,7 +5,7 @@ use quill_common::{
     location::{Location, ModuleIdentifier, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_index::{ProjectIndex, TypeDeclarationTypeI};
+use quill_index::{EnumI, ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{ExprPatP, IdentifierP, NameP};
 use quill_type::Type;
 
@@ -195,6 +195,7 @@ pub fn deduce_expr_type(
         ));
         solve_type_constraints(
             source_file,
+            project_index,
             expr_type_check.expr,
             expr_type_check.constraints,
         )
@@ -837,7 +838,9 @@ fn generate_constraints(
                                 for (i, type_param) in datai.type_params.iter().enumerate() {
                                     ids.insert(
                                         type_param.name.clone(),
-                                        type_parameter_variables[i],
+                                        TypeVariable::Unknown {
+                                            id: type_parameter_variables[i],
+                                        },
                                     );
                                 }
                                 // TODO deal with higher kinded type variables here.
@@ -902,7 +905,9 @@ fn generate_constraints(
                                 for (i, type_param) in datai.type_params.iter().enumerate() {
                                     ids.insert(
                                         type_param.name.clone(),
-                                        type_parameter_variables[i],
+                                        TypeVariable::Unknown {
+                                            id: type_parameter_variables[i],
+                                        },
                                     );
                                 }
                                 // TODO deal with higher kinded type variables here.
@@ -985,6 +990,7 @@ fn already_defined(
 /// <https://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.18.9348>.
 fn solve_type_constraints(
     source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
     expr: ExpressionT,
     constraints: Constraints,
 ) -> DiagnosticResult<Expression> {
@@ -1015,14 +1021,25 @@ fn solve_type_constraints(
     // We'll start by supplying the empty substitution.
     solve_type_constraint_queue(
         source_file,
+        project_index,
         high_priority_constraints,
         HashMap::<TypeVariableId, TypeVariable>::new(),
     )
     .bind(|substitution| {
-        solve_type_constraint_queue(source_file, mid_priority_constraints, substitution)
+        solve_type_constraint_queue(
+            source_file,
+            project_index,
+            mid_priority_constraints,
+            substitution,
+        )
     })
     .bind(|substitution| {
-        solve_type_constraint_queue(source_file, low_priority_constraints, substitution)
+        solve_type_constraint_queue(
+            source_file,
+            project_index,
+            low_priority_constraints,
+            substitution,
+        )
     })
     .bind(|substitution| {
         // println!("Sub was:");
@@ -1033,6 +1050,7 @@ fn solve_type_constraints(
 
 fn solve_type_constraint_queue(
     source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
     mut constraint_queue: VecDeque<(TypeVariable, Constraint)>,
     mut substitution: HashMap<TypeVariableId, TypeVariable>,
 ) -> DiagnosticResult<HashMap<TypeVariableId, TypeVariable>> {
@@ -1045,12 +1063,12 @@ fn solve_type_constraint_queue(
             Constraint::Equality { ty: other, reason } => {
                 // This constraint specifies that `type_variable === other`.
                 // So we'll find the most general unifier between the two types.
-                match most_general_unifier(type_variable.clone(), other.clone()) {
+                match most_general_unifier(project_index, type_variable.clone(), other.clone()) {
                     Ok(mgu) => {
                         // Add this substitution to the list of substitutions,
                         // and also apply the substitution to the current list of constraints.
                         apply_substitution_to_constraints(&mgu, &mut constraint_queue);
-                        match unify(substitution.clone(), mgu) {
+                        match unify(project_index, substitution.clone(), mgu) {
                             Ok(sub) => {
                                 substitution = sub;
 
@@ -1331,6 +1349,7 @@ enum UnificationError {
 
 /// Returns a substitution which unifies the two types. If one could not be found, this is a type error, and None will be returned.
 fn most_general_unifier(
+    project_index: &ProjectIndex,
     expected: TypeVariable,
     actual: TypeVariable,
 ) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
@@ -1340,73 +1359,97 @@ fn most_general_unifier(
             name: left_name,
             parameters: left_parameters,
         } => {
-            match actual {
-                TypeVariable::Named {
-                    name: right_name,
-                    parameters: right_parameters,
-                } => {
-                    // Both type variables are named types.
-                    // Check that they are the same.
-                    if left_name == right_name {
-                        // Unify the type parameters.
-                        // The lists must have equal length, since the names matched.
-                        let mut mgu = HashMap::new();
-                        for (left_param, right_param) in
-                            left_parameters.into_iter().zip(right_parameters)
-                        {
-                            let inner_mgu = most_general_unifier(left_param, right_param)?;
-                            mgu = unify(mgu, inner_mgu)?;
+            let left_type = &project_index[&left_name.source_file].types[&left_name.name];
+            if let TypeDeclarationTypeI::Enum(enumi) = &left_type.decl_type {
+                mgu_enum(project_index, left_name, left_parameters, enumi, actual)
+            } else {
+                match actual {
+                    TypeVariable::Named {
+                        name: right_name,
+                        parameters: right_parameters,
+                    } => {
+                        let right_type =
+                            &project_index[&right_name.source_file].types[&right_name.name];
+                        if let TypeDeclarationTypeI::Enum(enumi) = &right_type.decl_type {
+                            mgu_enum(
+                                project_index,
+                                right_name,
+                                right_parameters,
+                                enumi,
+                                TypeVariable::Named {
+                                    name: left_name,
+                                    parameters: left_parameters,
+                                },
+                            )
+                        } else {
+                            // Both type variables are named types.
+                            // Check that they are the same.
+                            if left_name == right_name {
+                                // Unify the type parameters.
+                                // The lists must have equal length, since the names matched.
+                                let mut mgu = HashMap::new();
+                                for (left_param, right_param) in
+                                    left_parameters.into_iter().zip(right_parameters)
+                                {
+                                    let inner_mgu = most_general_unifier(
+                                        project_index,
+                                        left_param,
+                                        right_param,
+                                    )?;
+                                    mgu = unify(project_index, mgu, inner_mgu)?;
+                                }
+                                Ok(mgu)
+                            } else {
+                                Err(UnificationError::ExpectedDifferent {
+                                    expected: TypeVariable::Named {
+                                        name: left_name,
+                                        parameters: left_parameters,
+                                    },
+                                    actual: TypeVariable::Named {
+                                        name: right_name,
+                                        parameters: right_parameters,
+                                    },
+                                })
+                            }
                         }
-                        Ok(mgu)
-                    } else {
+                    }
+                    TypeVariable::Unknown { id: right } => {
+                        let mut map = HashMap::new();
+                        map.insert(
+                            right,
+                            TypeVariable::Named {
+                                name: left_name,
+                                parameters: left_parameters,
+                            },
+                        );
+                        Ok(map)
+                    }
+                    TypeVariable::Function(right_param, right_result) => {
                         Err(UnificationError::ExpectedDifferent {
                             expected: TypeVariable::Named {
                                 name: left_name,
                                 parameters: left_parameters,
                             },
-                            actual: TypeVariable::Named {
-                                name: right_name,
-                                parameters: right_parameters,
-                            },
+                            actual: TypeVariable::Function(right_param, right_result),
                         })
                     }
-                }
-                TypeVariable::Unknown { id: right } => {
-                    let mut map = HashMap::new();
-                    map.insert(
-                        right,
-                        TypeVariable::Named {
-                            name: left_name,
-                            parameters: left_parameters,
-                        },
-                    );
-                    Ok(map)
-                }
-                TypeVariable::Function(right_param, right_result) => {
-                    Err(UnificationError::ExpectedDifferent {
+                    TypeVariable::Variable { variable, .. } => {
+                        Err(UnificationError::ExpectedVariable {
+                            actual: TypeVariable::Named {
+                                name: left_name,
+                                parameters: left_parameters,
+                            },
+                            variable,
+                        })
+                    }
+                    prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
                         expected: TypeVariable::Named {
                             name: left_name,
                             parameters: left_parameters,
                         },
-                        actual: TypeVariable::Function(right_param, right_result),
-                    })
+                        actual: prim,
+                    }),
                 }
-                TypeVariable::Variable { variable, .. } => {
-                    Err(UnificationError::ExpectedVariable {
-                        actual: TypeVariable::Named {
-                            name: left_name,
-                            parameters: left_parameters,
-                        },
-                        variable,
-                    })
-                }
-                prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
-                    expected: TypeVariable::Named {
-                        name: left_name,
-                        parameters: left_parameters,
-                    },
-                    actual: prim,
-                }),
             }
         }
         TypeVariable::Unknown { id } => {
@@ -1424,9 +1467,9 @@ fn most_general_unifier(
                 }
                 TypeVariable::Function(right_param, right_result) => {
                     // Both were functions. Unify both the parameters and the results.
-                    let mgu1 = most_general_unifier(*left_param, *right_param)?;
-                    let mgu2 = most_general_unifier(*left_result, *right_result)?;
-                    unify(mgu1, mgu2)
+                    let mgu1 = most_general_unifier(project_index, *left_param, *right_param)?;
+                    let mgu2 = most_general_unifier(project_index, *left_result, *right_result)?;
+                    unify(project_index, mgu1, mgu2)
                 }
                 TypeVariable::Unknown { id: right } => {
                     let mut map = HashMap::new();
@@ -1518,15 +1561,127 @@ fn most_general_unifier(
     }
 }
 
+fn mgu_enum(
+    project_index: &ProjectIndex,
+    left_name: QualifiedName,
+    left_parameters: Vec<TypeVariable>,
+    enumi: &EnumI,
+    actual: TypeVariable,
+) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
+    if let TypeVariable::Unknown { id: right } = actual {
+        let mut map = HashMap::new();
+        map.insert(
+            right,
+            TypeVariable::Named {
+                name: left_name,
+                parameters: left_parameters,
+            },
+        );
+        Ok(map)
+    } else {
+        // Since this type variable is an enum, any of its alternatives is valid.
+        // Further, it itself is valid. For example, if we expect a Bool, one of `[True, False, Bool]` is expected.
+        if let TypeVariable::Named { name, parameters } = &actual {
+            // Check if this is just the enum name itself, such as `Bool`.
+            if *name == left_name {
+                // Unify the parameters.
+                let mut map = HashMap::new();
+                for (expected_param, actual_param) in left_parameters.iter().zip(parameters) {
+                    map = unify(
+                        project_index,
+                        map,
+                        most_general_unifier(
+                            project_index,
+                            expected_param.clone(),
+                            actual_param.clone(),
+                        )?,
+                    )?
+                }
+                return Ok(map);
+            }
+        }
+
+        let results = enumi
+            .alternatives
+            .iter()
+            .map(|alt| {
+                let mut ids = HashMap::new();
+                let mut higher_kinded_ids = HashMap::new();
+                // Instantiate the enum subtype using the *same* type parameters as the enum itself.
+                match alt {
+                    Type::Named { parameters, .. } => {
+                        for (param, param_var) in enumi.type_params.iter().zip(&left_parameters) {
+                            for actual_param in parameters {
+                                if let Type::Variable {
+                                    variable,
+                                    parameters: parameters_count,
+                                } = actual_param
+                                {
+                                    if *variable == param.name {
+                                        if !parameters_count.is_empty() {
+                                            panic!("not implemented higher kinded enums yet")
+                                        }
+                                        ids.insert(variable.clone(), param_var.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Type::Variable { parameters, .. } => {
+                        for (param, param_var) in enumi.type_params.iter().zip(&left_parameters) {
+                            for actual_param in parameters {
+                                if let Type::Variable {
+                                    variable,
+                                    parameters: parameters_count,
+                                } = actual_param
+                                {
+                                    if *variable == param.name {
+                                        if !parameters_count.is_empty() {
+                                            panic!("not implemented higher kinded enums yet")
+                                        }
+                                        ids.insert(variable.clone(), param_var.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Type::Function(_, _) => {}
+                    Type::Primitive(_) => {}
+                }
+                let actual_alt = instantiate_with(alt, &mut ids, &mut higher_kinded_ids);
+
+                most_general_unifier(project_index, actual_alt, actual.clone())
+            })
+            .collect::<Vec<_>>();
+
+        // We require that only one enum alternative actually matches.
+        // Otherwise, this is a type error.
+        let match_count = results.iter().filter(|result| result.is_ok()).count();
+        if match_count == 1 {
+            // This is ok. No substitution is required.
+            Ok(HashMap::new())
+        } else {
+            Err(UnificationError::ExpectedDifferent {
+                expected: TypeVariable::Named {
+                    name: left_name,
+                    parameters: left_parameters,
+                },
+                actual,
+            })
+        }
+    }
+}
+
 fn unify(
+    project_index: &ProjectIndex,
     mut a: HashMap<TypeVariableId, TypeVariable>,
     b: HashMap<TypeVariableId, TypeVariable>,
 ) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
     for (id, v) in b {
         match a.entry(id) {
             Entry::Occupied(occupied) => {
-                let inner_mgu = most_general_unifier(occupied.get().clone(), v)?;
-                a = unify(a, inner_mgu)?;
+                let inner_mgu = most_general_unifier(project_index, occupied.get().clone(), v)?;
+                a = unify(project_index, a, inner_mgu)?;
             }
             Entry::Vacant(vacant) => {
                 vacant.insert(v);
@@ -1592,13 +1747,9 @@ fn substitute_contents(
             let type_variables = type_variables
                 .iter()
                 .map(|(ty_name, ty_id)| {
-                    let (ty, messages) = substitute_type(
-                        substitution,
-                        TypeVariable::Unknown { id: *ty_id },
-                        source_file,
-                        range,
-                    )
-                    .destructure();
+                    let (ty, messages) =
+                        substitute_type(substitution, ty_id.clone(), source_file, range)
+                            .destructure();
                     // The error message, if present, needs to be customised to state that the problem is with the type variable.
                     if let Some(ty) = ty {
                         DiagnosticResult::ok_with_many(ty, messages)
