@@ -13,7 +13,6 @@ pub data Some[T] { value: T }
 pub data None {}
 pub enum Option[T] = Some[T] | None
 
-// TODO fix inference of patterns
 pub def unwrap_or[T]: T -> Option[T] -> T {
     unwrap_or _ Some { value } = value,
     unwrap_or t None {} = t

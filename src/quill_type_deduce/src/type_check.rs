@@ -173,7 +173,7 @@ impl PatternExhaustionCheck {
         &mut self,
         project_index: &ProjectIndex,
         arg_types: &[Type],
-        to_exclude: &Pattern,
+        to_exclude: &[Pattern],
     ) -> bool {
         let mut anything_modified = false;
         for pat in std::mem::take(&mut self.unmatched_patterns) {
@@ -195,7 +195,7 @@ impl PatternExhaustionCheck {
         project_index: &ProjectIndex,
         pat: Pattern,
         arg_types: &[Type],
-        to_exclude: &Pattern,
+        to_exclude: &[Pattern],
     ) -> (bool, Vec<Pattern>) {
         match pat {
             Pattern::Function { param_types, args } => {
@@ -210,17 +210,15 @@ impl PatternExhaustionCheck {
                 // - foo a comp(b) _
                 // - foo a b comp(c)
                 let complement =
-                    PatternExhaustionCheck::complement_args(project_index, arg_types, &args)
+                    PatternExhaustionCheck::complement_args(project_index, arg_types, to_exclude)
                         .into_iter()
                         .map(|arg_list| Pattern::Function {
                             param_types: param_types.clone(),
                             args: arg_list,
-                        });
+                        })
+                        .collect::<Vec<_>>();
 
-                let pat = Pattern::Function {
-                    param_types: param_types.clone(),
-                    args,
-                };
+                let pat = Pattern::Function { param_types, args };
                 for pat_to_exclude in complement {
                     let (changed, result) = PatternExhaustionCheck::intersection(
                         project_index,
@@ -253,31 +251,11 @@ impl PatternExhaustionCheck {
                 // A type constructor, e.g. `Just { value = 3 }` does not match:
                 // - `Just { value = a }` where `a` is in the complement of `3`
                 // - `a` where `a` is any other enum variant of the same enum.
-                let data_type_decl = &project_index[&type_ctor.data_type.source_file].types
-                    [&type_ctor.data_type.name];
 
-                match &data_type_decl.decl_type {
-                    TypeDeclarationTypeI::Data(_) => {
-                        // This is a data type.
-                        // The complement of a type constructor e.g. `Foo { a, b, c }` is the intersection of all possible combinations of
-                        // complements of a, b and c except for `Foo { a, b, c }` itself. In this example, it would be
-                        // - Foo { comp(a), _, _ }
-                        // - Foo { a, comp(b), _ }
-                        // - Foo { a, b, comp(c) }
-
-                        PatternExhaustionCheck::complement_fields(project_index, fields)
-                            .into_iter()
-                            .map(|arg_list| Pattern::TypeConstructor {
-                                type_ctor: TypeConstructorInvocation {
-                                    data_type: type_ctor.data_type.clone(),
-                                    range: Location { line: 0, col: 0 }.into(),
-                                    num_parameters: type_ctor.num_parameters,
-                                },
-                                fields: arg_list,
-                            })
-                            .collect()
-                    }
-                    TypeDeclarationTypeI::Enum(enumi) => {
+                // Check if the expected type is an enum type.
+                if let Type::Named { name, parameters } = ty {
+                    let data_type_decl = &project_index[&name.source_file].types[&name.name];
+                    if let TypeDeclarationTypeI::Enum(enumi) = &data_type_decl.decl_type {
                         // This is an enum type.
                         // Loop through all of the enum variants.
                         // TODO sort out nested enums. If `a = b | c`, and `d = a | e`, then we should be able to use `c` as a type ctor for `d` in patterns.
@@ -351,15 +329,28 @@ impl PatternExhaustionCheck {
                             complement.push(Pattern::Unknown(pat.range()));
                         }
 
-                        dbg!("Complement of");
-                        dbg!(&type_ctor);
-                        dbg!(&fields);
-                        dbg!("is");
-                        dbg!(&complement);
-
-                        complement
+                        return complement;
                     }
                 }
+
+                // This is a data type.
+                // The complement of a type constructor e.g. `Foo { a, b, c }` is the intersection of all possible combinations of
+                // complements of a, b and c except for `Foo { a, b, c }` itself. In this example, it would be
+                // - Foo { comp(a), _, _ }
+                // - Foo { a, comp(b), _ }
+                // - Foo { a, b, comp(c) }
+
+                PatternExhaustionCheck::complement_fields(project_index, fields)
+                    .into_iter()
+                    .map(|arg_list| Pattern::TypeConstructor {
+                        type_ctor: TypeConstructorInvocation {
+                            data_type: type_ctor.data_type.clone(),
+                            range: Location { line: 0, col: 0 }.into(),
+                            num_parameters: type_ctor.num_parameters,
+                        },
+                        fields: arg_list,
+                    })
+                    .collect()
             }
             Pattern::Function { param_types, args } => {
                 unreachable!()
@@ -1207,11 +1198,7 @@ impl<'a> TypeChecker<'a> {
 
         let mut messages = Vec::new();
         for (range, patterns) in &cases {
-            let pattern = Pattern::Function {
-                param_types: symbol_args.clone(),
-                args: (*patterns).clone(),
-            };
-            let anything_modified = args_exhaustion.add(self.project_index, &symbol_args, &pattern);
+            let anything_modified = args_exhaustion.add(self.project_index, &symbol_args, patterns);
             if !anything_modified {
                 messages.push(ErrorMessage::new(
                     String::from("this pattern will never be matched"),
