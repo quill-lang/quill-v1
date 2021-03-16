@@ -1,15 +1,15 @@
-pub data Left { value: T }
-pub data Right { value: U }
+pub data Left[T] { value: T }
+pub data Right[T] { value: T }
 pub enum Either[T, U] = Left[T] | Right[U]
 
 pub data Unit {}
 
 pub def create_either[T]: T -> Either[T, Unit] {
-    create_either t = Either::Left { value = t },
-    //create_either a = Either::Right { value = a },
+    create_either t = Left { value = t },
+    //create_either a = Right { value = a },
 }
 
-pub data Some { value: T }
+pub data Some[T] { value: T }
 pub data None {}
 pub enum Option[T] = Some[T] | None
 

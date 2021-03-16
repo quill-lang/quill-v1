@@ -823,6 +823,7 @@ fn generate_constraints(
                                 assumptions = assumptions.union(result.assumptions);
                                 constraints = constraints.union(result.constraints);
 
+                                // TODO this crashes if the field's type could not ben deduced! We should deny before this step.
                                 // Add the constraint that the field has the required type.
                                 let (_, field_type) = datai
                                     .type_ctor
@@ -1272,7 +1273,7 @@ fn process_unification_error(
         ),
         UnificationError::ExpectedDifferent { expected, actual } => ErrorMessage::new_with_many(
             format!(
-                "expected type {} was found, but found type {}",
+                "expected type {}, but found type {}",
                 ty_printer.print(expected),
                 ty_printer.print(actual)
             ),

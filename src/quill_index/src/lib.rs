@@ -11,9 +11,12 @@ pub fn index_single_file(
     file_ident: &SourceFileIdentifier,
     parsed: &FileP,
 ) -> DiagnosticResult<FileIndex> {
-    compute_types(&file_ident, &parsed).bind(|cache| {
-        let mut project_types = ProjectTypesC::new();
-        project_types.insert(file_ident.clone(), cache);
-        index(&file_ident, &parsed, &project_types)
-    })
+    // TODO move this `deny` to an outer level, such as a function to index an entire project.
+    compute_types(&file_ident, &parsed)
+        .bind(|cache| {
+            let mut project_types = ProjectTypesC::new();
+            project_types.insert(file_ident.clone(), cache);
+            index(&file_ident, &parsed, &project_types)
+        })
+        .deny()
 }

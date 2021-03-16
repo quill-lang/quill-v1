@@ -1060,82 +1060,74 @@ impl<'a> TypeChecker<'a> {
                 fields: provided_fields,
             } => match expected_type {
                 Type::Named {
-                    name: expected_name,
                     parameters: concrete_type_parameters,
+                    ..
                 } => {
-                    if type_ctor.data_type == expected_name {
-                        // Find the data type declaration in the index.
-                        let data_type_decl = &self.project_index[&expected_name.source_file].types
-                            [&expected_name.name];
-                        // Find the original list of named type parameters.
-                        // For instance, in a data type `Foo[A]`, the named type parameter list is `[A]`.
-                        // We can then create a bijective correspondence between the list of `concrete_type_parameters` given
-                        // and the list of `named_type_parameters`, so we can identify which type parameter has which value.
-                        // Also, find the list of fields for the type constructor that we're creating.
-                        let (named_type_parameters, expected_fields) = {
-                            if let TypeDeclarationTypeI::Data(datai) = &data_type_decl.decl_type {
-                                let fields = datai
-                                    .type_ctor
-                                    .fields
-                                    .iter()
-                                    .map(|(name, ty)| (name.name.clone(), ty.clone()))
-                                    .collect::<HashMap<String, Type>>();
-                                (&datai.type_params, fields)
-                            } else {
-                                unreachable!()
-                            }
-                        };
-
-                        // Process the fields provided to this type constructor.
-                        let provided_fields = provided_fields
-                            .iter()
-                            .map(|(name, pat)| (name.name.clone(), pat.clone()))
-                            .collect::<HashMap<String, Pattern>>();
-
-                        // Check that the names of the provided fields and the expected fields match.
-                        let mut bound_vars = Vec::new();
-                        for (field_name, pattern) in &provided_fields {
-                            // Does this field actually belong to the type constructor?
-                            if let Some(field_type) = expected_fields.get(field_name) {
-                                // For each field in the constructor, we need to match that field against the known type
-                                // of this field. So we need to match the type parameters in this type constructor
-                                // against the type parameters above.
-                                // This means that when matching a `Maybe Bool`, the type constructor `Just { value: T }` becomes `Just { value: Bool }`,
-                                // because the `T` is replaced with the concrete type `Bool`.
-                                let expected_type = replace_type_variables(
-                                    field_type.clone(),
-                                    named_type_parameters,
-                                    &concrete_type_parameters,
-                                );
-                                bound_vars.push(self.match_and_bind(pattern, expected_type));
-                            }
+                    // Find the data type declaration in the index.
+                    let data_type_decl = &self.project_index[&type_ctor.data_type.source_file]
+                        .types[&type_ctor.data_type.name];
+                    // Find the original list of named type parameters.
+                    // For instance, in a data type `Foo[A]`, the named type parameter list is `[A]`.
+                    // We can then create a bijective correspondence between the list of `concrete_type_parameters` given
+                    // and the list of `named_type_parameters`, so we can identify which type parameter has which value.
+                    // Also, find the list of fields for the type constructor that we're creating.
+                    let (named_type_parameters, expected_fields) = {
+                        if let TypeDeclarationTypeI::Data(datai) = &data_type_decl.decl_type {
+                            let fields = datai
+                                .type_ctor
+                                .fields
+                                .iter()
+                                .map(|(name, ty)| (name.name.clone(), ty.clone()))
+                                .collect::<HashMap<String, Type>>();
+                            (&datai.type_params, fields)
+                        } else {
+                            unreachable!()
                         }
-                        DiagnosticResult::sequence(bound_vars)
-                            .bind(|bound_vars| collect_bound_vars(self.source_file, bound_vars))
-                            .bind(|result| {
-                                // Check that all of the fields were actually referenced.
-                                let mut messages = Vec::new();
-                                for field_name in expected_fields.keys() {
-                                    if !provided_fields.contains_key(field_name) {
-                                        messages.push(ErrorMessage::new(
-                                            format!(
-                                                "this pattern is missing the field `{}`",
-                                                field_name
-                                            ),
-                                            Severity::Error,
-                                            Diagnostic::at(self.source_file, &type_ctor.range),
-                                        ))
-                                    }
-                                }
-                                DiagnosticResult::ok_with_many(result, messages)
-                            })
-                    } else {
-                        DiagnosticResult::fail(ErrorMessage::new(
-                            format!("expected a type constructor for `{}`", expected_name),
-                            Severity::Error,
-                            Diagnostic::at(self.source_file, &type_ctor.range),
-                        ))
+                    };
+
+                    // Process the fields provided to this type constructor.
+                    let provided_fields = provided_fields
+                        .iter()
+                        .map(|(name, pat)| (name.name.clone(), pat.clone()))
+                        .collect::<HashMap<String, Pattern>>();
+
+                    // Check that the names of the provided fields and the expected fields match.
+                    let mut bound_vars = Vec::new();
+                    for (field_name, pattern) in &provided_fields {
+                        // Does this field actually belong to the type constructor?
+                        if let Some(field_type) = expected_fields.get(field_name) {
+                            // For each field in the constructor, we need to match that field against the known type
+                            // of this field. So we need to match the type parameters in this type constructor
+                            // against the type parameters above.
+                            // This means that when matching a `Maybe Bool`, the type constructor `Just { value: T }` becomes `Just { value: Bool }`,
+                            // because the `T` is replaced with the concrete type `Bool`.
+                            let expected_type = replace_type_variables(
+                                field_type.clone(),
+                                named_type_parameters,
+                                &concrete_type_parameters,
+                            );
+                            bound_vars.push(self.match_and_bind(pattern, expected_type));
+                        }
                     }
+                    DiagnosticResult::sequence(bound_vars)
+                        .bind(|bound_vars| collect_bound_vars(self.source_file, bound_vars))
+                        .bind(|result| {
+                            // Check that all of the fields were actually referenced.
+                            let mut messages = Vec::new();
+                            for field_name in expected_fields.keys() {
+                                if !provided_fields.contains_key(field_name) {
+                                    messages.push(ErrorMessage::new(
+                                        format!(
+                                            "this pattern is missing the field `{}`",
+                                            field_name
+                                        ),
+                                        Severity::Error,
+                                        Diagnostic::at(self.source_file, &type_ctor.range),
+                                    ))
+                                }
+                            }
+                            DiagnosticResult::ok_with_many(result, messages)
+                        })
                 }
                 Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
                     String::from("expected a name for a function, not a type constructor"),
