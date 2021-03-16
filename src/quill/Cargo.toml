@@ -14,4 +14,5 @@ quill_lexer = { path = "../quill_lexer" }
 quill_parser = { path = "../quill_parser" }
 quill_index = { path = "../quill_index" }
 quill_type_deduce = { path = "../quill_type_deduce" }
+quill_mir = { path = "../quill_mir" }
 quill_borrow_check = { path = "../quill_borrow_check" }

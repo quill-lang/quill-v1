@@ -1,0 +1,36 @@
+pub data Left { value: T }
+pub data Right { value: U }
+pub enum Either[T, U] = Left[T] | Right[U]
+
+pub data Unit = pub Unit {}
+
+pub def create_either[T]: T -> Either[T, Unit] {
+    create_either t = Either::Left { value = t },
+    //create_either a = Either::Right { value = a },
+}
+
+pub data Some { value: T }
+pub data None {}
+pub enum Option[T] = Some[T] | None
+
+pub def unwrap_or[T]: T -> Option[T] -> T {
+    unwrap_or _ Some { value } = value,
+    unwrap_or t None {} = t
+}
+
+pub def block: Option[Option[Unit]] {
+    block = (
+        let inner = Unit {};
+        let next = Some { value = inner };
+        Some { value = next }
+    )
+}
+
+pub data True {}
+pub data False {}
+pub enum Bool = True | False
+
+pub def or: Bool -> Bool -> Bool {
+    or True {} = \a -> a,
+    or _ = \a -> False {}
+}

@@ -1,10 +1,10 @@
 #[tokio::test]
 async fn test_borrow_check() {
-    use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
+    use quill_mir::to_mir;
     use quill_parser::parse;
     use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
@@ -20,24 +20,24 @@ async fn test_borrow_check() {
 
         let lexed = lex(&fs, &file_ident).await;
         let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
-        let borrowck = parsed
+        let mir = parsed
             .bind(|parsed| {
                 index_single_file(&file_ident, &parsed).bind(|index| {
                     let mut project_index = ProjectIndex::new();
                     project_index.insert(file_ident.clone(), index);
                     check(&file_ident, &project_index, parsed)
-                        .bind(|typeck| borrow_check(&file_ident, typeck))
+                        .bind(|typeck| to_mir(&file_ident, typeck))
                 })
             })
             .deny();
 
         let mut error_emitter = ErrorEmitter::new(&fs);
-        let borrowck = error_emitter.consume_diagnostic(borrowck);
+        let mir = error_emitter.consume_diagnostic(mir);
         error_emitter.emit_all().await;
 
-        // If the borrow check fails, the test will fail.
-        let borrowck = borrowck.unwrap();
+        // If the MIR conversion fails, the test will fail.
+        let mir = mir.unwrap();
 
-        println!("borrowck: {:#?}", borrowck);
+        println!("mir: {:#?}", mir);
     }
 }
