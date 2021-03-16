@@ -71,14 +71,20 @@ pub fn parse(
 
     DiagnosticResult::sequence(items).map(|items| {
         let mut data = Vec::new();
+        let mut enums = Vec::new();
         let mut definitions = Vec::new();
         for item in items {
             match item {
                 ItemP::Data(i) => data.push(i),
+                ItemP::Enum(i) => enums.push(i),
                 ItemP::Definition(i) => definitions.push(i),
             }
         }
-        FileP { data, definitions }
+        FileP {
+            data,
+            enums,
+            definitions,
+        }
     })
 }
 
@@ -94,13 +100,16 @@ impl<'input> Parser<'input> {
         // An item starts with an optional visibility declaration.
         let vis = self.parse_visibility();
 
-        // Then we require either the keyword `data` or `fn`.
-        let item_type = self.parse_token_maybe(|ty| matches!(ty, TokenType::Data | TokenType::Def));
+        // Then we require `data`, `enum` or `def`.
+        let item_type = self.parse_token_maybe(|ty| {
+            matches!(ty, TokenType::Data | TokenType::Enum | TokenType::Def)
+        });
 
         vis.bind(|vis| {
             if let Some(item_type) = item_type {
                 match item_type.token_type {
                     TokenType::Data => self.parse_data(vis).map(ItemP::Data),
+                    TokenType::Enum => self.parse_enum(vis).map(ItemP::Enum),
                     TokenType::Def => self.parse_def(vis).map(ItemP::Definition),
                     _ => unreachable!(),
                 }
@@ -120,6 +129,7 @@ impl<'input> Parser<'input> {
 #[derive(Debug)]
 pub struct FileP {
     pub data: Vec<DataP>,
+    pub enums: Vec<EnumP>,
     pub definitions: Vec<DefinitionP>,
 }
 
@@ -127,6 +137,7 @@ pub struct FileP {
 #[derive(Debug)]
 enum ItemP {
     Data(DataP),
+    Enum(EnumP),
     Definition(DefinitionP),
 }
 
@@ -134,21 +145,19 @@ enum ItemP {
 //// DATA TYPES ////
 ////////////////////
 
-/// A `data` block, used to define sum or product types.
+/// A `data` block, used to define product types.
 #[derive(Debug)]
 pub struct DataP {
     pub vis: Visibility,
     pub identifier: NameP,
     pub type_params: Vec<TypeParameterP>,
-    pub type_ctors: Vec<TypeConstructorP>,
+    pub type_ctor: TypeConstructorP,
 }
 
 /// Represents a type constructor in a `data` block.
 /// For example, `Just { value: T }`, where the `Just` is the `id`, and the `value` is the only element in `fields`.
 #[derive(Debug)]
 pub struct TypeConstructorP {
-    pub vis: Visibility,
-    pub name: NameP,
     pub fields: Vec<FieldP>,
 }
 
@@ -158,8 +167,20 @@ pub struct FieldP {
     pub ty: TypeP,
 }
 
+/// An `enum` block, used to define sum types.
+/// This kind of block allows you to associate arbitrary other types together into a single type.
+/// Any data type can be used inside an enum, even one used in a completely different enum.
+#[derive(Debug)]
+pub struct EnumP {
+    pub vis: Visibility,
+    pub identifier: NameP,
+    pub type_params: Vec<TypeParameterP>,
+    /// Has size 1 or larger.
+    pub alternatives: Vec<TypeP>,
+}
+
 impl<'input> Parser<'input> {
-    /// `data ::= identifier type_params? "=" type_ctors`
+    /// `data ::= identifier type_params? type_ctor`
     fn parse_data(&mut self, vis: Visibility) -> DiagnosticResult<DataP> {
         self.parse_name_with_message("expected a name for this new data type")
             .bind(|identifier| {
@@ -171,58 +192,30 @@ impl<'input> Parser<'input> {
                 };
 
                 named_type_params.bind(|type_params| {
-                    // We now need an `=` symbol, then a series of type constructors separated by `|` symbols.
-                    let assign_symbol = self.parse_token(
-                        |ty| matches!(ty, TokenType::Assign),
-                        "expected assign symbol",
-                    );
-                    assign_symbol.bind(|_| {
-                        let type_ctors = self.parse_type_ctors();
-                        type_ctors.map(|type_ctors| DataP {
-                            vis,
-                            identifier,
-                            type_params,
-                            type_ctors,
-                        })
+                    // We now need a type constructor.
+                    let type_ctor = self.parse_type_ctor();
+                    type_ctor.map(|type_ctor| DataP {
+                        vis,
+                        identifier,
+                        type_params,
+                        type_ctor,
                     })
                 })
             })
     }
 
-    /// `type_ctors ::= type_ctor ("|" type_ctors)?`
-    fn parse_type_ctors(&mut self) -> DiagnosticResult<Vec<TypeConstructorP>> {
-        self.parse_type_ctor().bind(|type_ctor| {
-            if self
-                .parse_token_maybe(|ty| matches!(ty, TokenType::TypeOr))
-                .is_some()
-            {
-                // We have another type to parse.
-                self.parse_type_ctors().map(|mut remaining_type_ctors| {
-                    remaining_type_ctors.insert(0, type_ctor);
-                    remaining_type_ctors
-                })
-            } else {
-                DiagnosticResult::ok(vec![type_ctor])
-            }
-        })
-    }
-
-    /// `type_ctor ::= visibility? name '{' type_ctor_body '}'`
+    /// `type_ctor ::= '{' type_ctor_body '}'`
     fn parse_type_ctor(&mut self) -> DiagnosticResult<TypeConstructorP> {
-        self.parse_visibility().bind(|vis| {
-            self.parse_name().bind(|name| {
-                if let Some(tree) = self.parse_tree(BracketType::Brace) {
-                    self.parse_in_tree(tree, |parser| parser.parse_type_ctor_body())
-                        .map(|fields| TypeConstructorP { vis, name, fields })
-                } else {
-                    DiagnosticResult::fail(ErrorMessage::new(
-                        "expected brace brackets".to_string(),
-                        Severity::Error,
-                        Diagnostic::at(self.source_file, &self.tokens.range()),
-                    ))
-                }
-            })
-        })
+        if let Some(tree) = self.parse_tree(BracketType::Brace) {
+            self.parse_in_tree(tree, |parser| parser.parse_type_ctor_body())
+                .map(|fields| TypeConstructorP { fields })
+        } else {
+            DiagnosticResult::fail(ErrorMessage::new(
+                "expected brace brackets".to_string(),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &self.tokens.range()),
+            ))
+        }
     }
 
     /// `type_ctor_body ::= (field (',' type_ctor_body)?)?`
@@ -259,6 +252,54 @@ impl<'input> Parser<'input> {
     fn parse_field(&mut self, name: NameP) -> DiagnosticResult<FieldP> {
         self.parse_token(|ty| matches!(ty, TokenType::Type), "expected colon")
             .bind(|_| self.parse_type().map(|ty| FieldP { name, ty }))
+    }
+
+    /// `data ::= identifier type_params? "=" type_ctors`
+    fn parse_enum(&mut self, vis: Visibility) -> DiagnosticResult<EnumP> {
+        self.parse_name_with_message("expected a name for this new enum type")
+            .bind(|identifier| {
+                // We now need the list of named type parameters.
+                let named_type_params = if let Some(tree) = self.parse_tree(BracketType::Square) {
+                    self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
+                } else {
+                    DiagnosticResult::ok(Vec::new())
+                };
+
+                named_type_params.bind(|type_params| {
+                    // We now need an `=` symbol, then a series of types separated by `|` symbols.
+                    let assign_symbol = self.parse_token(
+                        |ty| matches!(ty, TokenType::Assign),
+                        "expected assign symbol",
+                    );
+                    assign_symbol.bind(|_| {
+                        let alternatives = self.parse_enum_alternatives();
+                        alternatives.map(|alternatives| EnumP {
+                            vis,
+                            identifier,
+                            type_params,
+                            alternatives,
+                        })
+                    })
+                })
+            })
+    }
+
+    /// `enum_alternatives ::= type ("|" enum_alternatives)?`
+    fn parse_enum_alternatives(&mut self) -> DiagnosticResult<Vec<TypeP>> {
+        self.parse_type().bind(|alt| {
+            if self
+                .parse_token_maybe(|ty| matches!(ty, TokenType::TypeOr))
+                .is_some()
+            {
+                // We have another type to parse.
+                self.parse_enum_alternatives().map(|mut remaining_alts| {
+                    remaining_alts.insert(0, alt);
+                    remaining_alts
+                })
+            } else {
+                DiagnosticResult::ok(vec![alt])
+            }
+        })
     }
 }
 

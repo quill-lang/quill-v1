@@ -15,12 +15,10 @@ use crate::{type_check::TypeVariable, type_resolve::TypeVariableId};
 /// For type constructor declarations, see `TypeConstructor`.
 #[derive(Debug, Clone)]
 pub struct TypeConstructorInvocation {
-    /// The data type that the type constructor belongs to.
+    /// The data type that the type constructor will create.
     pub data_type: QualifiedName,
     /// How many type parameters does this data type have?
     pub num_parameters: u32,
-    /// The name of the type constructor that was called.
-    pub type_ctor: String,
     /// The range where the type ctor was used in code.
     pub range: Range,
 }
@@ -239,36 +237,23 @@ pub fn resolve_type_constructor(
 ) -> DiagnosticResult<TypeConstructorInvocation> {
     // We don't have `import`-style statements yet, so let's just only search for types in the current module path.
     let file_index = &project_index[source_file];
-    // A type constructor identifier is either:
-    // a) the name of the type (means the default constructor), or
-    // b) the name of the type then `::` then the constructor name
-    // First, check for (a), then check (b).
+    // A type constructor identifier is the name of the type.
     if identifier.segments.len() == 1 {
         match file_index.types.get(&identifier.segments[0].name) {
             Some(data_name) => {
-                let TypeDeclarationTypeI::Data(datai) = &data_name.decl_type;
-                let data_type = QualifiedName {
-                    source_file: source_file.clone(),
-                    name: data_name.name.name.clone(),
-                    range: datai.range,
-                };
-                let ctor_name = data_name.name.name.clone();
-                if datai.type_ctors.iter().any(|ctor| ctor.name == ctor_name) {
+                if let TypeDeclarationTypeI::Data(datai) = &data_name.decl_type {
+                    let data_type = QualifiedName {
+                        source_file: source_file.clone(),
+                        name: data_name.name.name.clone(),
+                        range: datai.range,
+                    };
                     DiagnosticResult::ok(TypeConstructorInvocation {
                         data_type,
-                        type_ctor: ctor_name,
                         range: identifier.range(),
                         num_parameters: datai.type_params.len() as u32,
                     })
                 } else {
-                    DiagnosticResult::fail(ErrorMessage::new(
-                        format!(
-                            "data type `{}` did not have a constructor called `{}`",
-                            data_type, ctor_name
-                        ),
-                        Severity::Error,
-                        Diagnostic::at(source_file, &identifier.range()),
-                    ))
+                    unreachable!()
                 }
             }
             None => DiagnosticResult::fail(ErrorMessage::new(
@@ -278,39 +263,11 @@ pub fn resolve_type_constructor(
             )),
         }
     } else {
-        match file_index.types.get(&identifier.segments[0].name) {
-            Some(data_name) => {
-                let TypeDeclarationTypeI::Data(datai) = &data_name.decl_type;
-                let data_type = QualifiedName {
-                    source_file: source_file.clone(),
-                    name: data_name.name.name.clone(),
-                    range: datai.range,
-                };
-                let ctor_name = identifier.segments[1].name.clone();
-                if datai.type_ctors.iter().any(|ctor| ctor.name == ctor_name) {
-                    DiagnosticResult::ok(TypeConstructorInvocation {
-                        data_type,
-                        type_ctor: ctor_name,
-                        range: identifier.range(),
-                        num_parameters: datai.type_params.len() as u32,
-                    })
-                } else {
-                    DiagnosticResult::fail(ErrorMessage::new(
-                        format!(
-                            "data type `{}` did not have a constructor called `{}`",
-                            data_type, ctor_name
-                        ),
-                        Severity::Error,
-                        Diagnostic::at(source_file, &identifier.range()),
-                    ))
-                }
-            }
-            None => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("could not resolve type constructor"),
-                Severity::Error,
-                Diagnostic::at(source_file, &identifier.range()),
-            )),
-        }
+        DiagnosticResult::fail(ErrorMessage::new(
+            "too many segments in qualified name".to_string(),
+            Severity::Error,
+            Diagnostic::at(source_file, identifier),
+        ))
     }
 }
 

@@ -132,10 +132,10 @@ impl Display for Pattern {
                 fields: args,
             } => {
                 if args.is_empty() {
-                    return write!(f, "{}", type_ctor.type_ctor);
+                    return write!(f, "{}", type_ctor.data_type.name);
                 }
 
-                write!(f, "{} {{ ", type_ctor.type_ctor)?;
+                write!(f, "{} {{ ", type_ctor.data_type.name)?;
                 for (i, (name, pat)) in args.iter().enumerate() {
                     if i != 0 {
                         write!(f, ", ")?;
@@ -257,56 +257,107 @@ impl PatternExhaustionCheck {
             Pattern::TypeConstructor { type_ctor, fields } => {
                 // A type constructor, e.g. `Just { value = 3 }` does not match:
                 // - `Just { value = a }` where `a` is in the complement of `3`
-                // - `a` where `a` is any other type constructor for the same type.
+                // - `a` where `a` is any other enum variant of the same enum.
                 let data_type_decl = &project_index[&type_ctor.data_type.source_file].types
                     [&type_ctor.data_type.name];
-                let TypeDeclarationTypeI::Data(datai) = &data_type_decl.decl_type;
-                // Loop through all of the type constructors.
-                let mut complement = Vec::new();
-                for known_type_ctor in &datai.type_ctors {
-                    if known_type_ctor.name == type_ctor.type_ctor {
-                        // This is the type constructor we want to find the complement of.
+
+                match &data_type_decl.decl_type {
+                    TypeDeclarationTypeI::Data(datai) => {
+                        // This is a data type.
                         // The complement of a type constructor e.g. `Foo { a, b, c }` is the intersection of all possible combinations of
                         // complements of a, b and c except for `Foo { a, b, c }` itself. In this example, it would be
                         // - Foo { comp(a), _, _ }
                         // - Foo { a, comp(b), _ }
                         // - Foo { a, b, comp(c) }
-                        complement.extend(
-                            PatternExhaustionCheck::complement_fields(project_index, fields)
-                                .into_iter()
-                                .map(|arg_list| Pattern::TypeConstructor {
-                                    type_ctor: TypeConstructorInvocation {
-                                        data_type: type_ctor.data_type.clone(),
-                                        type_ctor: known_type_ctor.name.clone(),
-                                        range: Location { line: 0, col: 0 }.into(),
-                                        num_parameters: type_ctor.num_parameters,
-                                    },
-                                    fields: arg_list,
-                                }),
-                        );
-                    } else {
-                        // Instance a generic pattern for this type constructor.
-                        complement.push(Pattern::TypeConstructor {
-                            type_ctor: TypeConstructorInvocation {
-                                data_type: type_ctor.data_type.clone(),
-                                type_ctor: known_type_ctor.name.clone(),
-                                range: Location { line: 0, col: 0 }.into(),
-                                num_parameters: type_ctor.num_parameters,
-                            },
-                            fields: known_type_ctor
-                                .fields
-                                .iter()
-                                .map(|(name, _ty)| {
-                                    (
-                                        name.clone(),
-                                        Pattern::Unknown(Location { line: 0, col: 0 }.into()),
-                                    )
-                                })
-                                .collect(),
-                        });
+
+                        PatternExhaustionCheck::complement_fields(project_index, fields)
+                            .into_iter()
+                            .map(|arg_list| Pattern::TypeConstructor {
+                                type_ctor: TypeConstructorInvocation {
+                                    data_type: type_ctor.data_type.clone(),
+                                    range: Location { line: 0, col: 0 }.into(),
+                                    num_parameters: type_ctor.num_parameters,
+                                },
+                                fields: arg_list,
+                            })
+                            .collect()
+                    }
+                    TypeDeclarationTypeI::Enum(enumi) => {
+                        // This is an enum type.
+                        // Loop through all of the enum variants.
+                        // TODO sort out nested enums. If `a = b | c`, and `d = a | e`, then we should be able to use `c` as a type ctor for `d` in patterns.
+                        let mut complement = Vec::new();
+
+                        // If this is true, a pattern like `a` must be added at the end; one that matches any pattern.
+                        let mut add_generic_case = false;
+
+                        for alternative in &enumi.alternatives {
+                            match alternative {
+                                Type::Named { name, parameters } => {
+                                    if *name == type_ctor.data_type {
+                                        // This is the type constructor we want to find the complement of.
+                                        complement.extend(
+                                            PatternExhaustionCheck::complement_fields(
+                                                project_index,
+                                                fields,
+                                            )
+                                            .into_iter()
+                                            .map(
+                                                |arg_list| Pattern::TypeConstructor {
+                                                    type_ctor: TypeConstructorInvocation {
+                                                        data_type: type_ctor.data_type.clone(),
+                                                        range: Location { line: 0, col: 0 }.into(),
+                                                        num_parameters: type_ctor.num_parameters,
+                                                    },
+                                                    fields: arg_list,
+                                                },
+                                            ),
+                                        );
+                                    } else {
+                                        // Instance a generic pattern for this type constructor.
+                                        match &project_index[&name.source_file].types[&name.name]
+                                            .decl_type
+                                        {
+                                            TypeDeclarationTypeI::Data(datai) => {
+                                                complement.push(Pattern::TypeConstructor {
+                                                    type_ctor: TypeConstructorInvocation {
+                                                        data_type: name.clone(),
+                                                        range: Location { line: 0, col: 0 }.into(),
+                                                        num_parameters: type_ctor.num_parameters,
+                                                    },
+                                                    fields: datai
+                                                        .type_ctor
+                                                        .fields
+                                                        .iter()
+                                                        .map(|(name, _ty)| {
+                                                            (
+                                                                name.clone(),
+                                                                Pattern::Unknown(
+                                                                    Location { line: 0, col: 0 }
+                                                                        .into(),
+                                                                ),
+                                                            )
+                                                        })
+                                                        .collect(),
+                                                });
+                                            }
+                                            TypeDeclarationTypeI::Enum(enumi) => {
+                                                add_generic_case = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+
+                        if add_generic_case {
+                            complement.push(Pattern::Unknown(pat.range()));
+                        }
+
+                        complement
                     }
                 }
-                complement
             }
             Pattern::Function { param_types, args } => {
                 // The complement of a function invocation e.g. `foo a b c` is the intersection of all possible combinations of
@@ -409,7 +460,7 @@ impl PatternExhaustionCheck {
                         type_ctor: type_ctor2,
                         fields: args2,
                     } => {
-                        if type_ctor1.type_ctor == type_ctor2.type_ctor {
+                        if type_ctor1.data_type == type_ctor2.data_type {
                             // If the type constructors are the same, the intersection is just the intersection of their args.
                             let mut anything_modified = false;
                             let mut fields = Vec::new();
@@ -733,7 +784,6 @@ pub enum ExpressionContentsGeneric<E, T> {
     /// Explicitly create a value of a data type.
     ConstructData {
         data_type_name: QualifiedName,
-        type_ctor: String,
         fields: Vec<(NameP, E)>,
         open_brace: Range,
         close_brace: Range,
@@ -1023,26 +1073,16 @@ impl<'a> TypeChecker<'a> {
                         // and the list of `named_type_parameters`, so we can identify which type parameter has which value.
                         // Also, find the list of fields for the type constructor that we're creating.
                         let (named_type_parameters, expected_fields) = {
-                            let TypeDeclarationTypeI::Data(datai) = &data_type_decl.decl_type;
-                            let mut fields = None;
-                            for ctor in &datai.type_ctors {
-                                if ctor.name == type_ctor.type_ctor {
-                                    fields = Some(
-                                        ctor.fields
-                                            .iter()
-                                            .map(|(name, ty)| (name.name.clone(), ty.clone()))
-                                            .collect::<HashMap<String, Type>>(),
-                                    );
-                                }
-                            }
-                            if let Some(fields) = fields {
+                            if let TypeDeclarationTypeI::Data(datai) = &data_type_decl.decl_type {
+                                let fields = datai
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .map(|(name, ty)| (name.name.clone(), ty.clone()))
+                                    .collect::<HashMap<String, Type>>();
                                 (&datai.type_params, fields)
                             } else {
-                                return DiagnosticResult::fail(ErrorMessage::new(
-                                    "could not find a type constructor with this name".to_string(),
-                                    Severity::Error,
-                                    Diagnostic::at(self.source_file, &type_ctor.range),
-                                ));
+                                unreachable!()
                             }
                         };
 

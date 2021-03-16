@@ -2,7 +2,7 @@ pub data Left { value: T }
 pub data Right { value: U }
 pub enum Either[T, U] = Left[T] | Right[U]
 
-pub data Unit = pub Unit {}
+pub data Unit {}
 
 pub def create_either[T]: T -> Either[T, Unit] {
     create_either t = Either::Left { value = t },

@@ -794,156 +794,165 @@ fn generate_constraints(
                     };
 
                     // Find the type constructor.
-                    let TypeDeclarationTypeI::Data(datai) = &project_index
+                    if let TypeDeclarationTypeI::Data(datai) = &project_index
                         [&type_constructor_invocation.data_type.source_file]
                         .types[&type_constructor_invocation.data_type.name]
-                        .decl_type;
-                    let invoked_ctor = datai
-                        .type_ctors
-                        .iter()
-                        .find(|ctor| type_constructor_invocation.type_ctor == ctor.name)
-                        .expect("type constructor did not exist");
+                        .decl_type
+                    {
+                        // Generate constraints for each field.
+                        let mut fields_with_constraints = Vec::new();
+                        let mut messages = Vec::new();
+                        let mut type_variable_definition_ranges = HashMap::new();
+                        let mut assumptions = Assumptions::default();
+                        let mut constraints = Constraints::default();
+                        for (field_name, field_expr) in fields.fields {
+                            let (result, inner_messages) = generate_constraints(
+                                source_file,
+                                project_index,
+                                args,
+                                lambda_variables.clone(),
+                                let_variables.clone(),
+                                field_expr,
+                            )
+                            .destructure();
+                            messages.extend(inner_messages);
+                            if let Some(result) = result {
+                                let_variables = result.let_variables;
+                                type_variable_definition_ranges
+                                    .extend(result.type_variable_definition_ranges);
+                                assumptions = assumptions.union(result.assumptions);
+                                constraints = constraints.union(result.constraints);
 
-                    // Generate constraints for each field.
-                    let mut fields_with_constraints = Vec::new();
-                    let mut messages = Vec::new();
-                    let mut type_variable_definition_ranges = HashMap::new();
-                    let mut assumptions = Assumptions::default();
-                    let mut constraints = Constraints::default();
-                    for (field_name, field_expr) in fields.fields {
-                        let (result, inner_messages) = generate_constraints(
-                            source_file,
-                            project_index,
-                            args,
-                            lambda_variables.clone(),
-                            let_variables.clone(),
-                            field_expr,
-                        )
-                        .destructure();
-                        messages.extend(inner_messages);
-                        if let Some(result) = result {
-                            let_variables = result.let_variables;
-                            type_variable_definition_ranges
-                                .extend(result.type_variable_definition_ranges);
-                            assumptions = assumptions.union(result.assumptions);
-                            constraints = constraints.union(result.constraints);
+                                // Add the constraint that the field has the required type.
+                                let (_, field_type) = datai
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .find(|(name, _)| name.name == field_name.name)
+                                    .expect("could not find named field");
 
-                            // Add the constraint that the field has the required type.
-                            let (_, field_type) = invoked_ctor
-                                .fields
-                                .iter()
-                                .find(|(name, _)| name.name == field_name.name)
-                                .expect("could not find named field");
+                                // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
+                                let mut ids = HashMap::new();
+                                for (i, type_param) in datai.type_params.iter().enumerate() {
+                                    ids.insert(
+                                        type_param.name.clone(),
+                                        type_parameter_variables[i],
+                                    );
+                                }
+                                // TODO deal with higher kinded type variables here.
+                                let mut higher_kinded_ids = HashMap::new();
+                                let field_type_variable =
+                                    instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
 
-                            // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
-                            let mut ids = HashMap::new();
-                            for (i, type_param) in datai.type_params.iter().enumerate() {
-                                ids.insert(type_param.name.clone(), type_parameter_variables[i]);
+                                constraints.0.push((
+                                    result.expr.type_variable.clone(),
+                                    Constraint::Equality {
+                                        ty: field_type_variable,
+                                        reason: ConstraintEqualityReason::Field {
+                                            expr: result.expr.range(),
+                                            data_type: type_constructor_invocation
+                                                .data_type
+                                                .clone(),
+                                            type_ctor: type_constructor_invocation
+                                                .data_type
+                                                .name
+                                                .clone(),
+                                            field: field_name.name.clone(),
+                                        },
+                                    },
+                                ));
+
+                                fields_with_constraints.push((field_name, result.expr));
                             }
-                            // TODO deal with higher kinded type variables here.
-                            let mut higher_kinded_ids = HashMap::new();
-                            let field_type_variable =
-                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+                        }
+                        for auto_field in fields.auto_fields {
+                            // Generate a dummy expression that just has the auto_field name.
+                            // This expression becomes the value of the field.
+                            let field_expr = ExprPatP::Variable(IdentifierP {
+                                segments: vec![auto_field.clone()],
+                            });
+                            let (result, inner_messages) = generate_constraints(
+                                source_file,
+                                project_index,
+                                args,
+                                lambda_variables.clone(),
+                                let_variables.clone(),
+                                field_expr,
+                            )
+                            .destructure();
+                            messages.extend(inner_messages);
+                            if let Some(result) = result {
+                                let_variables = result.let_variables;
+                                type_variable_definition_ranges
+                                    .extend(result.type_variable_definition_ranges);
+                                assumptions = assumptions.union(result.assumptions);
+                                constraints = constraints.union(result.constraints);
 
-                            constraints.0.push((
-                                result.expr.type_variable.clone(),
-                                Constraint::Equality {
-                                    ty: field_type_variable,
-                                    reason: ConstraintEqualityReason::Field {
-                                        expr: result.expr.range(),
-                                        data_type: type_constructor_invocation.data_type.clone(),
-                                        type_ctor: type_constructor_invocation
-                                            .data_type
-                                            .name
-                                            .clone(),
-                                        field: field_name.name.clone(),
+                                // Add the constraint that the field has the required type.
+                                let (_, field_type) = datai
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .find(|(name, _)| name.name == auto_field.name)
+                                    .expect("could not find named field");
+
+                                // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
+                                let mut ids = HashMap::new();
+                                for (i, type_param) in datai.type_params.iter().enumerate() {
+                                    ids.insert(
+                                        type_param.name.clone(),
+                                        type_parameter_variables[i],
+                                    );
+                                }
+                                // TODO deal with higher kinded type variables here.
+                                let mut higher_kinded_ids = HashMap::new();
+                                let field_type_variable =
+                                    instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+
+                                constraints.0.push((
+                                    result.expr.type_variable.clone(),
+                                    Constraint::Equality {
+                                        ty: field_type_variable,
+                                        reason: ConstraintEqualityReason::Field {
+                                            expr: result.expr.range(),
+                                            data_type: type_constructor_invocation
+                                                .data_type
+                                                .clone(),
+                                            type_ctor: type_constructor_invocation
+                                                .data_type
+                                                .name
+                                                .clone(),
+                                            field: auto_field.name.clone(),
+                                        },
+                                    },
+                                ));
+
+                                fields_with_constraints.push((auto_field, result.expr));
+                            }
+                        }
+
+                        DiagnosticResult::ok_with_many(
+                            ExprTypeCheck {
+                                expr: ExpressionT {
+                                    type_variable,
+                                    contents: ExpressionContentsT::ConstructData {
+                                        data_type_name: type_constructor_invocation.data_type,
+                                        fields: fields_with_constraints,
+                                        open_brace,
+                                        close_brace,
                                     },
                                 },
-                            ));
-
-                            fields_with_constraints.push((field_name, result.expr));
-                        }
-                    }
-                    for auto_field in fields.auto_fields {
-                        // Generate a dummy expression that just has the auto_field name.
-                        // This expression becomes the value of the field.
-                        let field_expr = ExprPatP::Variable(IdentifierP {
-                            segments: vec![auto_field.clone()],
-                        });
-                        let (result, inner_messages) = generate_constraints(
-                            source_file,
-                            project_index,
-                            args,
-                            lambda_variables.clone(),
-                            let_variables.clone(),
-                            field_expr,
-                        )
-                        .destructure();
-                        messages.extend(inner_messages);
-                        if let Some(result) = result {
-                            let_variables = result.let_variables;
-                            type_variable_definition_ranges
-                                .extend(result.type_variable_definition_ranges);
-                            assumptions = assumptions.union(result.assumptions);
-                            constraints = constraints.union(result.constraints);
-
-                            // Add the constraint that the field has the required type.
-                            let (_, field_type) = invoked_ctor
-                                .fields
-                                .iter()
-                                .find(|(name, _)| name.name == auto_field.name)
-                                .expect("could not find named field");
-
-                            // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
-                            let mut ids = HashMap::new();
-                            for (i, type_param) in datai.type_params.iter().enumerate() {
-                                ids.insert(type_param.name.clone(), type_parameter_variables[i]);
-                            }
-                            // TODO deal with higher kinded type variables here.
-                            let mut higher_kinded_ids = HashMap::new();
-                            let field_type_variable =
-                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
-
-                            constraints.0.push((
-                                result.expr.type_variable.clone(),
-                                Constraint::Equality {
-                                    ty: field_type_variable,
-                                    reason: ConstraintEqualityReason::Field {
-                                        expr: result.expr.range(),
-                                        data_type: type_constructor_invocation.data_type.clone(),
-                                        type_ctor: type_constructor_invocation
-                                            .data_type
-                                            .name
-                                            .clone(),
-                                        field: auto_field.name.clone(),
-                                    },
-                                },
-                            ));
-
-                            fields_with_constraints.push((auto_field, result.expr));
-                        }
-                    }
-
-                    DiagnosticResult::ok_with_many(
-                        ExprTypeCheck {
-                            expr: ExpressionT {
-                                type_variable,
-                                contents: ExpressionContentsT::ConstructData {
-                                    data_type_name: type_constructor_invocation.data_type,
-                                    type_ctor: type_constructor_invocation.type_ctor,
-                                    fields: fields_with_constraints,
-                                    open_brace,
-                                    close_brace,
-                                },
+                                type_variable_definition_ranges,
+                                assumptions,
+                                constraints,
+                                let_variables,
+                                new_variables: None,
                             },
-                            type_variable_definition_ranges,
-                            assumptions,
-                            constraints,
-                            let_variables,
-                            new_variables: None,
-                        },
-                        messages,
-                    )
+                            messages,
+                        )
+                    } else {
+                        unreachable!()
+                    }
                 },
             )
         }
@@ -1649,7 +1658,6 @@ fn substitute_contents(
             }),
         ExpressionContentsT::ConstructData {
             data_type_name,
-            type_ctor,
             fields,
             open_brace,
             close_brace,
@@ -1662,7 +1670,6 @@ fn substitute_contents(
             .collect::<DiagnosticResult<_>>()
             .map(|fields| ExpressionContents::ConstructData {
                 data_type_name,
-                type_ctor,
                 fields,
                 open_brace,
                 close_brace,

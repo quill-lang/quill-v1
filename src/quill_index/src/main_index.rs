@@ -36,22 +36,29 @@ pub struct TypeDeclarationI {
 #[derive(Debug)]
 pub enum TypeDeclarationTypeI {
     Data(DataI),
+    Enum(EnumI),
 }
 
-/// A `data` statement, e.g. `data Bool = True | False`.
+/// A `data` declaration.
 #[derive(Debug)]
 pub struct DataI {
-    /// Where was this data statement written?
+    /// Where was this data declaration written?
     pub range: Range,
     pub type_params: Vec<TypeParameter>,
-    /// A list of all the type constructors for a `data` statement. For example, in `data Bool = True {} | False {}`, the two
-    /// type constructors are `True` and `False`.
-    pub type_ctors: Vec<TypeConstructorI>,
+    pub type_ctor: TypeConstructorI,
+}
+
+/// A `enum` declaration.
+#[derive(Debug)]
+pub struct EnumI {
+    /// Where was this enum declaration written?
+    pub range: Range,
+    pub type_params: Vec<TypeParameter>,
+    pub alternatives: Vec<Type>,
 }
 
 #[derive(Debug)]
 pub struct TypeConstructorI {
-    pub name: String,
     pub fields: Vec<(NameP, Type)>,
 }
 
@@ -161,31 +168,23 @@ pub fn index(
                     .map(|ident| ident.name.name.clone())
                     .collect::<HashSet<_>>();
 
-                let type_ctors = data
-                    .type_ctors
+                let type_ctor = data
+                    .type_ctor
+                    .fields
                     .iter()
-                    .map(|type_ctor| {
-                        type_ctor
-                            .fields
-                            .iter()
-                            .map(|field| {
-                                let ty = crate::type_resolve::resolve_typep(
-                                    source_file,
-                                    &field.ty,
-                                    &type_params,
-                                    project_types,
-                                );
-                                ty.map(|ty| (field.name.clone(), ty))
-                            })
-                            .collect::<DiagnosticResult<Vec<_>>>()
-                            .map(|fields| TypeConstructorI {
-                                name: type_ctor.name.name.clone(),
-                                fields,
-                            })
+                    .map(|field| {
+                        let ty = crate::type_resolve::resolve_typep(
+                            source_file,
+                            &field.ty,
+                            &type_params,
+                            project_types,
+                        );
+                        ty.map(|ty| (field.name.clone(), ty))
                     })
-                    .collect::<DiagnosticResult<Vec<_>>>();
-                let (_, mut inner_messages) = type_ctors
-                    .map(|type_ctors| {
+                    .collect::<DiagnosticResult<Vec<_>>>()
+                    .map(|fields| TypeConstructorI { fields });
+                let (_, mut inner_messages) = type_ctor
+                    .map(|type_ctor| {
                         let datai = DataI {
                             range: data.identifier.range,
                             type_params: data
@@ -196,11 +195,65 @@ pub fn index(
                                     parameters: param.parameters,
                                 })
                                 .collect(),
-                            type_ctors,
+                            type_ctor,
                         };
                         vacant.insert(TypeDeclarationI {
                             name: data.identifier.clone(),
                             decl_type: TypeDeclarationTypeI::Data(datai),
+                        });
+                    })
+                    .destructure();
+                messages.append(&mut inner_messages);
+            }
+        }
+    }
+
+    for an_enum in &file_parsed.enums {
+        match types.entry(an_enum.identifier.name.clone()) {
+            Entry::Occupied(occupied) => {
+                messages.push(name_used_earlier(
+                    source_file,
+                    an_enum.identifier.range,
+                    occupied.get().name.range,
+                ));
+            }
+            Entry::Vacant(vacant) => {
+                // Let's add the definition into the map.
+                let type_params = an_enum
+                    .type_params
+                    .iter()
+                    .map(|ident| ident.name.name.clone())
+                    .collect::<HashSet<_>>();
+
+                let alternatives = an_enum
+                    .alternatives
+                    .iter()
+                    .map(|alt| {
+                        crate::type_resolve::resolve_typep(
+                            source_file,
+                            alt,
+                            &type_params,
+                            project_types,
+                        )
+                    })
+                    .collect::<DiagnosticResult<Vec<_>>>();
+                let (_, mut inner_messages) = alternatives
+                    .map(|alternatives| {
+                        let enumi = EnumI {
+                            range: an_enum.identifier.range,
+                            type_params: an_enum
+                                .type_params
+                                .iter()
+                                .map(|param| TypeParameter {
+                                    name: param.name.name.clone(),
+                                    parameters: param.parameters,
+                                })
+                                .collect(),
+                            alternatives,
+                        };
+                        vacant.insert(TypeDeclarationI {
+                            name: an_enum.identifier.clone(),
+                            decl_type: TypeDeclarationTypeI::Enum(enumi),
                         });
                     })
                     .destructure();
