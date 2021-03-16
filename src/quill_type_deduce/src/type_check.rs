@@ -93,7 +93,7 @@ pub enum Pattern {
         type_ctor: TypeConstructorInvocation,
         /// The list of fields. If a pattern is provided, the pattern is matched against the named field.
         /// If no pattern is provided in Quill code, an automatic pattern is created, that simply assigns the field to a new variable with the same name.
-        fields: Vec<(NameP, Pattern)>,
+        fields: Vec<(NameP, Type, Pattern)>,
     },
     /// A function pattern. This cannot be used directly in code,
     /// this is created only for working with functions that have multiple patterns.
@@ -112,9 +112,9 @@ impl Ranged for Pattern {
             Pattern::TypeConstructor {
                 type_ctor,
                 fields: args,
-            } => args
-                .iter()
-                .fold(type_ctor.range, |acc, (_name, pat)| acc.union(pat.range())),
+            } => args.iter().fold(type_ctor.range, |acc, (_name, _ty, pat)| {
+                acc.union(pat.range())
+            }),
             Pattern::Unknown(range) => *range,
             Pattern::Function { args, .. } => args
                 .iter()
@@ -136,7 +136,7 @@ impl Display for Pattern {
                 }
 
                 write!(f, "{} {{ ", type_ctor.data_type.name)?;
-                for (i, (name, pat)) in args.iter().enumerate() {
+                for (i, (name, _ty, pat)) in args.iter().enumerate() {
                     if i != 0 {
                         write!(f, ", ")?;
                     }
@@ -169,11 +169,16 @@ struct PatternExhaustionCheck {
 impl PatternExhaustionCheck {
     /// Adds the given pattern to this pattern check, excluding this pattern from all as yet `unmatched_patterns`.
     /// If anything was modified, return true.
-    pub fn add(&mut self, project_index: &ProjectIndex, to_exclude: &Pattern) -> bool {
+    pub fn add(
+        &mut self,
+        project_index: &ProjectIndex,
+        arg_types: &[Type],
+        to_exclude: &Pattern,
+    ) -> bool {
         let mut anything_modified = false;
         for pat in std::mem::take(&mut self.unmatched_patterns) {
             let (modified, mut new_internal_patterns) =
-                PatternExhaustionCheck::exclude_pattern(project_index, pat, to_exclude);
+                PatternExhaustionCheck::exclude_pattern(project_index, pat, arg_types, to_exclude);
             if modified {
                 anything_modified = true;
             }
@@ -189,41 +194,34 @@ impl PatternExhaustionCheck {
     fn exclude_pattern(
         project_index: &ProjectIndex,
         pat: Pattern,
+        arg_types: &[Type],
         to_exclude: &Pattern,
     ) -> (bool, Vec<Pattern>) {
         match pat {
-            Pattern::Named(_) => (
-                true,
-                PatternExhaustionCheck::complement(project_index, to_exclude),
-            ),
-            pat @ Pattern::TypeConstructor { .. } => {
-                // If we have a type constructor e.g. `Type a b`, and we want to exclude `Type c d`,
-                // the resultant patterns are intersection(`Type a b`, complement(`Type c d`)).
-                let mut anything_changed = false;
-                let mut results = Vec::new();
-                for pat_to_exclude in PatternExhaustionCheck::complement(project_index, to_exclude)
-                {
-                    let (changed, result) = PatternExhaustionCheck::intersection(
-                        project_index,
-                        pat.clone(),
-                        pat_to_exclude,
-                    );
-                    if changed {
-                        anything_changed = true;
-                    }
-                    if let Some(result) = result {
-                        results.push(result);
-                    }
-                }
-                (anything_changed, results)
-            }
-            pat @ Pattern::Function { .. } => {
+            Pattern::Function { param_types, args } => {
                 // If we have a function e.g. `add a b`, and we want to exclude `add c d`,
                 // the resultant patterns are intersection(`add a b`, complement(`add c d`)).
                 let mut anything_changed = false;
                 let mut results = Vec::new();
-                for pat_to_exclude in PatternExhaustionCheck::complement(project_index, to_exclude)
-                {
+
+                // The complement of a function invocation e.g. `foo a b c` is the intersection of all possible combinations of
+                // complements of a, b and c except for `foo a b c` itself. In this example, it would be
+                // - foo comp(a) _ _
+                // - foo a comp(b) _
+                // - foo a b comp(c)
+                let complement =
+                    PatternExhaustionCheck::complement_args(project_index, arg_types, &args)
+                        .into_iter()
+                        .map(|arg_list| Pattern::Function {
+                            param_types: param_types.clone(),
+                            args: arg_list,
+                        });
+
+                let pat = Pattern::Function {
+                    param_types: param_types.clone(),
+                    args,
+                };
+                for pat_to_exclude in complement {
                     let (changed, result) = PatternExhaustionCheck::intersection(
                         project_index,
                         pat.clone(),
@@ -240,15 +238,12 @@ impl PatternExhaustionCheck {
                 // and therefore there is no intersection.
                 (anything_changed || results.is_empty(), results)
             }
-            Pattern::Unknown(_) => (
-                true,
-                PatternExhaustionCheck::complement(project_index, to_exclude),
-            ),
+            _ => unreachable!(),
         }
     }
 
     /// Returns all patterns of the same type that did not match the given pattern.
-    fn complement(project_index: &ProjectIndex, pat: &Pattern) -> Vec<Pattern> {
+    fn complement(project_index: &ProjectIndex, ty: &Type, pat: &Pattern) -> Vec<Pattern> {
         match pat {
             Pattern::Named(_) => {
                 // A named pattern, e.g. `a`, matches anything.
@@ -329,9 +324,10 @@ impl PatternExhaustionCheck {
                                                         .type_ctor
                                                         .fields
                                                         .iter()
-                                                        .map(|(name, _ty)| {
+                                                        .map(|(name, ty)| {
                                                             (
                                                                 name.clone(),
+                                                                ty.clone(),
                                                                 Pattern::Unknown(
                                                                     Location { line: 0, col: 0 }
                                                                         .into(),
@@ -355,23 +351,18 @@ impl PatternExhaustionCheck {
                             complement.push(Pattern::Unknown(pat.range()));
                         }
 
+                        dbg!("Complement of");
+                        dbg!(&type_ctor);
+                        dbg!(&fields);
+                        dbg!("is");
+                        dbg!(&complement);
+
                         complement
                     }
                 }
             }
             Pattern::Function { param_types, args } => {
-                // The complement of a function invocation e.g. `foo a b c` is the intersection of all possible combinations of
-                // complements of a, b and c except for `foo a b c` itself. In this example, it would be
-                // - foo comp(a) _ _
-                // - foo a comp(b) _
-                // - foo a b comp(c)
-                PatternExhaustionCheck::complement_args(project_index, args)
-                    .into_iter()
-                    .map(|arg_list| Pattern::Function {
-                        param_types: param_types.clone(),
-                        args: arg_list,
-                    })
-                    .collect()
+                unreachable!()
             }
             Pattern::Unknown(_) => {
                 // An unknown pattern, e.g. `_`, matches anything.
@@ -386,22 +377,25 @@ impl PatternExhaustionCheck {
     /// The complement of `a = True, b = True, c = True` returned by this function is `False _ _`, `True False _`, `True True False`.
     fn complement_fields(
         project_index: &ProjectIndex,
-        args: &[(NameP, Pattern)],
-    ) -> Vec<Vec<(NameP, Pattern)>> {
+        args: &[(NameP, Type, Pattern)],
+    ) -> Vec<Vec<(NameP, Type, Pattern)>> {
         let mut complements = Vec::new();
         for i in 0..args.len() {
             // This argument will become its complement.
             // Prior arguments are cloned, and future arguments are ignored.
-            let (name, original_pattern) = &args[i];
-            for complement in PatternExhaustionCheck::complement(project_index, original_pattern) {
+            let (name, ty, original_pattern) = &args[i];
+            for complement in
+                PatternExhaustionCheck::complement(project_index, ty, original_pattern)
+            {
                 let mut new_args = Vec::new();
                 for arg in &args[0..i] {
                     new_args.push(arg.clone());
                 }
-                new_args.push((name.clone(), complement));
-                for (arg_name, _) in args.iter().skip(i) {
+                new_args.push((name.clone(), ty.clone(), complement));
+                for (arg_name, ty, _) in args.iter().skip(i) {
                     new_args.push((
                         arg_name.clone(),
+                        ty.clone(),
                         Pattern::Unknown(Location { line: 0, col: 0 }.into()),
                     ));
                 }
@@ -415,12 +409,18 @@ impl PatternExhaustionCheck {
     /// This takes every possible case of an argument and its complement, excluding the case without any complements.
     /// Returns a list of all possible argument lists.
     /// The complement of `True True True` returned by this function is `False _ _`, `True False _`, `True True False`.
-    fn complement_args(project_index: &ProjectIndex, args: &[Pattern]) -> Vec<Vec<Pattern>> {
+    fn complement_args(
+        project_index: &ProjectIndex,
+        arg_types: &[Type],
+        args: &[Pattern],
+    ) -> Vec<Vec<Pattern>> {
         let mut complements = Vec::new();
         for i in 0..args.len() {
             // This argument will become its complement.
             // Prior arguments are cloned, and future arguments are ignored.
-            for complement in PatternExhaustionCheck::complement(project_index, &args[i]) {
+            for complement in
+                PatternExhaustionCheck::complement(project_index, &arg_types[i], &args[i])
+            {
                 let mut new_args = Vec::new();
                 for arg in &args[0..i] {
                     new_args.push(arg.clone());
@@ -464,8 +464,8 @@ impl PatternExhaustionCheck {
                             // If the type constructors are the same, the intersection is just the intersection of their args.
                             let mut anything_modified = false;
                             let mut fields = Vec::new();
-                            for (name1, pat1) in &args1 {
-                                for (name2, pat2) in &args2 {
+                            for (name1, ty1, pat1) in &args1 {
+                                for (name2, _ty2, pat2) in &args2 {
                                     if name1.name != name2.name {
                                         continue;
                                     }
@@ -479,7 +479,9 @@ impl PatternExhaustionCheck {
                                         anything_modified = true;
                                     }
                                     match new_arg {
-                                        Some(new_arg) => fields.push((name1.clone(), new_arg)),
+                                        Some(new_arg) => {
+                                            fields.push((name1.clone(), ty1.clone(), new_arg))
+                                        }
                                         // If None, no intersection was found between the arguments, so there is no intersection between the main patterns.
                                         None => return (true, None),
                                     }
@@ -557,7 +559,7 @@ pub fn check(
         project_index,
         messages: Vec::new(),
     };
-    type_checker.compute(file_parsed)
+    type_checker.compute(project_index, file_parsed)
 }
 
 struct TypeChecker<'a> {
@@ -834,7 +836,11 @@ pub type ExpressionContentsT =
     ExpressionContentsGeneric<ExpressionT, HashMap<String, TypeVariable>>;
 
 impl<'a> TypeChecker<'a> {
-    fn compute(mut self, file_parsed: FileP) -> DiagnosticResult<SourceFileHIR> {
+    fn compute(
+        mut self,
+        project_index: &ProjectIndex,
+        file_parsed: FileP,
+    ) -> DiagnosticResult<SourceFileHIR> {
         let mut definitions = HashMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
@@ -850,7 +856,7 @@ impl<'a> TypeChecker<'a> {
             // Let's resolve each case's patterns and expressions.
             let cases = cases
                 .into_iter()
-                .map(|case| self.resolve_case(&def_name.name, case))
+                .map(|case| self.resolve_case(project_index, &def_name.name, case))
                 .collect::<DiagnosticResult<_>>();
 
             // Now we can check whether the patterns are valid.
@@ -982,11 +988,12 @@ impl<'a> TypeChecker<'a> {
 
     fn resolve_case(
         &self,
+        project_index: &ProjectIndex,
         function_name: &str,
         case: DefinitionCaseP,
     ) -> DiagnosticResult<(Range, Vec<Pattern>, ExprPatP)> {
         let range = case.pattern.range();
-        let pattern = self.resolve_func_pattern(function_name, case.pattern);
+        let pattern = self.resolve_func_pattern(project_index, function_name, case.pattern);
         let replacement = case.replacement;
         pattern.map(|pattern| (range, pattern, replacement))
     }
@@ -1088,7 +1095,7 @@ impl<'a> TypeChecker<'a> {
                     // Process the fields provided to this type constructor.
                     let provided_fields = provided_fields
                         .iter()
-                        .map(|(name, pat)| (name.name.clone(), pat.clone()))
+                        .map(|(name, _ty, pat)| (name.name.clone(), pat.clone()))
                         .collect::<HashMap<String, Pattern>>();
 
                     // Check that the names of the provided fields and the expected fields match.
@@ -1204,7 +1211,7 @@ impl<'a> TypeChecker<'a> {
                 param_types: symbol_args.clone(),
                 args: (*patterns).clone(),
             };
-            let anything_modified = args_exhaustion.add(self.project_index, &pattern);
+            let anything_modified = args_exhaustion.add(self.project_index, &symbol_args, &pattern);
             if !anything_modified {
                 messages.push(ErrorMessage::new(
                     String::from("this pattern will never be matched"),
@@ -1235,6 +1242,7 @@ impl<'a> TypeChecker<'a> {
     /// This function does not guarantee that the returned pattern is valid for the function.
     fn resolve_func_pattern(
         &self,
+        project_index: &ProjectIndex,
         function_name: &str,
         expression: ExprPatP,
     ) -> DiagnosticResult<Vec<Pattern>> {
@@ -1262,12 +1270,13 @@ impl<'a> TypeChecker<'a> {
             }
             ExprPatP::Apply(left, right) => {
                 // The left hand side should be a function pattern, and the right hand side should be a type pattern.
-                self.resolve_func_pattern(function_name, *left)
+                self.resolve_func_pattern(project_index, function_name, *left)
                     .bind(|mut left| {
-                        self.resolve_type_pattern(*right).map(|right| {
-                            left.push(right);
-                            left
-                        })
+                        self.resolve_type_pattern(project_index, *right)
+                            .map(|right| {
+                                left.push(right);
+                                left
+                            })
                     })
             }
             ExprPatP::Unknown(range) => {
@@ -1309,7 +1318,11 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Converts a pattern representing a type constructor into a pattern object.
-    fn resolve_type_pattern(&self, expression: ExprPatP) -> DiagnosticResult<Pattern> {
+    fn resolve_type_pattern(
+        &self,
+        project_index: &ProjectIndex,
+        expression: ExprPatP,
+    ) -> DiagnosticResult<Pattern> {
         match expression {
             ExprPatP::Variable(identifier) => {
                 if identifier.segments.len() == 1 {
@@ -1355,7 +1368,7 @@ impl<'a> TypeChecker<'a> {
                     .fields
                     .into_iter()
                     .map(|(field_name, field_pattern)| {
-                        self.resolve_type_pattern(field_pattern)
+                        self.resolve_type_pattern(project_index, field_pattern)
                             .map(|pat| (field_name, pat))
                     })
                     .chain(fields.auto_fields.into_iter().map(|field_name| {
@@ -1368,7 +1381,36 @@ impl<'a> TypeChecker<'a> {
                         &data_constructor,
                         self.project_index,
                     )
-                    .map(|type_ctor| Pattern::TypeConstructor { type_ctor, fields })
+                    .map(|type_ctor| {
+                        // Find the fields on the type, and cache their types.
+                        let decl = &project_index[&type_ctor.data_type.source_file].types
+                            [&type_ctor.data_type.name];
+                        if let TypeDeclarationTypeI::Data(datai) = &decl.decl_type {
+                            Pattern::TypeConstructor {
+                                type_ctor,
+                                fields: fields
+                                    .into_iter()
+                                    .map(|(name, pat)| {
+                                        let ty = datai
+                                            .type_ctor
+                                            .fields
+                                            .iter()
+                                            .find_map(|(fname, ftype)| {
+                                                if *fname == name {
+                                                    Some(ftype.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .unwrap();
+                                        (name, ty, pat)
+                                    })
+                                    .collect(),
+                            }
+                        } else {
+                            unreachable!()
+                        }
+                    })
                 })
             }
         }
