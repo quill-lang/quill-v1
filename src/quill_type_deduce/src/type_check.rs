@@ -265,63 +265,58 @@ impl PatternExhaustionCheck {
                         let mut add_generic_case = false;
 
                         for alternative in &enumi.alternatives {
-                            match alternative {
-                                Type::Named { name, .. } => {
-                                    if *name == type_ctor.data_type {
-                                        // This is the type constructor we want to find the complement of.
-                                        complement.extend(
-                                            PatternExhaustionCheck::complement_fields(
-                                                project_index,
-                                                fields,
-                                            )
-                                            .into_iter()
-                                            .map(
-                                                |arg_list| Pattern::TypeConstructor {
-                                                    type_ctor: TypeConstructorInvocation {
-                                                        data_type: type_ctor.data_type.clone(),
-                                                        range: Location { line: 0, col: 0 }.into(),
-                                                        num_parameters: type_ctor.num_parameters,
-                                                    },
-                                                    fields: arg_list,
-                                                },
-                                            ),
-                                        );
-                                    } else {
-                                        // Instance a generic pattern for this type constructor.
-                                        match &project_index[&name.source_file].types[&name.name]
-                                            .decl_type
-                                        {
-                                            TypeDeclarationTypeI::Data(datai) => {
-                                                complement.push(Pattern::TypeConstructor {
-                                                    type_ctor: TypeConstructorInvocation {
-                                                        data_type: name.clone(),
-                                                        range: Location { line: 0, col: 0 }.into(),
-                                                        num_parameters: type_ctor.num_parameters,
-                                                    },
-                                                    fields: datai
-                                                        .type_ctor
-                                                        .fields
-                                                        .iter()
-                                                        .map(|(name, ty)| {
-                                                            (
-                                                                name.clone(),
-                                                                ty.clone(),
-                                                                Pattern::Unknown(
-                                                                    Location { line: 0, col: 0 }
-                                                                        .into(),
-                                                                ),
-                                                            )
-                                                        })
-                                                        .collect(),
-                                                });
-                                            }
-                                            TypeDeclarationTypeI::Enum(_) => {
-                                                add_generic_case = true;
-                                            }
+                            let alt_name = &alternative.data_type_name;
+                            if *alt_name == type_ctor.data_type {
+                                // This is the type constructor we want to find the complement of.
+                                complement.extend(
+                                    PatternExhaustionCheck::complement_fields(
+                                        project_index,
+                                        fields,
+                                    )
+                                    .into_iter()
+                                    .map(|arg_list| {
+                                        Pattern::TypeConstructor {
+                                            type_ctor: TypeConstructorInvocation {
+                                                data_type: type_ctor.data_type.clone(),
+                                                range: Location { line: 0, col: 0 }.into(),
+                                                num_parameters: type_ctor.num_parameters,
+                                            },
+                                            fields: arg_list,
                                         }
+                                    }),
+                                );
+                            } else {
+                                // Instance a generic pattern for this type constructor.
+                                match &project_index[&alt_name.source_file].types[&alt_name.name]
+                                    .decl_type
+                                {
+                                    TypeDeclarationTypeI::Data(datai) => {
+                                        complement.push(Pattern::TypeConstructor {
+                                            type_ctor: TypeConstructorInvocation {
+                                                data_type: alt_name.clone(),
+                                                range: Location { line: 0, col: 0 }.into(),
+                                                num_parameters: type_ctor.num_parameters,
+                                            },
+                                            fields: datai
+                                                .type_ctor
+                                                .fields
+                                                .iter()
+                                                .map(|(fname, ty)| {
+                                                    (
+                                                        fname.clone(),
+                                                        ty.clone(),
+                                                        Pattern::Unknown(
+                                                            Location { line: 0, col: 0 }.into(),
+                                                        ),
+                                                    )
+                                                })
+                                                .collect(),
+                                        });
+                                    }
+                                    TypeDeclarationTypeI::Enum(_) => {
+                                        add_generic_case = true;
                                     }
                                 }
-                                _ => unreachable!(),
                             }
                         }
 

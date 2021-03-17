@@ -6,7 +6,8 @@ use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Range, SourceFileIdentifier},
+    location::{Range, Ranged, SourceFileIdentifier},
+    name::QualifiedName,
 };
 use quill_parser::{FileP, NameP};
 use quill_type::Type;
@@ -54,7 +55,14 @@ pub struct EnumI {
     /// Where was this enum declaration written?
     pub range: Range,
     pub type_params: Vec<TypeParameter>,
-    pub alternatives: Vec<Type>,
+    pub alternatives: Vec<EnumVariant>,
+}
+
+#[derive(Debug)]
+pub struct EnumVariant {
+    /// An enum variant must be a `data` type as opposed to another enum or a primitive, for instance.
+    pub data_type_name: QualifiedName,
+    pub parameters: Vec<Type>,
 }
 
 #[derive(Debug)]
@@ -229,16 +237,71 @@ pub fn index(
                     .alternatives
                     .iter()
                     .map(|alt| {
+                        let range = alt.range();
                         crate::type_resolve::resolve_typep(
                             source_file,
                             alt,
                             &type_params,
                             project_types,
                         )
+                        .map(|resolved| (resolved, range))
                     })
                     .collect::<DiagnosticResult<Vec<_>>>();
+
                 let (_, mut inner_messages) = alternatives
-                    .map(|alternatives| {
+                    .bind(|alternatives| {
+                        let mut inner_messages = Vec::new();
+
+                        // Check that all the alternatives are actually distinct, and are all `data` types.
+                        let mut used_names = HashMap::new();
+                        let mut actual_alternatives = Vec::new();
+                        for (alt, range) in alternatives {
+                            match alt {
+                                Type::Named { name, parameters } => {
+                                    // Check that this data type has not yet been used as a variant for this enum.
+                                    match used_names.entry(name.clone()) {
+                                        Entry::Occupied(occupied) => {
+                                            inner_messages.push(ErrorMessage::new_with(
+                                                "this data type was already used as a variant for this enum".to_string(),
+                                                Severity::Error,
+                                                Diagnostic::at(source_file, &range),
+                                                HelpMessage {
+                                                    message: "data type was previously used as a variant here".to_string(),
+                                                    help_type: HelpType::Note,
+                                                    diagnostic: Diagnostic::at(source_file, occupied.get()),
+                                                }
+                                            ));
+                                        }
+                                        Entry::Vacant(vacant) => {
+                                            // Add it to the list of used names, and to the list of actual alternatives.
+                                            vacant.insert(range);
+                                            actual_alternatives.push(EnumVariant {
+                                                data_type_name: name.clone(),
+                                                parameters,
+                                            });
+                                        }
+                                    }
+                                }
+                                Type::Variable {
+                                    ..
+                                } => inner_messages.push(ErrorMessage::new(
+                                    "type variables cannot be used as enum variants".to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &range),
+                                )),
+                                Type::Function(_, _) => inner_messages.push(ErrorMessage::new(
+                                    "functions cannot be used as enum variants".to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &range),
+                                )),
+                                Type::Primitive(_) => inner_messages.push(ErrorMessage::new(
+                                    "primitives cannot be used as enum variants".to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &range),
+                                )),
+                            }
+                        }
+
                         let enumi = EnumI {
                             range: an_enum.identifier.range,
                             type_params: an_enum
@@ -249,12 +312,14 @@ pub fn index(
                                     parameters: param.parameters,
                                 })
                                 .collect(),
-                            alternatives,
+                            alternatives: actual_alternatives,
                         };
                         vacant.insert(TypeDeclarationI {
                             name: an_enum.identifier.clone(),
                             decl_type: TypeDeclarationTypeI::Enum(enumi),
                         });
+
+                        DiagnosticResult::ok_with_many((), inner_messages)
                     })
                     .destructure();
                 messages.append(&mut inner_messages);

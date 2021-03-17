@@ -1560,7 +1560,6 @@ fn mgu_enum(
     enumi: &EnumI,
     actual: TypeVariable,
 ) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
-    println!("MGU: {:#?} {:#?} {:#?}", left_name, left_parameters, actual);
     if let TypeVariable::Unknown { id: right } = actual {
         let mut map = HashMap::new();
         map.insert(
@@ -1601,32 +1600,31 @@ fn mgu_enum(
                 let mut ids = HashMap::new();
                 let mut higher_kinded_ids = HashMap::new();
                 // Instantiate the enum subtype using the *same* type parameters as the enum itself.
-                match alt {
-                    Type::Named { parameters, .. } => {
-                        for (param, param_var) in enumi.type_params.iter().zip(&left_parameters) {
-                            for actual_param in parameters {
-                                if let Type::Variable {
-                                    variable,
-                                    parameters: parameters_count,
-                                } = actual_param
-                                {
-                                    if *variable == param.name {
-                                        if !parameters_count.is_empty() {
-                                            panic!("not implemented higher kinded enums yet")
-                                        }
-                                        ids.insert(variable.clone(), param_var.clone());
-                                    }
+                for (param, param_var) in enumi.type_params.iter().zip(&left_parameters) {
+                    for actual_param in &alt.parameters {
+                        if let Type::Variable {
+                            variable,
+                            parameters: parameters_count,
+                        } = actual_param
+                        {
+                            if *variable == param.name {
+                                if !parameters_count.is_empty() {
+                                    panic!("not implemented higher kinded enums yet")
                                 }
+                                ids.insert(variable.clone(), param_var.clone());
                             }
                         }
                     }
-                    Type::Variable { .. } => {
-                        panic!("enums should not have type variables as options")
-                    }
-                    Type::Function(_, _) => {}
-                    Type::Primitive(_) => {}
                 }
-                let actual_alt = instantiate_with(alt, &mut ids, &mut higher_kinded_ids);
+
+                let actual_alt = instantiate_with(
+                    &Type::Named {
+                        name: alt.data_type_name.clone(),
+                        parameters: alt.parameters.clone(),
+                    },
+                    &mut ids,
+                    &mut higher_kinded_ids,
+                );
 
                 most_general_unifier(project_index, actual_alt, actual.clone())
             })
