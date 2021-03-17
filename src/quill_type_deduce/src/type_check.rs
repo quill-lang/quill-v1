@@ -780,7 +780,7 @@ pub enum ExpressionContentsGeneric<E, T> {
     ImmediateValue { value: ImmediateValue, range: Range },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ImmediateValue {
     Unit,
     Int(i64),
