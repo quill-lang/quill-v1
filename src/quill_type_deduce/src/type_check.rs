@@ -786,6 +786,15 @@ pub enum ImmediateValue {
     Int(i64),
 }
 
+impl Display for ImmediateValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImmediateValue::Unit => write!(f, "unit"),
+            ImmediateValue::Int(value) => write!(f, "int {}", value),
+        }
+    }
+}
+
 impl<E, T> Ranged for ExpressionContentsGeneric<E, T>
 where
     E: Ranged,

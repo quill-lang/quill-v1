@@ -1,3 +1,5 @@
+use quill_mir::SourceFileMIR;
+
 #[tokio::test]
 async fn test_borrow_check() {
     use quill_common::location::SourceFileIdentifier;
@@ -36,8 +38,11 @@ async fn test_borrow_check() {
         error_emitter.emit_all().await;
 
         // If the MIR conversion fails, the test will fail.
-        let mir = mir.unwrap();
+        let mir: SourceFileMIR = mir.unwrap();
 
-        println!("mir: {:#?}", mir);
+        for (def_name, def) in mir.definitions {
+            println!("def: {}", def_name);
+            println!("{}", def);
+        }
     }
 }

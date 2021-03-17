@@ -1,7 +1,7 @@
 //! This module contains the m range: (), kind: ()id-level intermediate representation of code.
 //! Much of this code is heavily inspired by the Rust compiler.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use quill_common::{
     diagnostic::DiagnosticResult,
@@ -25,20 +25,10 @@ pub struct LocalVariableId(pub u64);
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct BasicBlockId(pub u64);
 
-/// A local variable is a value which can be operated on by functions and expressions.
-/// Other objects, such as symbols in global scope, must be instanced as local variables
-/// before being operated on. This allows the borrow checker and the code translator
-/// to better understand the control flow and data flow.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum LocalVariableName {
-    /// An argument starts as being 'owned'.
-    /// Parts of arguments, such as pattern-matched components, are explicitly
-    /// retrieved from an argument by a MIR expression in the function body.
-    Argument(ArgumentIndex),
-    /// Local variables, such as intermediate values, are given a unique ID to distinguish them.
-    Local(LocalVariableId),
-    /// The return value can be written to (but not read from) using this enum value.
-    ReturnValue,
+impl Display for BasicBlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "bb{}", self.0)
+    }
 }
 
 /// A definition for a symbol, i.e. a function or constant.
@@ -66,8 +56,9 @@ pub struct DefinitionM {
     pub type_variables: Vec<String>,
     /// How many parameters must be supplied to this function? Their types are kept in the local variable names map.
     pub arity: u64,
-    /// Contains argument types and return types.
+    /// Contains argument types.
     pub local_variable_names: HashMap<LocalVariableName, LocalVariableInfo>,
+    pub return_type: Type,
     pub control_flow_graph: ControlFlowGraph,
     /// Which basic block should be entered to invoke the function?
     pub entry_point: BasicBlockId,
@@ -76,6 +67,49 @@ pub struct DefinitionM {
 impl Ranged for DefinitionM {
     fn range(&self) -> Range {
         self.range
+    }
+}
+
+impl Display for DefinitionM {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "arity: {}", self.arity)?;
+        writeln!(f, "entry point: {}", self.entry_point)?;
+
+        for (var, info) in &self.local_variable_names {
+            writeln!(f, "    let {}: {}", var, info)?;
+        }
+        for (block_id, block) in &self.control_flow_graph.basic_blocks {
+            writeln!(f, "{}:", block_id)?;
+            for stmt in &block.statements {
+                writeln!(f, "    {}", stmt)?;
+            }
+            writeln!(f, "    {}", block.terminator)?;
+        }
+
+        Ok(())
+    }
+}
+
+/// A local variable is a value which can be operated on by functions and expressions.
+/// Other objects, such as symbols in global scope, must be instanced as local variables
+/// before being operated on. This allows the borrow checker and the code translator
+/// to better understand the control flow and data flow.
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum LocalVariableName {
+    /// An argument starts as being 'owned'.
+    /// Parts of arguments, such as pattern-matched components, are explicitly
+    /// retrieved from an argument by a MIR expression in the function body.
+    Argument(ArgumentIndex),
+    /// Local variables, such as intermediate values, are given a unique ID to distinguish them.
+    Local(LocalVariableId),
+}
+
+impl Display for LocalVariableName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LocalVariableName::Argument(arg) => write!(f, "arg{}", arg.0),
+            LocalVariableName::Local(local) => write!(f, "_{}", local.0),
+        }
     }
 }
 
@@ -89,6 +123,16 @@ pub struct LocalVariableInfo {
     pub ty: Type,
     /// If this variable had a name, what was it?
     pub name: Option<String>,
+}
+
+impl Display for LocalVariableInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at {}", self.ty, self.range)?;
+        if let Some(name) = &self.name {
+            write!(f, " named {}", name)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -124,9 +168,23 @@ pub struct Statement {
     pub kind: StatementKind,
 }
 
+impl Display for Statement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at {}", self.kind, self.range)
+    }
+}
+
 #[derive(Debug)]
 pub enum StatementKind {
     Assign { target: Place, source: Rvalue },
+}
+
+impl Display for StatementKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StatementKind::Assign { target, source } => write!(f, "{} = {}", target, source),
+        }
+    }
 }
 
 /// A place in memory that we can read from and write to.
@@ -136,6 +194,16 @@ pub struct Place {
     local: LocalVariableName,
     /// A list of lenses that allow us to index inside this local variable into deeper and deeper nested places.
     projection: Vec<PlaceSegment>,
+}
+
+impl Display for Place {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.local)?;
+        for proj in &self.projection {
+            write!(f, "{}", proj)?;
+        }
+        Ok(())
+    }
 }
 
 impl Place {
@@ -157,12 +225,28 @@ pub enum PlaceSegment {
     Field(String),
 }
 
+impl Display for PlaceSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlaceSegment::Field(field) => write!(f, ".{}", field),
+        }
+    }
+}
+
 /// Represents the use of a value that we can feed into an expression or function.
 /// We can only read from (not write to) an rvalue.
 #[derive(Debug, Clone)]
 pub enum Rvalue {
     /// Either a copy or a move, depending on the type.
     Use(Operand),
+}
+
+impl Display for Rvalue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Rvalue::Use(operand) => write!(f, "use {}", operand),
+        }
+    }
 }
 
 /// A value that we can read from.
@@ -173,10 +257,26 @@ pub enum Operand {
     Constant(ImmediateValue),
 }
 
+impl Display for Operand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Operand::Copy(place) => write!(f, "copy {}", place),
+            Operand::Move(place) => write!(f, "move {}", place),
+            Operand::Constant(constant) => write!(f, "const {}", constant),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Terminator {
     pub range: Range,
     pub kind: TerminatorKind,
+}
+
+impl Display for Terminator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at {}", self.kind, self.range)
+    }
 }
 
 #[derive(Debug)]
@@ -190,6 +290,22 @@ pub enum TerminatorKind {
     /// Used in intermediate steps, when we do not know the terminator of a block.
     /// This should never be translated into LLVM IR, the compiler should instead panic.
     Invalid,
+}
+
+impl Display for TerminatorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TerminatorKind::Goto(target) => write!(f, "goto {}", target),
+            TerminatorKind::SwitchDiscriminator { cases } => {
+                writeln!(f, "switch {{")?;
+                for (case, id) in cases {
+                    writeln!(f, "        {} -> {}", case, id)?;
+                }
+                write!(f, "}}")
+            }
+            TerminatorKind::Invalid => write!(f, "invalid"),
+        }
+    }
 }
 
 /// Converts all expressions into control flow graphs.
@@ -243,15 +359,7 @@ fn to_mir_def(def: Definition) -> DiagnosticResult<DefinitionM> {
     let range = def.range();
     let type_variables = def.type_variables.clone();
     let arg_types = def.arg_types.clone();
-
-    ctx.local_variable_names.insert(
-        LocalVariableName::ReturnValue,
-        LocalVariableInfo {
-            range: def.range(),
-            ty: def.return_type.clone(),
-            name: Some("return value".to_string()),
-        },
-    );
+    let return_type = def.return_type.clone();
 
     // This function will create the rest of the control flow graph
     // for sub-expressions.
@@ -262,6 +370,7 @@ fn to_mir_def(def: Definition) -> DiagnosticResult<DefinitionM> {
         type_variables,
         arity: arg_types.len() as u64,
         local_variable_names: ctx.local_variable_names,
+        return_type,
         control_flow_graph: ctx.control_flow_graph,
         entry_point,
     })
@@ -272,6 +381,7 @@ fn to_mir_def(def: Definition) -> DiagnosticResult<DefinitionM> {
 fn create_cfg(ctx: &mut DefinitionTranslationContext, def: Definition) -> BasicBlockId {
     // Begin by creating the CFG for each case in the definition.
     let range = def.range();
+    // TODO For now, we'll just consider the first case and ignore all pattern matching.
     for case in def.cases {
         // Create a local variable for each bound variable in the pattern.
         let unwrap_patterns_blocks = case
@@ -290,6 +400,8 @@ fn create_cfg(ctx: &mut DefinitionTranslationContext, def: Definition) -> BasicB
             .collect::<Vec<_>>();
 
         let unwrap_patterns_block = chain(ctx, unwrap_patterns_blocks, range);
+
+        // Now, we can generate basic blocks for the rest of the function.
 
         if true {
             return unwrap_patterns_block;
