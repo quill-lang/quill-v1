@@ -253,7 +253,7 @@ impl PatternExhaustionCheck {
                 // - `a` where `a` is any other enum variant of the same enum.
 
                 // Check if the expected type is an enum type.
-                if let Type::Named { name, parameters } = ty {
+                if let Type::Named { name, .. } = ty {
                     let data_type_decl = &project_index[&name.source_file].types[&name.name];
                     if let TypeDeclarationTypeI::Enum(enumi) = &data_type_decl.decl_type {
                         // This is an enum type.
@@ -352,7 +352,7 @@ impl PatternExhaustionCheck {
                     })
                     .collect()
             }
-            Pattern::Function { param_types, args } => {
+            Pattern::Function { .. } => {
                 unreachable!()
             }
             Pattern::Unknown(_) => {

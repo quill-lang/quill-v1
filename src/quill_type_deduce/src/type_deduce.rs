@@ -806,6 +806,19 @@ fn generate_constraints(
                         let mut type_variable_definition_ranges = HashMap::new();
                         let mut assumptions = Assumptions::default();
                         let mut constraints = Constraints::default();
+
+                        let mut ids = HashMap::new();
+                        for (i, type_param) in datai.type_params.iter().enumerate() {
+                            ids.insert(
+                                type_param.name.clone(),
+                                TypeVariable::Unknown {
+                                    id: type_parameter_variables[i],
+                                },
+                            );
+                        }
+                        // TODO deal with higher kinded type variables here.
+                        let mut higher_kinded_ids = HashMap::new();
+
                         for (field_name, field_expr) in fields.fields {
                             let (result, inner_messages) = generate_constraints(
                                 source_file,
@@ -834,17 +847,6 @@ fn generate_constraints(
                                     .expect("could not find named field");
 
                                 // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
-                                let mut ids = HashMap::new();
-                                for (i, type_param) in datai.type_params.iter().enumerate() {
-                                    ids.insert(
-                                        type_param.name.clone(),
-                                        TypeVariable::Unknown {
-                                            id: type_parameter_variables[i],
-                                        },
-                                    );
-                                }
-                                // TODO deal with higher kinded type variables here.
-                                let mut higher_kinded_ids = HashMap::new();
                                 let field_type_variable =
                                     instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
 
@@ -901,17 +903,6 @@ fn generate_constraints(
                                     .expect("could not find named field");
 
                                 // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
-                                let mut ids = HashMap::new();
-                                for (i, type_param) in datai.type_params.iter().enumerate() {
-                                    ids.insert(
-                                        type_param.name.clone(),
-                                        TypeVariable::Unknown {
-                                            id: type_parameter_variables[i],
-                                        },
-                                    );
-                                }
-                                // TODO deal with higher kinded type variables here.
-                                let mut higher_kinded_ids = HashMap::new();
                                 let field_type_variable =
                                     instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
 
@@ -1054,6 +1045,7 @@ fn solve_type_constraint_queue(
     mut constraint_queue: VecDeque<(TypeVariable, Constraint)>,
     mut substitution: HashMap<TypeVariableId, TypeVariable>,
 ) -> DiagnosticResult<HashMap<TypeVariableId, TypeVariable>> {
+    //dbg!(&constraint_queue);
     while let Some((type_variable, constraint)) = constraint_queue.pop_front() {
         // println!(
         //     "Solving constraint {:#?} => {:#?}",
@@ -1568,6 +1560,7 @@ fn mgu_enum(
     enumi: &EnumI,
     actual: TypeVariable,
 ) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
+    println!("MGU: {:#?} {:#?} {:#?}", left_name, left_parameters, actual);
     if let TypeVariable::Unknown { id: right } = actual {
         let mut map = HashMap::new();
         map.insert(
@@ -1627,23 +1620,8 @@ fn mgu_enum(
                             }
                         }
                     }
-                    Type::Variable { parameters, .. } => {
-                        for (param, param_var) in enumi.type_params.iter().zip(&left_parameters) {
-                            for actual_param in parameters {
-                                if let Type::Variable {
-                                    variable,
-                                    parameters: parameters_count,
-                                } = actual_param
-                                {
-                                    if *variable == param.name {
-                                        if !parameters_count.is_empty() {
-                                            panic!("not implemented higher kinded enums yet")
-                                        }
-                                        ids.insert(variable.clone(), param_var.clone());
-                                    }
-                                }
-                            }
-                        }
+                    Type::Variable { .. } => {
+                        panic!("enums should not have type variables as options")
                     }
                     Type::Function(_, _) => {}
                     Type::Primitive(_) => {}
@@ -1658,8 +1636,8 @@ fn mgu_enum(
         // Otherwise, this is a type error.
         let match_count = results.iter().filter(|result| result.is_ok()).count();
         if match_count == 1 {
-            // This is ok. No substitution is required.
-            Ok(HashMap::new())
+            // This is ok. Inherit the substitution from the match.
+            Ok(results.into_iter().find_map(|result| result.ok()).unwrap())
         } else {
             Err(UnificationError::ExpectedDifferent {
                 expected: TypeVariable::Named {

@@ -25,7 +25,7 @@ async fn test_borrow_check() {
                 index_single_file(&file_ident, &parsed).bind(|index| {
                     let mut project_index = ProjectIndex::new();
                     project_index.insert(file_ident.clone(), index);
-                    check(&file_ident, &project_index, parsed)
+                    dbg!(check(&file_ident, &project_index, parsed))
                         .bind(|typeck| to_mir(&file_ident, typeck))
                 })
             })
