@@ -1,7 +1,7 @@
 use quill_mir::SourceFileMIR;
 
 #[tokio::test]
-async fn test_borrow_check() {
+async fn test_mir() {
     use quill_common::location::SourceFileIdentifier;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;

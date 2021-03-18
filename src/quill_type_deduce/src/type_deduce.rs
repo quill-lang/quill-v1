@@ -795,161 +795,167 @@ fn generate_constraints(
                     };
 
                     // Find the type constructor.
-                    if let TypeDeclarationTypeI::Data(datai) = &project_index
+                    let (type_ctor, type_params) = match &project_index
                         [&type_constructor_invocation.data_type.source_file]
                         .types[&type_constructor_invocation.data_type.name]
                         .decl_type
                     {
-                        // Generate constraints for each field.
-                        let mut fields_with_constraints = Vec::new();
-                        let mut messages = Vec::new();
-                        let mut type_variable_definition_ranges = HashMap::new();
-                        let mut assumptions = Assumptions::default();
-                        let mut constraints = Constraints::default();
+                        TypeDeclarationTypeI::Data(datai) => (&datai.type_ctor, &datai.type_params),
+                        TypeDeclarationTypeI::Enum(enumi) => (
+                            &enumi
+                                .variants
+                                .iter()
+                                .find(|variant| {
+                                    &variant.name.name
+                                        == type_constructor_invocation.variant.as_ref().unwrap()
+                                })
+                                .unwrap()
+                                .type_ctor,
+                            &enumi.type_params,
+                        ),
+                    };
 
-                        let mut ids = HashMap::new();
-                        for (i, type_param) in datai.type_params.iter().enumerate() {
-                            ids.insert(
-                                type_param.name.clone(),
-                                TypeVariable::Unknown {
-                                    id: type_parameter_variables[i],
-                                },
-                            );
-                        }
-                        // TODO deal with higher kinded type variables here.
-                        let mut higher_kinded_ids = HashMap::new();
+                    // Generate constraints for each field.
+                    let mut fields_with_constraints = Vec::new();
+                    let mut messages = Vec::new();
+                    let mut type_variable_definition_ranges = HashMap::new();
+                    let mut assumptions = Assumptions::default();
+                    let mut constraints = Constraints::default();
 
-                        for (field_name, field_expr) in fields.fields {
-                            let (result, inner_messages) = generate_constraints(
-                                source_file,
-                                project_index,
-                                args,
-                                lambda_variables.clone(),
-                                let_variables.clone(),
-                                field_expr,
-                            )
-                            .destructure();
-                            messages.extend(inner_messages);
-                            if let Some(result) = result {
-                                let_variables = result.let_variables;
-                                type_variable_definition_ranges
-                                    .extend(result.type_variable_definition_ranges);
-                                assumptions = assumptions.union(result.assumptions);
-                                constraints = constraints.union(result.constraints);
-
-                                // TODO this crashes if the field's type could not ben deduced! We should deny before this step.
-                                // Add the constraint that the field has the required type.
-                                let (_, field_type) = datai
-                                    .type_ctor
-                                    .fields
-                                    .iter()
-                                    .find(|(name, _)| name.name == field_name.name)
-                                    .expect("could not find named field");
-
-                                // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
-                                let field_type_variable =
-                                    instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
-
-                                constraints.0.push((
-                                    result.expr.type_variable.clone(),
-                                    Constraint::Equality {
-                                        ty: field_type_variable,
-                                        reason: ConstraintEqualityReason::Field {
-                                            expr: result.expr.range(),
-                                            data_type: type_constructor_invocation
-                                                .data_type
-                                                .clone(),
-                                            type_ctor: type_constructor_invocation
-                                                .data_type
-                                                .name
-                                                .clone(),
-                                            field: field_name.name.clone(),
-                                        },
-                                    },
-                                ));
-
-                                fields_with_constraints.push((field_name, result.expr));
-                            }
-                        }
-                        for auto_field in fields.auto_fields {
-                            // Generate a dummy expression that just has the auto_field name.
-                            // This expression becomes the value of the field.
-                            let field_expr = ExprPatP::Variable(IdentifierP {
-                                segments: vec![auto_field.clone()],
-                            });
-                            let (result, inner_messages) = generate_constraints(
-                                source_file,
-                                project_index,
-                                args,
-                                lambda_variables.clone(),
-                                let_variables.clone(),
-                                field_expr,
-                            )
-                            .destructure();
-                            messages.extend(inner_messages);
-                            if let Some(result) = result {
-                                let_variables = result.let_variables;
-                                type_variable_definition_ranges
-                                    .extend(result.type_variable_definition_ranges);
-                                assumptions = assumptions.union(result.assumptions);
-                                constraints = constraints.union(result.constraints);
-
-                                // Add the constraint that the field has the required type.
-                                let (_, field_type) = datai
-                                    .type_ctor
-                                    .fields
-                                    .iter()
-                                    .find(|(name, _)| name.name == auto_field.name)
-                                    .expect("could not find named field");
-
-                                // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
-                                let field_type_variable =
-                                    instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
-
-                                constraints.0.push((
-                                    result.expr.type_variable.clone(),
-                                    Constraint::Equality {
-                                        ty: field_type_variable,
-                                        reason: ConstraintEqualityReason::Field {
-                                            expr: result.expr.range(),
-                                            data_type: type_constructor_invocation
-                                                .data_type
-                                                .clone(),
-                                            type_ctor: type_constructor_invocation
-                                                .data_type
-                                                .name
-                                                .clone(),
-                                            field: auto_field.name.clone(),
-                                        },
-                                    },
-                                ));
-
-                                fields_with_constraints.push((auto_field, result.expr));
-                            }
-                        }
-
-                        DiagnosticResult::ok_with_many(
-                            ExprTypeCheck {
-                                expr: ExpressionT {
-                                    type_variable,
-                                    contents: ExpressionContentsT::ConstructData {
-                                        data_type_name: type_constructor_invocation.data_type,
-                                        fields: fields_with_constraints,
-                                        open_brace,
-                                        close_brace,
-                                    },
-                                },
-                                type_variable_definition_ranges,
-                                assumptions,
-                                constraints,
-                                let_variables,
-                                new_variables: None,
+                    let mut ids = HashMap::new();
+                    for (i, type_param) in type_params.iter().enumerate() {
+                        ids.insert(
+                            type_param.name.clone(),
+                            TypeVariable::Unknown {
+                                id: type_parameter_variables[i],
                             },
-                            messages,
-                        )
-                    } else {
-                        unreachable!()
+                        );
                     }
+                    // TODO deal with higher kinded type variables here.
+                    let mut higher_kinded_ids = HashMap::new();
+
+                    for (field_name, field_expr) in fields.fields {
+                        let (result, inner_messages) = generate_constraints(
+                            source_file,
+                            project_index,
+                            args,
+                            lambda_variables.clone(),
+                            let_variables.clone(),
+                            field_expr,
+                        )
+                        .destructure();
+                        messages.extend(inner_messages);
+                        if let Some(result) = result {
+                            let_variables = result.let_variables;
+                            type_variable_definition_ranges
+                                .extend(result.type_variable_definition_ranges);
+                            assumptions = assumptions.union(result.assumptions);
+                            constraints = constraints.union(result.constraints);
+
+                            // TODO this crashes if the field's type could not ben deduced! We should deny before this step.
+                            // Add the constraint that the field has the required type.
+                            let (_, field_type) = type_ctor
+                                .fields
+                                .iter()
+                                .find(|(name, _)| name.name == field_name.name)
+                                .expect("could not find named field");
+
+                            // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
+                            let field_type_variable =
+                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+
+                            constraints.0.push((
+                                result.expr.type_variable.clone(),
+                                Constraint::Equality {
+                                    ty: field_type_variable,
+                                    reason: ConstraintEqualityReason::Field {
+                                        expr: result.expr.range(),
+                                        data_type: type_constructor_invocation.data_type.clone(),
+                                        type_ctor: type_constructor_invocation
+                                            .data_type
+                                            .name
+                                            .clone(),
+                                        field: field_name.name.clone(),
+                                    },
+                                },
+                            ));
+
+                            fields_with_constraints.push((field_name, result.expr));
+                        }
+                    }
+                    for auto_field in fields.auto_fields {
+                        // Generate a dummy expression that just has the auto_field name.
+                        // This expression becomes the value of the field.
+                        let field_expr = ExprPatP::Variable(IdentifierP {
+                            segments: vec![auto_field.clone()],
+                        });
+                        let (result, inner_messages) = generate_constraints(
+                            source_file,
+                            project_index,
+                            args,
+                            lambda_variables.clone(),
+                            let_variables.clone(),
+                            field_expr,
+                        )
+                        .destructure();
+                        messages.extend(inner_messages);
+                        if let Some(result) = result {
+                            let_variables = result.let_variables;
+                            type_variable_definition_ranges
+                                .extend(result.type_variable_definition_ranges);
+                            assumptions = assumptions.union(result.assumptions);
+                            constraints = constraints.union(result.constraints);
+
+                            // Add the constraint that the field has the required type.
+                            let (_, field_type) = type_ctor
+                                .fields
+                                .iter()
+                                .find(|(name, _)| name.name == auto_field.name)
+                                .expect("could not find named field");
+
+                            // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
+                            let field_type_variable =
+                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+
+                            constraints.0.push((
+                                result.expr.type_variable.clone(),
+                                Constraint::Equality {
+                                    ty: field_type_variable,
+                                    reason: ConstraintEqualityReason::Field {
+                                        expr: result.expr.range(),
+                                        data_type: type_constructor_invocation.data_type.clone(),
+                                        type_ctor: type_constructor_invocation
+                                            .data_type
+                                            .name
+                                            .clone(),
+                                        field: auto_field.name.clone(),
+                                    },
+                                },
+                            ));
+
+                            fields_with_constraints.push((auto_field, result.expr));
+                        }
+                    }
+
+                    DiagnosticResult::ok_with_many(
+                        ExprTypeCheck {
+                            expr: ExpressionT {
+                                type_variable,
+                                contents: ExpressionContentsT::ConstructData {
+                                    data_type_name: type_constructor_invocation.data_type,
+                                    fields: fields_with_constraints,
+                                    open_brace,
+                                    close_brace,
+                                },
+                            },
+                            type_variable_definition_ranges,
+                            assumptions,
+                            constraints,
+                            let_variables,
+                            new_variables: None,
+                        },
+                        messages,
+                    )
                 },
             )
         }
@@ -1055,7 +1061,7 @@ fn solve_type_constraint_queue(
             Constraint::Equality { ty: other, reason } => {
                 // This constraint specifies that `type_variable === other`.
                 // So we'll find the most general unifier between the two types.
-                match most_general_unifier(project_index, type_variable.clone(), other.clone()) {
+                match most_general_unifier(project_index, other.clone(), type_variable.clone()) {
                     Ok(mgu) => {
                         // Add this substitution to the list of substitutions,
                         // and also apply the substitution to the current list of constraints.
@@ -1351,97 +1357,74 @@ fn most_general_unifier(
             name: left_name,
             parameters: left_parameters,
         } => {
-            let left_type = &project_index[&left_name.source_file].types[&left_name.name];
-            if let TypeDeclarationTypeI::Enum(enumi) = &left_type.decl_type {
-                mgu_enum(project_index, left_name, left_parameters, enumi, actual)
-            } else {
-                match actual {
-                    TypeVariable::Named {
-                        name: right_name,
-                        parameters: right_parameters,
-                    } => {
-                        let right_type =
-                            &project_index[&right_name.source_file].types[&right_name.name];
-                        if let TypeDeclarationTypeI::Enum(enumi) = &right_type.decl_type {
-                            mgu_enum(
-                                project_index,
-                                right_name,
-                                right_parameters,
-                                enumi,
-                                TypeVariable::Named {
-                                    name: left_name,
-                                    parameters: left_parameters,
-                                },
-                            )
-                        } else {
-                            // Both type variables are named types.
-                            // Check that they are the same.
-                            if left_name == right_name {
-                                // Unify the type parameters.
-                                // The lists must have equal length, since the names matched.
-                                let mut mgu = HashMap::new();
-                                for (left_param, right_param) in
-                                    left_parameters.into_iter().zip(right_parameters)
-                                {
-                                    let inner_mgu = most_general_unifier(
-                                        project_index,
-                                        left_param,
-                                        right_param,
-                                    )?;
-                                    mgu = unify(project_index, mgu, inner_mgu)?;
-                                }
-                                Ok(mgu)
-                            } else {
-                                Err(UnificationError::ExpectedDifferent {
-                                    expected: TypeVariable::Named {
-                                        name: left_name,
-                                        parameters: left_parameters,
-                                    },
-                                    actual: TypeVariable::Named {
-                                        name: right_name,
-                                        parameters: right_parameters,
-                                    },
-                                })
-                            }
+            match actual {
+                TypeVariable::Named {
+                    name: right_name,
+                    parameters: right_parameters,
+                } => {
+                    // Both type variables are named types.
+                    // Check that they are the same.
+                    if left_name == right_name {
+                        // Unify the type parameters.
+                        // The lists must have equal length, since the names matched.
+                        let mut mgu = HashMap::new();
+                        for (left_param, right_param) in
+                            left_parameters.into_iter().zip(right_parameters)
+                        {
+                            let inner_mgu =
+                                most_general_unifier(project_index, left_param, right_param)?;
+                            mgu = unify(project_index, mgu, inner_mgu)?;
                         }
-                    }
-                    TypeVariable::Unknown { id: right } => {
-                        let mut map = HashMap::new();
-                        map.insert(
-                            right,
-                            TypeVariable::Named {
-                                name: left_name,
-                                parameters: left_parameters,
-                            },
-                        );
-                        Ok(map)
-                    }
-                    TypeVariable::Function(right_param, right_result) => {
+                        Ok(mgu)
+                    } else {
                         Err(UnificationError::ExpectedDifferent {
                             expected: TypeVariable::Named {
                                 name: left_name,
                                 parameters: left_parameters,
                             },
-                            actual: TypeVariable::Function(right_param, right_result),
-                        })
-                    }
-                    TypeVariable::Variable { variable, .. } => {
-                        Err(UnificationError::ExpectedVariable {
                             actual: TypeVariable::Named {
-                                name: left_name,
-                                parameters: left_parameters,
+                                name: right_name,
+                                parameters: right_parameters,
                             },
-                            variable,
                         })
                     }
-                    prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
+                }
+                TypeVariable::Unknown { id: right } => {
+                    let mut map = HashMap::new();
+                    map.insert(
+                        right,
+                        TypeVariable::Named {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                    );
+                    Ok(map)
+                }
+                TypeVariable::Function(right_param, right_result) => {
+                    Err(UnificationError::ExpectedDifferent {
                         expected: TypeVariable::Named {
                             name: left_name,
                             parameters: left_parameters,
                         },
-                        actual: prim,
-                    }),
+                        actual: TypeVariable::Function(right_param, right_result),
+                    })
                 }
+                TypeVariable::Variable { variable, .. } => {
+                    Err(UnificationError::ExpectedVariable {
+                        actual: TypeVariable::Named {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                        variable,
+                    })
+                }
+                prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
+                    expected: TypeVariable::Named {
+                        name: left_name,
+                        parameters: left_parameters,
+                    },
+                    actual: prim,
+                }),
             }
         }
         TypeVariable::Unknown { id } => {
@@ -1553,101 +1536,6 @@ fn most_general_unifier(
     }
 }
 
-fn mgu_enum(
-    project_index: &ProjectIndex,
-    left_name: QualifiedName,
-    left_parameters: Vec<TypeVariable>,
-    enumi: &EnumI,
-    actual: TypeVariable,
-) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
-    if let TypeVariable::Unknown { id: right } = actual {
-        let mut map = HashMap::new();
-        map.insert(
-            right,
-            TypeVariable::Named {
-                name: left_name,
-                parameters: left_parameters,
-            },
-        );
-        Ok(map)
-    } else {
-        // Since this type variable is an enum, any of its alternatives is valid.
-        // Further, it itself is valid. For example, if we expect a Bool, one of `[True, False, Bool]` is expected.
-        if let TypeVariable::Named { name, parameters } = &actual {
-            // Check if this is just the enum name itself, such as `Bool`.
-            if *name == left_name {
-                // Unify the parameters.
-                let mut map = HashMap::new();
-                for (expected_param, actual_param) in left_parameters.iter().zip(parameters) {
-                    map = unify(
-                        project_index,
-                        map,
-                        most_general_unifier(
-                            project_index,
-                            expected_param.clone(),
-                            actual_param.clone(),
-                        )?,
-                    )?
-                }
-                return Ok(map);
-            }
-        }
-
-        let results = enumi
-            .alternatives
-            .iter()
-            .map(|alt| {
-                let mut ids = HashMap::new();
-                let mut higher_kinded_ids = HashMap::new();
-                // Instantiate the enum subtype using the *same* type parameters as the enum itself.
-                for (param, param_var) in enumi.type_params.iter().zip(&left_parameters) {
-                    for actual_param in &alt.parameters {
-                        if let Type::Variable {
-                            variable,
-                            parameters: parameters_count,
-                        } = actual_param
-                        {
-                            if *variable == param.name {
-                                if !parameters_count.is_empty() {
-                                    panic!("not implemented higher kinded enums yet")
-                                }
-                                ids.insert(variable.clone(), param_var.clone());
-                            }
-                        }
-                    }
-                }
-
-                let actual_alt = instantiate_with(
-                    &Type::Named {
-                        name: alt.data_type_name.clone(),
-                        parameters: alt.parameters.clone(),
-                    },
-                    &mut ids,
-                    &mut higher_kinded_ids,
-                );
-
-                most_general_unifier(project_index, actual_alt, actual.clone())
-            })
-            .collect::<Vec<_>>();
-
-        // We require that only one enum alternative actually matches.
-        // Otherwise, this is a type error.
-        let match_count = results.iter().filter(|result| result.is_ok()).count();
-        if match_count == 1 {
-            // This is ok. Inherit the substitution from the match.
-            Ok(results.into_iter().find_map(|result| result.ok()).unwrap())
-        } else {
-            Err(UnificationError::ExpectedDifferent {
-                expected: TypeVariable::Named {
-                    name: left_name,
-                    parameters: left_parameters,
-                },
-                actual,
-            })
-        }
-    }
-}
-
 fn unify(
     project_index: &ProjectIndex,
     mut a: HashMap<TypeVariableId, TypeVariable>,
@@ -1656,7 +1544,7 @@ fn unify(
     for (id, v) in b {
         match a.entry(id) {
             Entry::Occupied(occupied) => {
-                let inner_mgu = most_general_unifier(project_index, occupied.get().clone(), v)?;
+                let inner_mgu = most_general_unifier(project_index, v, occupied.get().clone())?;
                 a = unify(project_index, a, inner_mgu)?;
             }
             Entry::Vacant(vacant) => {

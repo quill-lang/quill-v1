@@ -15,8 +15,10 @@ use crate::{type_check::TypeVariable, type_resolve::TypeVariableId};
 /// For type constructor declarations, see `TypeConstructor`.
 #[derive(Debug, Clone)]
 pub struct TypeConstructorInvocation {
-    /// The data type that the type constructor will create.
+    /// The data or enum type that the type constructor will create.
     pub data_type: QualifiedName,
+    /// If this data type is an enum, which variant is created?
+    pub variant: Option<String>,
     /// How many type parameters does this data type have?
     pub num_parameters: u32,
     /// The range where the type ctor was used in code.
@@ -238,11 +240,12 @@ pub fn resolve_type_constructor(
 ) -> DiagnosticResult<TypeConstructorInvocation> {
     // We don't have `import`-style statements yet, so let's just only search for types in the current module path.
     let file_index = &project_index[source_file];
-    // A type constructor identifier is the name of the type.
+    // A type constructor identifier is the name of the type, or the name of an enum variant.
     if identifier.segments.len() == 1 {
+        // First check if a type is named this.
         match file_index.types.get(&identifier.segments[0].name) {
-            Some(data_name) => {
-                if let TypeDeclarationTypeI::Data(datai) = &data_name.decl_type {
+            Some(data_name) => match &data_name.decl_type {
+                TypeDeclarationTypeI::Data(datai) => {
                     let data_type = QualifiedName {
                         source_file: source_file.clone(),
                         name: data_name.name.name.clone(),
@@ -250,18 +253,52 @@ pub fn resolve_type_constructor(
                     };
                     DiagnosticResult::ok(TypeConstructorInvocation {
                         data_type,
+                        variant: None,
                         range: identifier.range(),
                         num_parameters: datai.type_params.len() as u32,
                     })
-                } else {
-                    unreachable!()
+                }
+                TypeDeclarationTypeI::Enum(_) => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "cannot create enum `{}` without specifying which variant to create",
+                        identifier.segments[0].name
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(source_file, identifier),
+                )),
+            },
+            None => {
+                // Try checking enum variants.
+                match file_index
+                    .enum_variant_types
+                    .get(&identifier.segments[0].name)
+                {
+                    Some(enum_name) => {
+                        if let TypeDeclarationTypeI::Enum(enumi) =
+                            &file_index.types[enum_name].decl_type
+                        {
+                            let data_type = QualifiedName {
+                                source_file: source_file.clone(),
+                                name: enum_name.clone(),
+                                range: enumi.range,
+                            };
+                            DiagnosticResult::ok(TypeConstructorInvocation {
+                                data_type,
+                                variant: Some(identifier.segments[0].name.clone()),
+                                range: identifier.range(),
+                                num_parameters: enumi.type_params.len() as u32,
+                            })
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    None => DiagnosticResult::fail(ErrorMessage::new(
+                        String::from("could not resolve type constructor"),
+                        Severity::Error,
+                        Diagnostic::at(source_file, &identifier.range()),
+                    )),
                 }
             }
-            None => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("could not resolve type constructor"),
-                Severity::Error,
-                Diagnostic::at(source_file, &identifier.range()),
-            )),
         }
     } else {
         DiagnosticResult::fail(ErrorMessage::new(

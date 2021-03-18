@@ -176,7 +176,13 @@ pub struct EnumP {
     pub identifier: NameP,
     pub type_params: Vec<TypeParameterP>,
     /// Has size 1 or larger.
-    pub alternatives: Vec<TypeP>,
+    pub alternatives: Vec<EnumVariantP>,
+}
+
+#[derive(Debug)]
+pub struct EnumVariantP {
+    pub name: NameP,
+    pub type_ctor: TypeConstructorP,
 }
 
 impl<'input> Parser<'input> {
@@ -284,21 +290,27 @@ impl<'input> Parser<'input> {
             })
     }
 
-    /// `enum_alternatives ::= type ("|" enum_alternatives)?`
-    fn parse_enum_alternatives(&mut self) -> DiagnosticResult<Vec<TypeP>> {
-        self.parse_type().bind(|alt| {
-            if self
-                .parse_token_maybe(|ty| matches!(ty, TokenType::TypeOr))
-                .is_some()
-            {
-                // We have another type to parse.
-                self.parse_enum_alternatives().map(|mut remaining_alts| {
-                    remaining_alts.insert(0, alt);
-                    remaining_alts
-                })
-            } else {
-                DiagnosticResult::ok(vec![alt])
-            }
+    /// `enum_alternatives ::= name type_ctor ("|" enum_alternatives)?`
+    fn parse_enum_alternatives(&mut self) -> DiagnosticResult<Vec<EnumVariantP>> {
+        self.parse_name().bind(|name| {
+            self.parse_type_ctor().bind(|alt| {
+                let variant = EnumVariantP {
+                    name,
+                    type_ctor: alt,
+                };
+                if self
+                    .parse_token_maybe(|ty| matches!(ty, TokenType::TypeOr))
+                    .is_some()
+                {
+                    // We have another type to parse.
+                    self.parse_enum_alternatives().map(|mut remaining_alts| {
+                        remaining_alts.insert(0, variant);
+                        remaining_alts
+                    })
+                } else {
+                    DiagnosticResult::ok(vec![variant])
+                }
+            })
         })
     }
 }

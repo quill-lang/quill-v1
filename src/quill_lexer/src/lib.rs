@@ -40,6 +40,7 @@ pub enum TokenType {
 
     Pub,
     Data,
+    Variant,
     Enum,
     Def,
     Let,
@@ -431,6 +432,7 @@ fn token_type_alphabetic(s: String) -> TokenType {
     match s.as_str() {
         "pub" => TokenType::Pub,
         "data" => TokenType::Data,
+        "variant" => TokenType::Variant,
         "enum" => TokenType::Enum,
         "def" => TokenType::Def,
         "let" => TokenType::Let,

@@ -1,5 +1,5 @@
 #[tokio::test]
-async fn test_parser() {
+async fn test_typeck() {
     use quill_common::location::SourceFileIdentifier;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;

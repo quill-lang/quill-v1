@@ -6,8 +6,7 @@ use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Range, Ranged, SourceFileIdentifier},
-    name::QualifiedName,
+    location::{Range, SourceFileIdentifier},
 };
 use quill_parser::{FileP, NameP};
 use quill_type::Type;
@@ -21,6 +20,8 @@ use crate::type_index::ProjectTypesC;
 pub struct FileIndex {
     pub types: HashMap<String, TypeDeclarationI>,
     pub definitions: HashMap<String, DefinitionI>,
+    /// Maps enum variant names (True, Left) to the enum that contains them (Bool, Either)
+    pub enum_variant_types: HashMap<String, String>,
 }
 
 pub type ProjectIndex = HashMap<SourceFileIdentifier, FileIndex>;
@@ -55,14 +56,13 @@ pub struct EnumI {
     /// Where was this enum declaration written?
     pub range: Range,
     pub type_params: Vec<TypeParameter>,
-    pub alternatives: Vec<EnumVariant>,
+    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug)]
 pub struct EnumVariant {
-    /// An enum variant must be a `data` type as opposed to another enum or a primitive, for instance.
-    pub data_type_name: QualifiedName,
-    pub parameters: Vec<Type>,
+    pub name: NameP,
+    pub type_ctor: TypeConstructorI,
 }
 
 #[derive(Debug)]
@@ -115,10 +115,11 @@ pub fn index(
     let mut messages = Vec::new();
 
     let mut types = HashMap::<String, TypeDeclarationI>::new();
-    let mut symbols = HashMap::<String, DefinitionI>::new();
+    let mut definitions = HashMap::<String, DefinitionI>::new();
+    let mut enum_variant_types = HashMap::<String, String>::new();
 
     for definition in &file_parsed.definitions {
-        match symbols.entry(definition.name.name.clone()) {
+        match definitions.entry(definition.name.name.clone()) {
             Entry::Occupied(occupied) => {
                 messages.push(name_used_earlier(
                     source_file,
@@ -233,72 +234,49 @@ pub fn index(
                     .map(|ident| ident.name.name.clone())
                     .collect::<HashSet<_>>();
 
-                let alternatives = an_enum
+                let variants = an_enum
                     .alternatives
                     .iter()
-                    .map(|alt| {
-                        let range = alt.range();
-                        crate::type_resolve::resolve_typep(
-                            source_file,
-                            alt,
-                            &type_params,
-                            project_types,
-                        )
-                        .map(|resolved| (resolved, range))
+                    .map(|variant| {
+                        variant
+                            .type_ctor
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                let ty = crate::type_resolve::resolve_typep(
+                                    source_file,
+                                    &field.ty,
+                                    &type_params,
+                                    project_types,
+                                );
+                                ty.map(|ty| (field.name.clone(), ty))
+                            })
+                            .collect::<DiagnosticResult<Vec<_>>>()
+                            .map(|fields| EnumVariant {
+                                name: variant.name.clone(),
+                                type_ctor: TypeConstructorI { fields },
+                            })
                     })
                     .collect::<DiagnosticResult<Vec<_>>>();
 
-                let (_, mut inner_messages) = alternatives
-                    .bind(|alternatives| {
-                        let mut inner_messages = Vec::new();
+                let (_, mut inner_messages) = variants
+                    .bind(|variants| {
+                        let mut messages = Vec::new();
 
-                        // Check that all the alternatives are actually distinct, and are all `data` types.
-                        let mut used_names = HashMap::new();
-                        let mut actual_alternatives = Vec::new();
-                        for (alt, range) in alternatives {
-                            match alt {
-                                Type::Named { name, parameters } => {
-                                    // Check that this data type has not yet been used as a variant for this enum.
-                                    match used_names.entry(name.clone()) {
-                                        Entry::Occupied(occupied) => {
-                                            inner_messages.push(ErrorMessage::new_with(
-                                                "this data type was already used as a variant for this enum".to_string(),
-                                                Severity::Error,
-                                                Diagnostic::at(source_file, &range),
-                                                HelpMessage {
-                                                    message: "data type was previously used as a variant here".to_string(),
-                                                    help_type: HelpType::Note,
-                                                    diagnostic: Diagnostic::at(source_file, occupied.get()),
-                                                }
-                                            ));
-                                        }
-                                        Entry::Vacant(vacant) => {
-                                            // Add it to the list of used names, and to the list of actual alternatives.
-                                            vacant.insert(range);
-                                            actual_alternatives.push(EnumVariant {
-                                                data_type_name: name.clone(),
-                                                parameters,
-                                            });
-                                        }
-                                    }
+                        for variant in &variants {
+                            match enum_variant_types.entry(variant.name.name.clone()) {
+                                Entry::Occupied(occupied) => messages.push(ErrorMessage::new(
+                                    format!(
+                                        "an enum variant called `{}` was already defined inside `{}`",
+                                        variant.name.name,
+                                        occupied.get(),
+                                    ),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &variant.name.range),
+                                )),
+                                Entry::Vacant(vacant) => {
+                                    vacant.insert(an_enum.identifier.name.clone());
                                 }
-                                Type::Variable {
-                                    ..
-                                } => inner_messages.push(ErrorMessage::new(
-                                    "type variables cannot be used as enum variants".to_string(),
-                                    Severity::Error,
-                                    Diagnostic::at(source_file, &range),
-                                )),
-                                Type::Function(_, _) => inner_messages.push(ErrorMessage::new(
-                                    "functions cannot be used as enum variants".to_string(),
-                                    Severity::Error,
-                                    Diagnostic::at(source_file, &range),
-                                )),
-                                Type::Primitive(_) => inner_messages.push(ErrorMessage::new(
-                                    "primitives cannot be used as enum variants".to_string(),
-                                    Severity::Error,
-                                    Diagnostic::at(source_file, &range),
-                                )),
                             }
                         }
 
@@ -312,16 +290,18 @@ pub fn index(
                                     parameters: param.parameters,
                                 })
                                 .collect(),
-                            alternatives: actual_alternatives,
+                            variants,
                         };
+
                         vacant.insert(TypeDeclarationI {
                             name: an_enum.identifier.clone(),
                             decl_type: TypeDeclarationTypeI::Enum(enumi),
                         });
 
-                        DiagnosticResult::ok_with_many((), inner_messages)
+                        DiagnosticResult::ok_with_many((), messages)
                     })
                     .destructure();
+
                 messages.append(&mut inner_messages);
             }
         }
@@ -329,7 +309,8 @@ pub fn index(
 
     let index = FileIndex {
         types,
-        definitions: symbols,
+        definitions,
+        enum_variant_types,
     };
     DiagnosticResult::ok_with_many(index, messages)
 }
