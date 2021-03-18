@@ -769,6 +769,7 @@ pub enum ExpressionContentsGeneric<E, T> {
     /// Explicitly create a value of a data type.
     ConstructData {
         data_type_name: QualifiedName,
+        variant: Option<String>,
         fields: Vec<(NameP, E)>,
         open_brace: Range,
         close_brace: Range,

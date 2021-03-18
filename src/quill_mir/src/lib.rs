@@ -5,7 +5,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use quill_common::{
     diagnostic::DiagnosticResult,
-    location::{Location, Range, Ranged, SourceFileIdentifier},
+    location::{Range, Ranged},
     name::QualifiedName,
 };
 use quill_parser::NameP;
@@ -206,12 +206,14 @@ pub enum StatementKind {
     CreateLambda {
         ty: Type,
         params: Vec<NameP>,
-        expr: Expression,
+        expr: Box<Expression>,
         target: Place,
     },
     /// Creates an object of a given type, and puts it in target.
     ConstructData {
         ty: Type,
+        /// If this type was an enum, which variant should we create?
+        variant: Option<String>,
         fields: HashMap<String, Rvalue>,
         target: Place,
     },
@@ -243,8 +245,17 @@ impl Display for StatementKind {
                 Ok(())
             }
             StatementKind::CreateLambda { target, .. } => write!(f, "{} = lambda", target),
-            StatementKind::ConstructData { ty, fields, target } => {
-                write!(f, "{} = construct {} with {{ ", target, ty)?;
+            StatementKind::ConstructData {
+                ty,
+                variant,
+                fields,
+                target,
+            } => {
+                write!(f, "{} = construct {}", target, ty)?;
+                if let Some(variant) = variant {
+                    write!(f, "::{}", variant)?;
+                }
+                write!(f, " with {{ ")?;
                 for (field_name, rvalue) in fields {
                     write!(f, "{} = {} ", field_name, rvalue)?;
                 }
@@ -831,7 +842,7 @@ fn generate_expr(
                     kind: StatementKind::CreateLambda {
                         ty,
                         params,
-                        expr: *substituted_expr,
+                        expr: substituted_expr,
                         target: Place::new(LocalVariableName::Local(variable)),
                     },
                 }],
@@ -943,7 +954,9 @@ fn generate_expr(
                 (previous_block_chain, LocalVariableName::Local(variable))
             }
         }
-        ExpressionContentsGeneric::ConstructData { fields, .. } => {
+        ExpressionContentsGeneric::ConstructData {
+            fields, variant, ..
+        } => {
             // Break each field into its name and its expression.
             let (names, expressions): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
 
@@ -980,6 +993,7 @@ fn generate_expr(
                 range,
                 kind: StatementKind::ConstructData {
                     ty,
+                    variant,
                     fields: field_names
                         .into_iter()
                         .zip(names)

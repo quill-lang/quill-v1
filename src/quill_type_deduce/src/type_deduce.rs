@@ -5,7 +5,7 @@ use quill_common::{
     location::{Location, ModuleIdentifier, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_index::{EnumI, ProjectIndex, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{ExprPatP, IdentifierP, NameP};
 use quill_type::Type;
 
@@ -943,6 +943,7 @@ fn generate_constraints(
                                 type_variable,
                                 contents: ExpressionContentsT::ConstructData {
                                     data_type_name: type_constructor_invocation.data_type,
+                                    variant: type_constructor_invocation.variant,
                                     fields: fields_with_constraints,
                                     open_brace,
                                     close_brace,
@@ -1674,6 +1675,7 @@ fn substitute_contents(
             }),
         ExpressionContentsT::ConstructData {
             data_type_name,
+            variant,
             fields,
             open_brace,
             close_brace,
@@ -1686,6 +1688,7 @@ fn substitute_contents(
             .collect::<DiagnosticResult<_>>()
             .map(|fields| ExpressionContents::ConstructData {
                 data_type_name,
+                variant,
                 fields,
                 open_brace,
                 close_brace,
