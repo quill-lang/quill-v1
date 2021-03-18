@@ -19,7 +19,7 @@ impl Location {
 
 impl Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.line + 1, self.col + 1)
+        write!(f, "{:>3}:{:>3}", self.line + 1, self.col + 1)
     }
 }
 
@@ -33,7 +33,7 @@ pub struct Range {
 
 impl Display for Range {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}-{}", self.start, self.end)
+        write!(f, "{} - {}", self.start, self.end)
     }
 }
 
