@@ -9,7 +9,7 @@ async fn test_typeck() {
     use quill_source_file::PackageFileSystem;
     use std::path::PathBuf;
 
-    let fs = PackageFileSystem::new(PathBuf::from("tests"));
+    let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
     for &fname in &["normal_types", "higher_kinded_types", "primitive_types"] {
         let file_ident = SourceFileIdentifier {
             module: vec![].into(),

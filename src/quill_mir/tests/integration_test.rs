@@ -13,7 +13,7 @@ async fn test_mir() {
     use quill_type_deduce::check;
     use std::path::PathBuf;
 
-    let fs = PackageFileSystem::new(PathBuf::from("tests"));
+    let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
     for &fname in &["normal_types", "higher_kinded_types", "primitive_types"] {
         let file_ident = SourceFileIdentifier {
             module: vec![].into(),

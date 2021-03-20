@@ -9,10 +9,10 @@ async fn test_index() {
 
     use quill_index::index_single_file;
 
-    let fs = PackageFileSystem::new(PathBuf::from("tests"));
+    let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
     let file_ident = SourceFileIdentifier {
         module: vec![].into(),
-        file: "file".into(),
+        file: "normal_types".into(),
     };
 
     let lexed = lex(&fs, &file_ident).await;

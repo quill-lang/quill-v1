@@ -7,12 +7,12 @@ async fn test_lexer() {
 
     use quill_lexer::lex;
 
-    let fs = PackageFileSystem::new(PathBuf::from("tests"));
+    let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
     let lexed = lex(
         &fs,
         &SourceFileIdentifier {
             module: vec![].into(),
-            file: "file".into(),
+            file: "normal_types".into(),
         },
     )
     .await;
