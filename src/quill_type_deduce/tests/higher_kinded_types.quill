@@ -1,5 +1,5 @@
-pub data Bool = pub True {} | pub False {}
-pub data Option[T] = pub Some { value: T } | pub None {}
+pub enum Bool = True {} | False {}
+pub enum Option[T] = Some { value: T } | None {}
 
 pub def id[F[_]]: F[Bool] -> F[Bool] {
     id x = x
