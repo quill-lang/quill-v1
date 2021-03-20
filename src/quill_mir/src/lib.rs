@@ -11,8 +11,11 @@ use quill_common::{
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::NameP;
 use quill_type::{PrimitiveType, Type};
-use quill_type_deduce::type_check::{
-    Definition, Expression, ExpressionContentsGeneric, ImmediateValue, Pattern, SourceFileHIR,
+use quill_type_deduce::{
+    type_check::{
+        Definition, Expression, ExpressionContentsGeneric, ImmediateValue, Pattern, SourceFileHIR,
+    },
+    TypeConstructorInvocation,
 };
 
 /// A parsed, type checked, and borrow checked source file.
@@ -301,13 +304,15 @@ impl Place {
 
 #[derive(Debug, Clone)]
 pub enum PlaceSegment {
-    Field(String),
+    DataField { field: String },
+    EnumField { variant: String, field: String },
 }
 
 impl Display for PlaceSegment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlaceSegment::Field(field) => write!(f, ".{}", field),
+            PlaceSegment::DataField { field } => write!(f, ".{}", field),
+            PlaceSegment::EnumField { variant, field } => write!(f, ".<{}>.{}", variant, field),
         }
     }
 }
@@ -364,6 +369,8 @@ pub enum TerminatorKind {
     Goto(BasicBlockId),
     /// Works out which variant of a enum type a given local variable is.
     SwitchDiscriminator {
+        /// What enum are we switching on?
+        enum_name: QualifiedName,
         /// Where is this enum stored?
         enum_place: Place,
         /// Maps the names of enum discriminants to the basic block ID to jump to.
@@ -381,12 +388,16 @@ impl Display for TerminatorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TerminatorKind::Goto(target) => write!(f, "goto {}", target),
-            TerminatorKind::SwitchDiscriminator { enum_place, cases } => {
-                writeln!(f, "switch {} {{", enum_place)?;
+            TerminatorKind::SwitchDiscriminator {
+                enum_name,
+                enum_place,
+                cases,
+            } => {
+                write!(f, "switch {} as {} {{", enum_place, enum_name)?;
                 for (case, id) in cases {
-                    writeln!(f, "        {} -> {}", case, id)?;
+                    write!(f, " {} -> {},", case, id)?;
                 }
-                write!(f, "}}")
+                write!(f, " }}")
             }
             TerminatorKind::Invalid => write!(f, "invalid"),
             TerminatorKind::Return { value } => write!(f, "return {}", value),
@@ -576,6 +587,8 @@ struct PatternMismatch {
 #[derive(Debug)]
 enum PatternMismatchReason {
     EnumDiscriminant {
+        /// What was the name of the enum we want to pattern match?
+        enum_name: QualifiedName,
         /// Maps enum discriminant names to the indices of the patterns that are matched by this discriminant.
         /// If a case is valid for any discriminant, it is put in *every* case.
         cases: HashMap<String, Vec<usize>>,
@@ -616,7 +629,8 @@ fn first_difference(
 
         let need_to_switch_enum = if is_enum {
             // Because (at least) one pattern referenced an enum variant, we might need to switch on this enum's discriminant.
-            // In particular, if two patterns reference *different* variants, then we need to switch the discriminant.
+            // In particular, if two patterns reference *different* variants, or one does *not* reference a variant,
+            // then we need to switch the discriminant.
             // Sometimes this function can be called with a non-exhaustive set of patterns, if we've already excluded
             // some previous patterns. This means that it's possible that an enum variant is referenced, but we already know
             // which variant it is (we've already ruled out all other patterns).
@@ -634,6 +648,9 @@ fn first_difference(
                     } else {
                         expected_variant = Some(type_ctor.variant.as_ref().unwrap());
                     }
+                } else {
+                    found_mismatch = true;
+                    break;
                 }
             }
             found_mismatch
@@ -665,15 +682,11 @@ fn first_difference(
 
             for (i, pat) in patterns.iter().enumerate() {
                 if let Pattern::TypeConstructor { type_ctor, .. } = pat {
-                    if let Some(variant) = &type_ctor.variant {
-                        // This case applies to exactly one discriminant.
-                        cases.get_mut(variant).unwrap().push(i);
-                    } else {
-                        // This case applies to all discriminants.
-                        for (_, case) in cases.iter_mut() {
-                            case.push(i);
-                        }
-                    }
+                    // This case applies to exactly one discriminant.
+                    cases
+                        .get_mut(type_ctor.variant.as_ref().unwrap())
+                        .unwrap()
+                        .push(i);
                 } else {
                     // This case applies to all discriminants.
                     for (_, case) in cases.iter_mut() {
@@ -684,11 +697,22 @@ fn first_difference(
 
             Some(PatternMismatch {
                 place: var,
-                reason: PatternMismatchReason::EnumDiscriminant { cases },
+                reason: PatternMismatchReason::EnumDiscriminant { enum_name, cases },
             })
         } else {
-            // This is not an enum, so we now want to consider the first difference *inside* each pattern.
+            // We do not need to match on the enum discriminator, so we now want to consider the first difference *inside* each pattern.
             // We check each field in the data type, and consider how (and if) the patterns differ when reasoning about this field.
+
+            // Note that in this branch, all cases must have the same enum variant (if this is an enum, not a data type).
+            // So let's work out which variant of the enum it is.
+            let enum_variant = patterns.iter().find_map(|pat| {
+                if let Pattern::TypeConstructor { type_ctor, .. } = pat {
+                    type_ctor.variant.clone()
+                } else {
+                    None
+                }
+            });
+
             let fields = patterns
                 .iter()
                 .find_map(|pat| {
@@ -733,7 +757,15 @@ fn first_difference(
                 // Now, check whether the field patterns differ.
                 if let Some(diff) = first_difference(
                     project_index,
-                    var.clone().then(PlaceSegment::Field(field_name)),
+                    var.clone()
+                        .then(if let Some(variant) = enum_variant.clone() {
+                            PlaceSegment::EnumField {
+                                variant,
+                                field: field_name,
+                            }
+                        } else {
+                            PlaceSegment::DataField { field: field_name }
+                        }),
                     field_ty,
                     &field_patterns,
                 ) {
@@ -774,8 +806,101 @@ fn first_difference_function(
     None
 }
 
+/// `arg_patterns` represents some patterns for the arguments of a function.
+/// If any of these reference the given place, replace the pattern with the given replacement.
+/// This allows us to constrain `_` or named patterns to the known variant
+/// after we've switched on the discriminant, so that we don't get infinite recursion.
+fn reference_discriminant_function(
+    place: Place,
+    replacement: Pattern,
+    mut arg_patterns: Vec<Pattern>,
+) -> Vec<Pattern> {
+    let i = if let LocalVariableName::Argument(ArgumentIndex(i)) = place.local {
+        i as usize
+    } else {
+        unreachable!();
+    };
+
+    arg_patterns[i] =
+        reference_discriminant(place.projection, replacement, arg_patterns[i].clone());
+    arg_patterns
+}
+
+/// If this pattern references the given place relative to the root of the pattern,
+/// replace the pattern with one that matches the given variant.
+fn reference_discriminant(
+    mut place_segments: Vec<PlaceSegment>,
+    replacement: Pattern,
+    pattern: Pattern,
+) -> Pattern {
+    if place_segments.is_empty() {
+        // Check if this pattern is "named" or "unknown". If so, replace it with a blank pattern representing this enum variant.
+        let should_replace = match pattern {
+            Pattern::Named(_) => true,
+            Pattern::TypeConstructor { .. } => false,
+            Pattern::Function { .. } => unreachable!(),
+            Pattern::Unknown(_) => true,
+        };
+
+        if should_replace {
+            replacement
+        } else {
+            pattern
+        }
+    } else {
+        let segment = place_segments.remove(0);
+        match segment {
+            PlaceSegment::DataField { field } => {
+                if let Pattern::TypeConstructor {
+                    type_ctor,
+                    mut fields,
+                } = pattern
+                {
+                    for (field_name, _field_type, field_pat) in &mut fields {
+                        if field_name.name == field {
+                            *field_pat = reference_discriminant(
+                                place_segments,
+                                replacement,
+                                field_pat.clone(),
+                            );
+                            break;
+                        }
+                    }
+                    Pattern::TypeConstructor { type_ctor, fields }
+                } else {
+                    pattern
+                }
+            }
+            PlaceSegment::EnumField { field, .. } => {
+                if let Pattern::TypeConstructor {
+                    type_ctor,
+                    mut fields,
+                } = pattern
+                {
+                    for (field_name, _field_type, field_pat) in &mut fields {
+                        if field_name.name == field {
+                            *field_pat = reference_discriminant(
+                                place_segments,
+                                replacement,
+                                field_pat.clone(),
+                            );
+                            break;
+                        }
+                    }
+                    Pattern::TypeConstructor { type_ctor, fields }
+                } else {
+                    pattern
+                }
+            }
+        }
+    }
+}
+
 /// Creates a basic block (or tree of basic blocks) that
 /// performs the given pattern matching operation for an entire function body.
+/// The value is matched against each case, and basic blocks are created that branch to
+/// these 'case' blocks when the pattern is matched. The return value is a basic block
+/// which will perform this match operation, then jump to the case blocks.
 fn perform_match_function(
     project_index: &ProjectIndex,
     ctx: &mut DefinitionTranslationContext,
@@ -783,19 +908,79 @@ fn perform_match_function(
     arg_types: Vec<Type>,
     cases: Vec<(Vec<Pattern>, BasicBlockId)>,
 ) -> BasicBlockId {
+    println!("Matching {:#?}", cases);
     // Recursively find the first difference between patterns, until each case has its own branch.
     let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
     if let Some(diff) = first_difference_function(project_index, arg_types.clone(), &patterns) {
         // There was a difference that lets us distinguish some of the patterns into different branches.
-        match diff.reason {
-            PatternMismatchReason::EnumDiscriminant { cases } => {
+        println!("Diff {:#?}", diff);
+        let diff_reason = diff.reason;
+        let diff_place = diff.place;
+        match diff_reason {
+            PatternMismatchReason::EnumDiscriminant { enum_name, cases } => {
                 // Create a match operation for each enum discriminant case.
+                // If a pattern for a given case does not reference the enum's discriminant, we'll
+                // replace it with a dummy pattern that references the discriminant we just matched.
                 let cases_matched = cases
                     .into_iter()
                     .map(|(name, cases)| {
                         let new_cases = cases
                             .into_iter()
-                            .map(|id| (patterns[id].clone(), blocks[id]))
+                            .map(|id| {
+                                let enum_fields = if let TypeDeclarationTypeI::Enum(enumi) =
+                                    &project_index[&enum_name.source_file].types[&enum_name.name]
+                                        .decl_type
+                                {
+                                    enumi
+                                        .variants
+                                        .iter()
+                                        .find_map(|variant| {
+                                            if variant.name.name == name {
+                                                Some(
+                                                    variant
+                                                        .type_ctor
+                                                        .fields
+                                                        .iter()
+                                                        .map(|(name, ty)| {
+                                                            (name.name.clone(), ty.clone())
+                                                        })
+                                                        .collect::<Vec<_>>(),
+                                                )
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap()
+                                } else {
+                                    unreachable!()
+                                };
+
+                                let replacement = Pattern::TypeConstructor {
+                                    type_ctor: TypeConstructorInvocation {
+                                        data_type: enum_name.clone(),
+                                        variant: Some(name.clone()),
+                                        // I *think* that num_parameters is not relevant here.
+                                        num_parameters: 0,
+                                        range,
+                                    },
+                                    fields: enum_fields
+                                        .into_iter()
+                                        .map(|(name, ty)| {
+                                            let pattern = Pattern::Unknown(range);
+                                            (NameP { name, range }, ty, pattern)
+                                        })
+                                        .collect(),
+                                };
+
+                                (
+                                    reference_discriminant_function(
+                                        diff_place.clone(),
+                                        replacement,
+                                        patterns[id].clone(),
+                                    ),
+                                    blocks[id],
+                                )
+                            })
                             .collect();
                         (
                             name,
@@ -817,7 +1002,8 @@ fn perform_match_function(
                     terminator: Terminator {
                         range,
                         kind: TerminatorKind::SwitchDiscriminator {
-                            enum_place: diff.place,
+                            enum_name,
+                            enum_place: diff_place,
                             cases: cases_matched,
                         },
                     },
@@ -826,66 +1012,7 @@ fn perform_match_function(
         }
     } else {
         // There was no difference between the patterns.
-        // Therefore, there must be exactly one case left unmatched, otherwise we have a case that
-        // will *never* be matched, which is an error we emitted earlier in compilation.
-        assert!(blocks.len() == 1);
-        blocks[0]
-    }
-}
-
-/// Creates a basic block (or tree of basic blocks) that
-/// performs the given pattern matching operation.
-/// The value is matched against each case, and basic blocks are created that branch to
-/// these 'case' blocks when the pattern is matched. The return value is a basic block
-/// which will perform this match operation, then jump to the case blocks.
-fn perform_match(
-    project_index: &ProjectIndex,
-    ctx: &mut DefinitionTranslationContext,
-    range: Range,
-    value: LocalVariableName,
-    ty: Type,
-    cases: Vec<(Pattern, BasicBlockId)>,
-) -> BasicBlockId {
-    // Recursively find the first difference between patterns, until each case has its own branch.
-    let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
-    if let Some(diff) = first_difference(project_index, Place::new(value), ty.clone(), &patterns) {
-        // There was a difference that lets us distinguish some of the patterns into different branches.
-        match diff.reason {
-            PatternMismatchReason::EnumDiscriminant { cases } => {
-                // Create a match operation for each enum discriminant case.
-                let cases_matched = cases
-                    .into_iter()
-                    .map(|(name, cases)| {
-                        let new_cases = cases
-                            .into_iter()
-                            .map(|id| (patterns[id].clone(), blocks[id]))
-                            .collect();
-                        (
-                            name,
-                            perform_match(project_index, ctx, range, value, ty.clone(), new_cases),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>();
-
-                // Now, each case has been successfully pattern matched to its entirety.
-                // Finally, construct the switch statement to switch between the given cases.
-                ctx.control_flow_graph.new_basic_block(BasicBlock {
-                    statements: Vec::new(),
-                    terminator: Terminator {
-                        range,
-                        kind: TerminatorKind::SwitchDiscriminator {
-                            enum_place: diff.place,
-                            cases: cases_matched,
-                        },
-                    },
-                })
-            }
-        }
-    } else {
-        // There was no difference between the patterns.
-        // Therefore, there must be exactly one case left unmatched, otherwise we have a case that
-        // will *never* be matched, which is an error we emitted earlier in compilation.
-        assert!(blocks.len() == 1);
+        // The first case listed is the "correct" one, since we match earlier cases first.
         blocks[0]
     }
 }
@@ -1004,7 +1131,16 @@ fn bind_pattern_variables(
                         ctx,
                         value
                             .clone()
-                            .then(PlaceSegment::Field(field_name.name.clone())),
+                            .then(if let Some(variant) = type_ctor.variant.clone() {
+                                PlaceSegment::EnumField {
+                                    variant,
+                                    field: field_name.name.clone(),
+                                }
+                            } else {
+                                PlaceSegment::DataField {
+                                    field: field_name.name.clone(),
+                                }
+                            }),
                         pat,
                         ty.clone(),
                     )
