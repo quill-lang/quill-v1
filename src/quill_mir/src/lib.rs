@@ -1,7 +1,10 @@
 //! This module contains the m range: (), kind: ()id-level intermediate representation of code.
 //! Much of this code is heavily inspired by the Rust compiler.
 
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+};
 
 use quill_common::{
     diagnostic::DiagnosticResult,
@@ -24,16 +27,16 @@ pub struct SourceFileMIR {
     pub definitions: HashMap<String, DefinitionM>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct ArgumentIndex(pub u64);
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct LocalVariableId(pub u64);
 impl Display for LocalVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}", self.0)
     }
 }
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct BasicBlockId(pub u64);
 
 impl Display for BasicBlockId {
@@ -68,7 +71,7 @@ pub struct DefinitionM {
     /// How many parameters must be supplied to this function? Their types are kept in the local variable names map.
     pub arity: u64,
     /// Contains argument types.
-    pub local_variable_names: HashMap<LocalVariableName, LocalVariableInfo>,
+    pub local_variable_names: BTreeMap<LocalVariableName, LocalVariableInfo>,
     pub return_type: Type,
     pub control_flow_graph: ControlFlowGraph,
     /// Which basic block should be entered to invoke the function?
@@ -105,7 +108,7 @@ impl Display for DefinitionM {
 /// Other objects, such as symbols in global scope, must be instanced as local variables
 /// before being operated on. This allows the borrow checker and the code translator
 /// to better understand the control flow and data flow.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub enum LocalVariableName {
     /// An argument starts as being 'owned'.
     /// Parts of arguments, such as pattern-matched components, are explicitly
@@ -151,7 +154,7 @@ pub struct ControlFlowGraph {
     next_block_id: BasicBlockId,
     /// Every basic block has a unique index, which is its index inside this basic blocks map.
     /// When jumping between basic blocks, we must provide the index of the target block.
-    pub basic_blocks: HashMap<BasicBlockId, BasicBlock>,
+    pub basic_blocks: BTreeMap<BasicBlockId, BasicBlock>,
 }
 
 impl ControlFlowGraph {
@@ -429,7 +432,7 @@ struct DefinitionTranslationContext {
     /// Retrieves the unique name of a named local variable.
     local_name_map: HashMap<String, LocalVariableName>,
 
-    pub local_variable_names: HashMap<LocalVariableName, LocalVariableInfo>,
+    pub local_variable_names: BTreeMap<LocalVariableName, LocalVariableInfo>,
     pub control_flow_graph: ControlFlowGraph,
 }
 
@@ -457,11 +460,11 @@ impl DefinitionTranslationContext {
 fn to_mir_def(project_index: &ProjectIndex, def: Definition) -> DiagnosticResult<DefinitionM> {
     let mut ctx = DefinitionTranslationContext {
         next_local_variable_id: LocalVariableId(0),
-        local_variable_names: HashMap::new(),
+        local_variable_names: BTreeMap::new(),
         local_name_map: HashMap::new(),
         control_flow_graph: ControlFlowGraph {
             next_block_id: BasicBlockId(0),
-            basic_blocks: HashMap::new(),
+            basic_blocks: BTreeMap::new(),
         },
     };
 
@@ -908,12 +911,10 @@ fn perform_match_function(
     arg_types: Vec<Type>,
     cases: Vec<(Vec<Pattern>, BasicBlockId)>,
 ) -> BasicBlockId {
-    println!("Matching {:#?}", cases);
     // Recursively find the first difference between patterns, until each case has its own branch.
     let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
     if let Some(diff) = first_difference_function(project_index, arg_types.clone(), &patterns) {
         // There was a difference that lets us distinguish some of the patterns into different branches.
-        println!("Diff {:#?}", diff);
         let diff_reason = diff.reason;
         let diff_place = diff.place;
         match diff_reason {
