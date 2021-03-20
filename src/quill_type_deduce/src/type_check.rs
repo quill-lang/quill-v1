@@ -1220,7 +1220,7 @@ impl<'a> TypeChecker<'a> {
             if !anything_modified {
                 messages.push(ErrorMessage::new(
                     String::from("this pattern will never be matched"),
-                    Severity::Warning,
+                    Severity::Error,
                     Diagnostic::at(self.source_file, range),
                 ));
             }

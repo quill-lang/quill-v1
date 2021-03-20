@@ -8,6 +8,7 @@ use quill_common::{
     location::{Range, Ranged},
     name::QualifiedName,
 };
+use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::NameP;
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::type_check::{
@@ -363,7 +364,11 @@ pub enum TerminatorKind {
     Goto(BasicBlockId),
     /// Works out which variant of a enum type a given local variable is.
     SwitchDiscriminator {
-        cases: HashMap<QualifiedName, BasicBlockId>,
+        /// Where is this enum stored?
+        enum_place: Place,
+        /// Maps the names of enum discriminants to the basic block ID to jump to.
+        /// This map must exhaustively cover every possible enum discriminant.
+        cases: HashMap<String, BasicBlockId>,
     },
     /// Used in intermediate steps, when we do not know the terminator of a block.
     /// This should never be translated into LLVM IR, the compiler should instead panic.
@@ -376,8 +381,8 @@ impl Display for TerminatorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TerminatorKind::Goto(target) => write!(f, "goto {}", target),
-            TerminatorKind::SwitchDiscriminator { cases } => {
-                writeln!(f, "switch {{")?;
+            TerminatorKind::SwitchDiscriminator { enum_place, cases } => {
+                writeln!(f, "switch {} {{", enum_place)?;
                 for (case, id) in cases {
                     writeln!(f, "        {} -> {}", case, id)?;
                 }
@@ -390,11 +395,14 @@ impl Display for TerminatorKind {
 }
 
 /// Converts all expressions into control flow graphs.
-pub fn to_mir(file: SourceFileHIR) -> DiagnosticResult<SourceFileMIR> {
+pub fn to_mir(
+    project_index: &ProjectIndex,
+    file: SourceFileHIR,
+) -> DiagnosticResult<SourceFileMIR> {
     let definitions = file
         .definitions
         .into_iter()
-        .map(|(def_name, def)| to_mir_def(def).map(|def| (def_name, def)))
+        .map(|(def_name, def)| to_mir_def(project_index, def).map(|def| (def_name, def)))
         .collect::<DiagnosticResult<Vec<_>>>();
 
     definitions.map(|definitions| SourceFileMIR {
@@ -435,7 +443,7 @@ impl DefinitionTranslationContext {
     }
 }
 
-fn to_mir_def(def: Definition) -> DiagnosticResult<DefinitionM> {
+fn to_mir_def(project_index: &ProjectIndex, def: Definition) -> DiagnosticResult<DefinitionM> {
     let mut ctx = DefinitionTranslationContext {
         next_local_variable_id: LocalVariableId(0),
         local_variable_names: HashMap::new(),
@@ -464,7 +472,7 @@ fn to_mir_def(def: Definition) -> DiagnosticResult<DefinitionM> {
 
     // This function will create the rest of the control flow graph
     // for sub-expressions.
-    let entry_point = create_cfg(&mut ctx, def);
+    let entry_point = create_cfg(project_index, &mut ctx, def);
 
     DiagnosticResult::ok(DefinitionM {
         range,
@@ -479,76 +487,350 @@ fn to_mir_def(def: Definition) -> DiagnosticResult<DefinitionM> {
 
 /// Creates a control flow graph for a function definition.
 /// Returns the basic block representing the function's entry point.
-fn create_cfg(ctx: &mut DefinitionTranslationContext, def: Definition) -> BasicBlockId {
-    // Begin by creating the CFG for each case in the definition.
+fn create_cfg(
+    project_index: &ProjectIndex,
+    ctx: &mut DefinitionTranslationContext,
+    def: Definition,
+) -> BasicBlockId {
     let range = def.range();
-    // TODO For now, we'll just consider the first case and ignore all pattern matching.
-    for case in def.cases {
-        // Create a local variable for each bound variable in the pattern.
-        let unwrap_patterns_blocks = case
-            .arg_patterns
-            .iter()
-            .zip(&def.arg_types)
-            .enumerate()
-            .filter_map(|(i, (arg_pattern, arg_type))| {
-                bind_pattern_variables(
-                    ctx,
-                    Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
-                    arg_pattern,
-                    arg_type.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
+    let arg_types = def.arg_types;
 
-        let unwrap_patterns_block = chain(ctx, unwrap_patterns_blocks, range);
+    // Begin by creating the CFG for each case in the definition.
+    let cases = def
+        .cases
+        .into_iter()
+        .map(|case| {
+            // Create a local variable for each bound variable in the pattern.
+            let unwrap_patterns_blocks = case
+                .arg_patterns
+                .iter()
+                .zip(&arg_types)
+                .enumerate()
+                .filter_map(|(i, (arg_pattern, arg_type))| {
+                    bind_pattern_variables(
+                        ctx,
+                        Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
+                        arg_pattern,
+                        arg_type.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
 
-        // Now let's build the end of the function, specifically the code to return a value.
-        let return_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
-            statements: Vec::new(),
-            terminator: Terminator {
+            let unwrap_patterns_block = chain(ctx, unwrap_patterns_blocks, range);
+
+            // Now let's build the end of the function, specifically the code to return a value.
+            let return_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: Vec::new(),
+                terminator: Terminator {
+                    range,
+                    kind: TerminatorKind::Invalid,
+                },
+            });
+
+            // Now, we can generate basic blocks for the rest of the function.
+            initialise_expr(ctx, &case.replacement);
+            let (function_block, function_variable) = generate_expr(
+                ctx,
+                case.replacement,
+                Terminator {
+                    range,
+                    kind: TerminatorKind::Goto(return_block),
+                },
+            );
+
+            // Now, replace the terminator with a custom terminator that returns `function_variable` from the function.
+            ctx.control_flow_graph
+                .basic_blocks
+                .get_mut(&return_block)
+                .unwrap()
+                .terminator = Terminator {
                 range,
-                kind: TerminatorKind::Invalid,
-            },
+                kind: TerminatorKind::Return {
+                    value: function_variable,
+                },
+            };
+
+            ctx.control_flow_graph
+                .basic_blocks
+                .get_mut(&unwrap_patterns_block)
+                .unwrap()
+                .terminator = Terminator {
+                range,
+                kind: TerminatorKind::Goto(function_block),
+            };
+
+            (case.arg_patterns, unwrap_patterns_block)
+        })
+        .collect::<Vec<_>>();
+
+    // Then perform the pattern matching operation on each parameter to the function, in reverse order.
+    perform_match_function(project_index, ctx, range, arg_types, cases)
+}
+
+#[derive(Debug)]
+struct PatternMismatch {
+    place: Place,
+    reason: PatternMismatchReason,
+}
+
+#[derive(Debug)]
+enum PatternMismatchReason {
+    EnumDiscriminant {
+        /// Maps enum discriminant names to the indices of the patterns that are matched by this discriminant.
+        /// If a case is valid for any discriminant, it is put in *every* case.
+        cases: HashMap<String, Vec<usize>>,
+    },
+}
+
+/// Given a list of patterns, in which place do they first (pairwise) differ, and how? If they do not differ, return None.
+/// Two patterns are said to differ in a place if a different primitive value or enum variant at this place
+/// could cause exactly one pattern to match.
+/// `var` is the place where the variable that we will match is stored.
+fn first_difference(
+    project_index: &ProjectIndex,
+    var: Place,
+    ty: Type,
+    patterns: &[Pattern],
+) -> Option<PatternMismatch> {
+    // Check to see what type the patterns represent.
+    // Even though we already know `ty`, we do this check to see whether the *patterns* care
+    // about what type it is.
+    let type_name = patterns.iter().find_map(|pat| {
+        if let Pattern::TypeConstructor { type_ctor, .. } = pat {
+            Some(type_ctor.data_type.clone())
+        } else {
+            None
+        }
+    });
+
+    if type_name.is_some() {
+        // At least one of the patterns wants to inspect this variable, either its fields or its enum variant.
+        // Check to see if the patterns represent an enum.
+        let is_enum = patterns.iter().any(|pat| {
+            if let Pattern::TypeConstructor { type_ctor, .. } = pat {
+                type_ctor.variant.is_some()
+            } else {
+                false
+            }
         });
 
-        // Now, we can generate basic blocks for the rest of the function.
-        initialise_expr(ctx, &case.replacement);
-        let (function_block, function_variable) = generate_expr(
-            ctx,
-            case.replacement,
-            Terminator {
-                range,
-                kind: TerminatorKind::Goto(return_block),
-            },
-        );
-
-        // Now, replace the terminator with a custom terminator that returns `function_variable` from the function.
-        ctx.control_flow_graph
-            .basic_blocks
-            .get_mut(&return_block)
-            .unwrap()
-            .terminator = Terminator {
-            range,
-            kind: TerminatorKind::Return {
-                value: function_variable,
-            },
+        let need_to_switch_enum = if is_enum {
+            // Because (at least) one pattern referenced an enum variant, we might need to switch on this enum's discriminant.
+            // In particular, if two patterns reference *different* variants, then we need to switch the discriminant.
+            // Sometimes this function can be called with a non-exhaustive set of patterns, if we've already excluded
+            // some previous patterns. This means that it's possible that an enum variant is referenced, but we already know
+            // which variant it is (we've already ruled out all other patterns).
+            let mut expected_variant = None;
+            let mut found_mismatch = false;
+            for pat in patterns.iter() {
+                if let Pattern::TypeConstructor { type_ctor, .. } = pat {
+                    if let Some(the_expected_variant) = expected_variant.take() {
+                        if the_expected_variant != type_ctor.variant.as_ref().unwrap() {
+                            // Two enum patterns referenced a different variant.
+                            // So we need to switch on the enum discriminant.
+                            found_mismatch = true;
+                            break;
+                        }
+                    } else {
+                        expected_variant = Some(type_ctor.variant.as_ref().unwrap());
+                    }
+                }
+            }
+            found_mismatch
+        } else {
+            false
         };
 
-        ctx.control_flow_graph
-            .basic_blocks
-            .get_mut(&unwrap_patterns_block)
-            .unwrap()
-            .terminator = Terminator {
-            range,
-            kind: TerminatorKind::Goto(function_block),
-        };
+        if need_to_switch_enum {
+            // Let's store which patterns require which discriminants.
+            // First, work out the list of all discriminants for this enum.
 
-        if true {
-            return unwrap_patterns_block;
+            let enum_name = if let Type::Named { name, .. } = ty {
+                name
+            } else {
+                unreachable!()
+            };
+
+            let mut cases = if let TypeDeclarationTypeI::Enum(enumi) =
+                &project_index[&enum_name.source_file].types[&enum_name.name].decl_type
+            {
+                enumi
+                    .variants
+                    .iter()
+                    .map(|variant| (variant.name.name.clone(), Vec::new()))
+                    .collect::<HashMap<_, _>>()
+            } else {
+                unreachable!()
+            };
+
+            for (i, pat) in patterns.iter().enumerate() {
+                if let Pattern::TypeConstructor { type_ctor, .. } = pat {
+                    if let Some(variant) = &type_ctor.variant {
+                        // This case applies to exactly one discriminant.
+                        cases.get_mut(variant).unwrap().push(i);
+                    } else {
+                        // This case applies to all discriminants.
+                        for (_, case) in cases.iter_mut() {
+                            case.push(i);
+                        }
+                    }
+                } else {
+                    // This case applies to all discriminants.
+                    for (_, case) in cases.iter_mut() {
+                        case.push(i);
+                    }
+                }
+            }
+
+            Some(PatternMismatch {
+                place: var,
+                reason: PatternMismatchReason::EnumDiscriminant { cases },
+            })
+        } else {
+            // This is not an enum, so we now want to consider the first difference *inside* each pattern.
+            // We check each field in the data type, and consider how (and if) the patterns differ when reasoning about this field.
+            let fields = patterns
+                .iter()
+                .find_map(|pat| {
+                    if let Pattern::TypeConstructor { fields, .. } = pat {
+                        Some(
+                            fields
+                                .iter()
+                                .map(|(name, ty, _pat)| (name.name.clone(), ty.clone()))
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+
+            for (field_name, field_ty) in fields {
+                // Do the patterns differ in this field?
+                // First, let's store the pattern that each case provides for each field.
+                // If the pattern was `_` or named (e.g. `a`), then the field is not matched;
+                // in this case we assume that the field's pattern is `_`.
+                let field_patterns = patterns
+                    .iter()
+                    .map(|pat| {
+                        if let Pattern::TypeConstructor { fields, .. } = pat {
+                            fields
+                                .iter()
+                                .find_map(|(inner_field_name, _, inner_field_pat)| {
+                                    if inner_field_name.name == field_name {
+                                        Some(inner_field_pat.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap()
+                        } else {
+                            Pattern::Unknown(pat.range())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                // Now, check whether the field patterns differ.
+                if let Some(diff) = first_difference(
+                    project_index,
+                    var.clone().then(PlaceSegment::Field(field_name)),
+                    field_ty,
+                    &field_patterns,
+                ) {
+                    return Some(diff);
+                }
+            }
+
+            // The patterns all matched, since we've checked each field and we didn't find a mismatch.
+            None
+        }
+    } else {
+        // No patterns are probing inside this variable, so we must assume that they all match.
+        None
+    }
+}
+
+/// Given a list of patterns for a function, in which place do they first (pairwise) differ, and how?
+/// If they do not differ, return None. Any `Place` returned will be relative to an argument.
+fn first_difference_function(
+    project_index: &ProjectIndex,
+    arg_types: Vec<Type>,
+    patterns: &[Vec<Pattern>],
+) -> Option<PatternMismatch> {
+    for i in 0..arg_types.len() {
+        let arg_patterns = patterns
+            .iter()
+            .map(|vec| vec[i].clone())
+            .collect::<Vec<_>>();
+        if let Some(diff) = first_difference(
+            project_index,
+            Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
+            arg_types[i].clone(),
+            &arg_patterns,
+        ) {
+            return Some(diff);
         }
     }
+    None
+}
 
-    panic!()
+/// Creates a basic block (or tree of basic blocks) that
+/// performs the given pattern matching operation for an entire function body.
+fn perform_match_function(
+    project_index: &ProjectIndex,
+    ctx: &mut DefinitionTranslationContext,
+    range: Range,
+    arg_types: Vec<Type>,
+    cases: Vec<(Vec<Pattern>, BasicBlockId)>,
+) -> BasicBlockId {
+    // Recursively find the first difference between patterns, until each case has its own branch.
+    let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
+    if let Some(diff) = first_difference_function(project_index, arg_types.clone(), &patterns) {
+        // There was a difference that lets us distinguish some of the patterns into different branches.
+        match diff.reason {
+            PatternMismatchReason::EnumDiscriminant { cases } => {
+                // Create a match operation for each enum discriminant case.
+                let cases_matched = cases
+                    .into_iter()
+                    .map(|(name, cases)| {
+                        let new_cases = cases
+                            .into_iter()
+                            .map(|id| (patterns[id].clone(), blocks[id]))
+                            .collect();
+                        (
+                            name,
+                            perform_match_function(
+                                project_index,
+                                ctx,
+                                range,
+                                arg_types.clone(),
+                                new_cases,
+                            ),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+
+                // Now, each case has been successfully pattern matched to its entirety.
+                // Finally, construct the switch statement to switch between the given cases.
+                ctx.control_flow_graph.new_basic_block(BasicBlock {
+                    statements: Vec::new(),
+                    terminator: Terminator {
+                        range,
+                        kind: TerminatorKind::SwitchDiscriminator {
+                            enum_place: diff.place,
+                            cases: cases_matched,
+                        },
+                    },
+                })
+            }
+        }
+    } else {
+        // There was no difference between the patterns.
+        // Therefore, there must be exactly one case left unmatched, otherwise we have a case that
+        // will *never* be matched, which is an error we emitted earlier in compilation.
+        assert!(blocks.len() == 1);
+        blocks[0]
+    }
 }
 
 /// Creates a basic block (or tree of basic blocks) that
@@ -557,11 +839,55 @@ fn create_cfg(ctx: &mut DefinitionTranslationContext, def: Definition) -> BasicB
 /// these 'case' blocks when the pattern is matched. The return value is a basic block
 /// which will perform this match operation, then jump to the case blocks.
 fn perform_match(
+    project_index: &ProjectIndex,
     ctx: &mut DefinitionTranslationContext,
+    range: Range,
     value: LocalVariableName,
-    cases: HashMap<Pattern, BasicBlockId>,
+    ty: Type,
+    cases: Vec<(Pattern, BasicBlockId)>,
 ) -> BasicBlockId {
-    unimplemented!()
+    // Recursively find the first difference between patterns, until each case has its own branch.
+    let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
+    if let Some(diff) = first_difference(project_index, Place::new(value), ty.clone(), &patterns) {
+        // There was a difference that lets us distinguish some of the patterns into different branches.
+        match diff.reason {
+            PatternMismatchReason::EnumDiscriminant { cases } => {
+                // Create a match operation for each enum discriminant case.
+                let cases_matched = cases
+                    .into_iter()
+                    .map(|(name, cases)| {
+                        let new_cases = cases
+                            .into_iter()
+                            .map(|id| (patterns[id].clone(), blocks[id]))
+                            .collect();
+                        (
+                            name,
+                            perform_match(project_index, ctx, range, value, ty.clone(), new_cases),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+
+                // Now, each case has been successfully pattern matched to its entirety.
+                // Finally, construct the switch statement to switch between the given cases.
+                ctx.control_flow_graph.new_basic_block(BasicBlock {
+                    statements: Vec::new(),
+                    terminator: Terminator {
+                        range,
+                        kind: TerminatorKind::SwitchDiscriminator {
+                            enum_place: diff.place,
+                            cases: cases_matched,
+                        },
+                    },
+                })
+            }
+        }
+    } else {
+        // There was no difference between the patterns.
+        // Therefore, there must be exactly one case left unmatched, otherwise we have a case that
+        // will *never* be matched, which is an error we emitted earlier in compilation.
+        assert!(blocks.len() == 1);
+        blocks[0]
+    }
 }
 
 /// Chains a series of basic blocks together, assuming that they do not have terminators.
