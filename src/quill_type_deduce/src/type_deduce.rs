@@ -2,12 +2,12 @@ use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Location, ModuleIdentifier, Range, Ranged, SourceFileIdentifier},
+    location::{Location, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{ExprPatP, IdentifierP, NameP};
-use quill_type::Type;
+use quill_type::{PrimitiveType, Type};
 
 use crate::{
     index_resolve::{
@@ -202,23 +202,6 @@ pub fn deduce_expr_type(
     })
 }
 
-/// Generates a type variable corresponding to the unit type.
-fn unit_type_variable() -> TypeVariable {
-    TypeVariable::Named {
-        name: QualifiedName {
-            source_file: SourceFileIdentifier {
-                module: ModuleIdentifier {
-                    segments: Vec::new(),
-                },
-                file: "builtin".to_string().into(),
-            },
-            name: "unit".to_string(),
-            range: Location { line: 0, col: 0 }.into(),
-        },
-        parameters: Vec::new(),
-    }
-}
-
 /// Assigns new type variables to each sub-expression, so that this expression can be easily type checked.
 /// This uses the algorithm from <https://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.18.9348> to assign constraints to these type variables.
 ///
@@ -362,9 +345,7 @@ fn generate_constraints(
                     match immediate {
                         Some(ImmediateValue::Unit) => DiagnosticResult::ok(ExprTypeCheck {
                             expr: ExpressionT {
-                                type_variable: TypeVariable::Primitive(
-                                    quill_type::PrimitiveType::Unit,
-                                ),
+                                type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
                                 contents: ExpressionContentsT::ImmediateValue {
                                     value: ImmediateValue::Unit,
                                     range: identifier.range(),
@@ -378,9 +359,7 @@ fn generate_constraints(
                         }),
                         Some(ImmediateValue::Int(integer)) => DiagnosticResult::ok(ExprTypeCheck {
                             expr: ExpressionT {
-                                type_variable: TypeVariable::Primitive(
-                                    quill_type::PrimitiveType::Int,
-                                ),
+                                type_variable: TypeVariable::Primitive(PrimitiveType::Int),
                                 contents: ExpressionContentsT::ImmediateValue {
                                     value: ImmediateValue::Int(integer),
                                     range: identifier.range(),
@@ -651,7 +630,7 @@ fn generate_constraints(
                 DiagnosticResult::ok_with_many(
                     ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: unit_type_variable(),
+                            type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
                             contents: ExpressionContentsT::Let {
                                 let_token,
                                 name: name.clone(),
@@ -746,7 +725,7 @@ fn generate_constraints(
             // Work out what the type of the block is. Typically, this is just the type of the last statement in the block,
             // unless a final semicolon was added.
             let block_type = if final_semicolon.is_some() {
-                unit_type_variable()
+                TypeVariable::Primitive(PrimitiveType::Unit)
             } else {
                 statements_with_constraints[statements_with_constraints.len() - 1]
                     .type_variable

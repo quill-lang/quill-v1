@@ -22,9 +22,9 @@ pub def block: Option[Option[Unit]] {
     )
 }
 
-pub enum Bool = True {} | False {}
-
-pub def or: Bool -> Bool -> Bool {
-    or True {} = \a -> a,
-    or _ = \a -> False {}
-}
+// pub enum Bool = True {} | False {}
+//
+// pub def or: Bool -> Bool -> Bool {
+//     or True {} = \a -> a,
+//     or _ = \a -> False {}
+// }

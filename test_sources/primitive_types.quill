@@ -22,11 +22,23 @@ pub def block: Option[Option[unit]] {
 
 pub enum Bool = True {} | False {}
 
+// Removed lambdas for now. We'll add them back in once they're correctly translatable into MIR.
 pub def or: Bool -> Bool -> Bool {
-    or True {} = \a -> a,
-    or _ = \a -> False {}
+    // or True {} = \a -> a,
+    // or _ = \a -> False {}
+    or True {} a = a,
+    or _ _ = False {}
 }
 
 pub def one: int {
     one = 1
+}
+
+pub def or_options: Option[Bool] -> Option[Bool] -> Option[Bool] {
+    or_options Some { value = left } Some { value = right } = Some { value = or left right },
+    or_options _ _ = None {},
+}
+
+pub def test_let: unit {
+    test_let = let a = 1,
 }

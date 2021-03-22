@@ -21,7 +21,6 @@ use quill_type_deduce::{
     TypeConstructorInvocation,
 };
 
-/// A parsed, type checked, and borrow checked source file.
 #[derive(Debug)]
 pub struct SourceFileMIR {
     pub definitions: HashMap<String, DefinitionM>,
@@ -208,6 +207,11 @@ pub enum StatementKind {
     StorageLive(LocalVariableId),
     /// Hints to LLVM that we will no longer use this variable.
     StorageDead(LocalVariableId),
+    /// Calls the destructor for the object, if it has a destructor and it is currently alive.
+    /// This is automatically inserted by the MIR generator at the end of the scope declaring a variable.
+    /// Please note that a drop-if-alive instruction in MIR does not necessarily call the actual destructor, only if the object really is not moved out.
+    /// In particular, the *first* MIR drop-if-alive instruction an object encounters will perform the actual drop, any more are no-ops and will be optimised away.
+    DropIfAlive { variable: LocalVariableName },
     /// Creates a function object representing a lambda abstraction, capturing variables it uses.
     /// In LIR, this is converted into an external function.
     CreateLambda {
@@ -237,6 +241,7 @@ impl Display for StatementKind {
             } => write!(f, "{} = apply {} to {}", target, argument, function),
             StatementKind::StorageLive(local) => write!(f, "live {}", local),
             StatementKind::StorageDead(local) => write!(f, "dead {}", local),
+            StatementKind::DropIfAlive { variable } => write!(f, "drop if alive {}", variable),
             StatementKind::InstanceSymbol {
                 name,
                 type_variables,
@@ -553,16 +558,26 @@ fn create_cfg(
             );
 
             // Now, replace the terminator with a custom terminator that returns `function_variable` from the function.
-            ctx.control_flow_graph
+            let return_block = ctx
+                .control_flow_graph
                 .basic_blocks
                 .get_mut(&return_block)
-                .unwrap()
-                .terminator = Terminator {
+                .unwrap();
+            return_block.terminator = Terminator {
                 range,
                 kind: TerminatorKind::Return {
                     value: function_variable,
                 },
             };
+            // Further, we need to drop the function's arguments (if they're still alive) in this return block.
+            for i in 0..arg_types.len() {
+                return_block.statements.push(Statement {
+                    range,
+                    kind: StatementKind::DropIfAlive {
+                        variable: LocalVariableName::Argument(ArgumentIndex(i as u64)),
+                    },
+                })
+            }
 
             ctx.control_flow_graph
                 .basic_blocks
@@ -1103,10 +1118,6 @@ fn bind_pattern_variables(
             });
 
             // Initialise this local variable with the supplied value.
-            let storage_live = Statement {
-                range: name.range,
-                kind: StatementKind::StorageLive(var),
-            };
             let assign = Statement {
                 range: name.range,
                 kind: StatementKind::Assign {
@@ -1116,7 +1127,7 @@ fn bind_pattern_variables(
             };
 
             Some(ctx.control_flow_graph.new_basic_block(BasicBlock {
-                statements: vec![storage_live, assign],
+                statements: vec![assign],
                 terminator: Terminator {
                     range: name.range,
                     kind: TerminatorKind::Invalid,
@@ -1319,6 +1330,11 @@ fn generate_expr(
             ..
         } => {
             // Let expressions return the unit value.
+            let ret = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty: Type::Primitive(PrimitiveType::Unit),
+                name: None,
+            });
 
             // Let expressions are handled in two phases. First, (before calling this function)
             // we initialise the context with a blank variable of the right name and type, so that
@@ -1339,26 +1355,66 @@ fn generate_expr(
                 },
             );
 
-            ctx.control_flow_graph
+            let statements = &mut ctx
+                .control_flow_graph
                 .basic_blocks
                 .get_mut(&block)
                 .unwrap()
-                .statements
-                .push(Statement {
-                    range,
-                    kind: StatementKind::Assign {
-                        target: Place::new(variable),
-                        source: Rvalue::Use(Operand::Move(Place::new(rvalue_name))),
-                    },
-                });
+                .statements;
 
-            (rvalue_block, variable)
+            statements.push(Statement {
+                range,
+                kind: StatementKind::Assign {
+                    target: Place::new(variable),
+                    source: Rvalue::Use(Operand::Move(Place::new(rvalue_name))),
+                },
+            });
+            statements.push(Statement {
+                range,
+                kind: StatementKind::Assign {
+                    target: Place::new(LocalVariableName::Local(ret)),
+                    source: Rvalue::Use(Operand::Constant(ImmediateValue::Unit)),
+                },
+            });
+
+            (rvalue_block, LocalVariableName::Local(ret))
         }
         ExpressionContentsGeneric::Block {
             mut statements,
             final_semicolon,
             ..
         } => {
+            // Make a list of all the local variables we'll need to drop at the end of this scope.
+            let locals_to_drop = statements
+                .iter()
+                .filter_map(|expr| {
+                    if let ExpressionContentsGeneric::Let { name, .. } = &expr.contents {
+                        Some(name.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            // Make a basic block that drops these variables, in reverse order.
+            let drop_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: locals_to_drop
+                    .iter()
+                    .rev()
+                    .map(|local| Statement {
+                        range,
+                        kind: StatementKind::DropIfAlive {
+                            variable: ctx.get_name_of_local(local),
+                        },
+                    })
+                    .collect(),
+                terminator,
+            });
+            let drop_terminator = Terminator {
+                range,
+                kind: TerminatorKind::Goto(drop_block),
+            };
+
             let final_expression = if final_semicolon.is_none() {
                 statements.pop()
             } else {
@@ -1366,7 +1422,8 @@ fn generate_expr(
             };
 
             if let Some(final_expression) = final_expression {
-                let (final_expr_block, variable) = generate_expr(ctx, final_expression, terminator);
+                let (final_expr_block, variable) =
+                    generate_expr(ctx, final_expression, drop_terminator);
 
                 let (previous_block_chain, _) = generate_chain_with_terminator(
                     ctx,
@@ -1388,10 +1445,6 @@ fn generate_expr(
                 });
 
                 // Initialise the variable with an empty value.
-                let storage_live = Statement {
-                    range,
-                    kind: StatementKind::StorageLive(variable),
-                };
                 let assign = Statement {
                     range,
                     kind: StatementKind::Assign {
@@ -1401,8 +1454,8 @@ fn generate_expr(
                 };
 
                 let initialise_variable = ctx.control_flow_graph.new_basic_block(BasicBlock {
-                    statements: vec![storage_live, assign],
-                    terminator,
+                    statements: vec![assign],
+                    terminator: drop_terminator,
                 });
 
                 let (previous_block_chain, _) = generate_chain_with_terminator(
@@ -1430,14 +1483,9 @@ fn generate_expr(
                 name: None,
             });
 
-            // Initialise the variable with its new value.
-            let storage_live = Statement {
-                range,
-                kind: StatementKind::StorageLive(variable),
-            };
-
+            // Create a block to initialise the variable with its new value.
             let construct_variable = ctx.control_flow_graph.new_basic_block(BasicBlock {
-                statements: vec![storage_live],
+                statements: vec![],
                 terminator,
             });
 
@@ -1489,10 +1537,6 @@ fn generate_expr(
             });
 
             // Initialise the variable with an empty value.
-            let storage_live = Statement {
-                range,
-                kind: StatementKind::StorageLive(variable),
-            };
             let assign = Statement {
                 range,
                 kind: StatementKind::Assign {
@@ -1502,7 +1546,7 @@ fn generate_expr(
             };
 
             let initialise_variable = ctx.control_flow_graph.new_basic_block(BasicBlock {
-                statements: vec![storage_live, assign],
+                statements: vec![assign],
                 terminator,
             });
 
