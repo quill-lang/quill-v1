@@ -558,7 +558,7 @@ fn create_cfg(
 
             // Now, we can generate basic blocks for the rest of the function.
             initialise_expr(ctx, &case.replacement);
-            let (function_block, function_variable) = generate_expr(
+            let func = generate_expr(
                 ctx,
                 case.replacement,
                 Terminator {
@@ -576,10 +576,16 @@ fn create_cfg(
             return_block.terminator = Terminator {
                 range,
                 kind: TerminatorKind::Return {
-                    value: function_variable,
+                    value: func.variable,
                 },
             };
-            // Further, we need to drop the function's arguments (if they're still alive) in this return block.
+            // Further, we need to drop the function's arguments (if they're still alive) in this return block, and all of the block's undropped temporaries.
+            for temp in func.locals_to_drop {
+                return_block.statements.push(Statement {
+                    range,
+                    kind: StatementKind::DropIfAlive { variable: temp },
+                })
+            }
             for i in 0..arg_types.len() {
                 return_block.statements.push(Statement {
                     range,
@@ -595,7 +601,7 @@ fn create_cfg(
                 .unwrap()
                 .terminator = Terminator {
                 range,
-                kind: TerminatorKind::Goto(function_block),
+                kind: TerminatorKind::Goto(func.block),
             };
 
             (case.arg_patterns, unwrap_patterns_block)
@@ -1076,6 +1082,17 @@ fn chain(
     })
 }
 
+struct ChainGeneratedM {
+    /// The basic block that will, once called, compute the values in this chain, and store it in the given local variables.
+    block: BasicBlockId,
+    /// The targets that will have the chain's results stored into them.
+    variables: Vec<LocalVariableName>,
+    /// Some expressions require temporary variables to be kept alive until the end of a statement.
+    /// By adding values to this list, the given local variables will be dropped after the surrounding statement (or expression) ends.
+    /// In particular, the drop occurs at the next semicolon, or if there is not one, the end of the definition as a whole.
+    locals_to_drop: Vec<LocalVariableName>,
+}
+
 /// Generates a chain of expressions, with the given terminator.
 /// Returns the basic block that can be invoked in order to invoke the chain, along ith the variables
 /// produced by each expression.
@@ -1083,20 +1100,22 @@ fn generate_chain_with_terminator(
     ctx: &mut DefinitionTranslationContext,
     exprs: Vec<Expression>,
     mut terminator: Terminator,
-) -> (BasicBlockId, Vec<LocalVariableName>) {
+) -> ChainGeneratedM {
     let range = terminator.range;
 
     let mut first_block = None;
     let mut locals = Vec::new();
+    let mut locals_to_drop = Vec::new();
 
     for expr in exprs.into_iter().rev() {
-        let (block, local) = generate_expr(ctx, expr, terminator);
-        locals.insert(0, local);
+        let gen = generate_expr(ctx, expr, terminator);
+        locals.insert(0, gen.variable);
         terminator = Terminator {
             range,
-            kind: TerminatorKind::Goto(block),
+            kind: TerminatorKind::Goto(gen.block),
         };
-        first_block = Some(block);
+        first_block = Some(gen.block);
+        locals_to_drop.extend(gen.locals_to_drop);
     }
 
     let first_block = first_block.unwrap_or_else(|| {
@@ -1106,7 +1125,11 @@ fn generate_chain_with_terminator(
         })
     });
 
-    (first_block, locals)
+    ChainGeneratedM {
+        block: first_block,
+        variables: locals,
+        locals_to_drop,
+    }
 }
 
 /// Creates a local variable for each bound variable in a pattern, assuming that the given value
@@ -1213,13 +1236,24 @@ fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
     }
 }
 
+struct ExprGeneratedM {
+    /// The basic block that will, once called, compute the value of this expression, and store it in the given local variable.
+    block: BasicBlockId,
+    /// The target that will have the expression's result stored into it.
+    variable: LocalVariableName,
+    /// Some expressions require temporary variables to be kept alive until the end of a statement.
+    /// By adding values to this list, the given local variables will be dropped after the surrounding statement (or expression) ends.
+    /// In particular, the drop occurs at the next semicolon, or if there is not one, the end of the definition as a whole.
+    locals_to_drop: Vec<LocalVariableName>,
+}
+
 /// Generates a basic block that computes the value of this expression, and stores the result in the given local.
 /// The block generated will have the given terminator.
 fn generate_expr(
     ctx: &mut DefinitionTranslationContext,
     expr: Expression,
     terminator: Terminator,
-) -> (BasicBlockId, LocalVariableName) {
+) -> ExprGeneratedM {
     let range = expr.range();
     let ty = expr.ty;
     match expr.contents {
@@ -1230,7 +1264,11 @@ fn generate_expr(
                 terminator,
             });
             let variable = ctx.get_name_of_local(&arg.name);
-            (block, variable)
+            ExprGeneratedM {
+                block,
+                variable,
+                locals_to_drop: Vec::new(),
+            }
         }
         ExpressionContentsGeneric::Local(local) => {
             let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -1238,7 +1276,11 @@ fn generate_expr(
                 terminator,
             });
             let variable = ctx.get_name_of_local(&local.name);
-            (block, variable)
+            ExprGeneratedM {
+                block,
+                variable,
+                locals_to_drop: Vec::new(),
+            }
         }
         ExpressionContentsGeneric::Symbol {
             name,
@@ -1262,7 +1304,11 @@ fn generate_expr(
                 }],
                 terminator,
             });
-            (block, LocalVariableName::Local(variable))
+            ExprGeneratedM {
+                block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: Vec::new(),
+            }
         }
         ExpressionContentsGeneric::Apply(left, right) => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
@@ -1276,7 +1322,7 @@ fn generate_expr(
                 terminator,
             });
 
-            let (right_block, right_var) = generate_expr(
+            let right = generate_expr(
                 ctx,
                 *right,
                 Terminator {
@@ -1284,12 +1330,12 @@ fn generate_expr(
                     kind: TerminatorKind::Goto(block),
                 },
             );
-            let (left_block, left_var) = generate_expr(
+            let left = generate_expr(
                 ctx,
                 *left,
                 Terminator {
                     range,
-                    kind: TerminatorKind::Goto(right_block),
+                    kind: TerminatorKind::Goto(right.block),
                 },
             );
 
@@ -1301,13 +1347,21 @@ fn generate_expr(
                 .push(Statement {
                     range,
                     kind: StatementKind::Apply {
-                        argument: Rvalue::Use(Operand::Move(Place::new(right_var))),
-                        function: Rvalue::Use(Operand::Move(Place::new(left_var))),
+                        argument: Rvalue::Use(Operand::Move(Place::new(right.variable))),
+                        function: Rvalue::Use(Operand::Move(Place::new(left.variable))),
                         target: LocalVariableName::Local(variable),
                     },
                 });
 
-            (left_block, LocalVariableName::Local(variable))
+            ExprGeneratedM {
+                block: left.block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: left
+                    .locals_to_drop
+                    .into_iter()
+                    .chain(right.locals_to_drop)
+                    .collect(),
+            }
         }
         ExpressionContentsGeneric::Lambda {
             params,
@@ -1332,7 +1386,11 @@ fn generate_expr(
                 }],
                 terminator,
             });
-            (block, LocalVariableName::Local(variable))
+            ExprGeneratedM {
+                block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: Vec::new(),
+            }
         }
         ExpressionContentsGeneric::Let {
             name,
@@ -1356,7 +1414,7 @@ fn generate_expr(
             });
 
             // Create the RHS of the let expression, and assign it to the LHS.
-            let (rvalue_block, rvalue_name) = generate_expr(
+            let mut rvalue = generate_expr(
                 ctx,
                 *right_expr,
                 Terminator {
@@ -1376,7 +1434,7 @@ fn generate_expr(
                 range,
                 kind: StatementKind::Assign {
                     target: variable,
-                    source: Rvalue::Use(Operand::Move(Place::new(rvalue_name))),
+                    source: Rvalue::Use(Operand::Move(Place::new(rvalue.variable))),
                 },
             });
             statements.push(Statement {
@@ -1387,7 +1445,13 @@ fn generate_expr(
                 },
             });
 
-            (rvalue_block, LocalVariableName::Local(ret))
+            rvalue.locals_to_drop.push(variable);
+
+            ExprGeneratedM {
+                block: rvalue.block,
+                variable: LocalVariableName::Local(ret),
+                locals_to_drop: rvalue.locals_to_drop,
+            }
         }
         ExpressionContentsGeneric::Block {
             mut statements,
@@ -1432,19 +1496,32 @@ fn generate_expr(
             };
 
             if let Some(final_expression) = final_expression {
-                let (final_expr_block, variable) =
-                    generate_expr(ctx, final_expression, drop_terminator);
+                let final_expr = generate_expr(ctx, final_expression, drop_terminator);
 
-                let (previous_block_chain, _) = generate_chain_with_terminator(
+                let mut chain = generate_chain_with_terminator(
                     ctx,
                     statements,
                     Terminator {
                         range,
-                        kind: TerminatorKind::Goto(final_expr_block),
+                        kind: TerminatorKind::Goto(final_expr.block),
                     },
                 );
+                chain.locals_to_drop.extend(chain.variables);
+                ctx.control_flow_graph
+                    .basic_blocks
+                    .get_mut(&drop_block)
+                    .unwrap()
+                    .statements
+                    .extend(chain.locals_to_drop.into_iter().map(|local| Statement {
+                        range,
+                        kind: StatementKind::DropIfAlive { variable: local },
+                    }));
 
-                (previous_block_chain, variable)
+                ExprGeneratedM {
+                    block: chain.block,
+                    variable: final_expr.variable,
+                    locals_to_drop: Vec::new(),
+                }
             } else {
                 // We need to make a new unit variable since there was no final expression.
                 // This is the variable that is returned by the block.
@@ -1468,7 +1545,7 @@ fn generate_expr(
                     terminator: drop_terminator,
                 });
 
-                let (previous_block_chain, _) = generate_chain_with_terminator(
+                let mut chain = generate_chain_with_terminator(
                     ctx,
                     statements,
                     Terminator {
@@ -1476,8 +1553,22 @@ fn generate_expr(
                         kind: TerminatorKind::Goto(initialise_variable),
                     },
                 );
+                chain.locals_to_drop.extend(chain.variables);
+                ctx.control_flow_graph
+                    .basic_blocks
+                    .get_mut(&drop_block)
+                    .unwrap()
+                    .statements
+                    .extend(chain.locals_to_drop.into_iter().map(|local| Statement {
+                        range,
+                        kind: StatementKind::DropIfAlive { variable: local },
+                    }));
 
-                (previous_block_chain, LocalVariableName::Local(variable))
+                ExprGeneratedM {
+                    block: chain.block,
+                    variable: LocalVariableName::Local(variable),
+                    locals_to_drop: Vec::new(),
+                }
             }
         }
         ExpressionContentsGeneric::ConstructData {
@@ -1500,7 +1591,7 @@ fn generate_expr(
             });
 
             // Chain the construction of the fields.
-            let (chained_fields, field_names) = generate_chain_with_terminator(
+            let chain = generate_chain_with_terminator(
                 ctx,
                 expressions,
                 Terminator {
@@ -1515,7 +1606,8 @@ fn generate_expr(
                 kind: StatementKind::ConstructData {
                     ty,
                     variant,
-                    fields: field_names
+                    fields: chain
+                        .variables
                         .into_iter()
                         .zip(names)
                         .map(|(name, field_name)| {
@@ -1537,7 +1629,11 @@ fn generate_expr(
 
             // Finally, chain the construction of the new variable with its fields.
 
-            (chained_fields, LocalVariableName::Local(variable))
+            ExprGeneratedM {
+                block: chain.block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: chain.locals_to_drop,
+            }
         }
         ExpressionContentsGeneric::ImmediateValue { value, range } => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
@@ -1560,7 +1656,11 @@ fn generate_expr(
                 terminator,
             });
 
-            (initialise_variable, LocalVariableName::Local(variable))
+            ExprGeneratedM {
+                block: initialise_variable,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: Vec::new(),
+            }
         }
     }
 }

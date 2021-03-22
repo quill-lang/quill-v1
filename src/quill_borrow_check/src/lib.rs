@@ -19,6 +19,7 @@ pub fn borrow_check(
 ) -> DiagnosticResult<SourceFileMIR> {
     let mut messages = Vec::new();
     for (_def_name, def) in mir.definitions.iter_mut() {
+        println!("dn {}", _def_name);
         borrow_check_def(source_file, def, &mut messages);
     }
     DiagnosticResult::ok_with_many(mir, messages)
@@ -80,6 +81,7 @@ fn check_ownership(
     def: &mut DefinitionM,
     messages: &mut Vec<ErrorMessage>,
 ) {
+    println!("{}", def);
     let range = def.control_flow_graph.basic_blocks[&def.entry_point]
         .terminator
         .range;
@@ -107,6 +109,7 @@ fn check_ownership(
     };
 
     check_ownership_walk(source_file, def, messages, &mut statuses, def.entry_point);
+    println!("{}", def);
 
     // Now, check to make sure all variables are successfully moved out or dropped.
     // Otherwise, there is something dangling.
@@ -133,7 +136,9 @@ fn check_ownership(
                 Severity::Error,
                 Diagnostic::at(source_file, &range),
             )),
-            OwnershipStatus::NotInitialised { .. } => unreachable!(),
+            OwnershipStatus::NotInitialised { .. } => {
+                // The local variable is hidden from this scope, so it must have already been dropped or moved.
+            },
         }
     }
 }
@@ -305,8 +310,10 @@ fn collate_statuses_single(
     range: Range,
     branch_statuses: Vec<(BasicBlockId, OwnershipStatus)>,
 ) -> OwnershipStatus {
-    let mut defined_at = None;
-    let mut initialised = false;
+    // If one branch considers a variable not initialised, then the variable is
+    // hidden from the outside scope. In this case, this variable contains the location
+    // where the variable was defined.
+    let mut not_initialised_but_defined_at = None;
 
     let mut moved_into_blocks = HashMap::new();
     let mut not_moved_blocks = HashMap::new();
@@ -314,11 +321,10 @@ fn collate_statuses_single(
     for (block, status) in branch_statuses {
         match status {
             OwnershipStatus::NotInitialised { definition } => {
-                defined_at = Some(definition);
+                not_initialised_but_defined_at = Some(definition);
                 not_moved_blocks.insert(block, definition);
             }
             OwnershipStatus::Owned { assignment } => {
-                initialised = true;
                 not_moved_blocks.insert(block, assignment);
             }
             OwnershipStatus::Moved { moved } => {
@@ -341,14 +347,10 @@ fn collate_statuses_single(
         }
     }
 
-    if moved_into_blocks.is_empty() {
-        if initialised {
-            OwnershipStatus::Owned { assignment: range }
-        } else {
-            OwnershipStatus::NotInitialised {
-                definition: defined_at.unwrap(),
-            }
-        }
+    if let Some(definition) = not_initialised_but_defined_at {
+        OwnershipStatus::NotInitialised { definition }
+    } else if moved_into_blocks.is_empty() {
+        OwnershipStatus::Owned { assignment: range }
     } else if not_moved_blocks.is_empty() {
         OwnershipStatus::Moved { moved: range }
     } else {
