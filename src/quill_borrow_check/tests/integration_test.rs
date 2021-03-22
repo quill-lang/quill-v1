@@ -32,7 +32,7 @@ async fn test_borrowck() {
                         .deny()
                         .bind(|typeck| to_mir(&project_index, typeck))
                         .deny()
-                        .bind(borrow_check)
+                        .bind(|mir| borrow_check(&file_ident, mir))
                 })
             })
             .deny();
