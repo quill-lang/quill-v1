@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -19,7 +19,7 @@ pub fn borrow_check(
 ) -> DiagnosticResult<SourceFileMIR> {
     let mut messages = Vec::new();
     for (_def_name, def) in mir.definitions.iter_mut() {
-        println!("dn {}", _def_name);
+        // println!("dn {}", _def_name);
         borrow_check_def(source_file, def, &mut messages);
     }
     DiagnosticResult::ok_with_many(mir, messages)
@@ -89,7 +89,7 @@ fn check_ownership(
     def: &mut DefinitionM,
     messages: &mut Vec<ErrorMessage>,
 ) {
-    println!("{}", def);
+    // println!("{}", def);
     let range = def.control_flow_graph.basic_blocks[&def.entry_point]
         .terminator
         .range;
@@ -116,16 +116,8 @@ fn check_ownership(
             .collect(),
     };
 
-    let mut completed_blocks = HashSet::new();
-    check_ownership_walk(
-        source_file,
-        def,
-        messages,
-        &mut statuses,
-        &mut completed_blocks,
-        def.entry_point,
-    );
-    println!("{}", def);
+    check_ownership_walk(source_file, def, messages, &mut statuses, def.entry_point);
+    // println!("{}", def);
 
     // Now, check to make sure all variables are successfully moved out or dropped.
     // Otherwise, there is something dangling.
@@ -173,21 +165,16 @@ fn check_ownership(
 }
 
 /// Check the ownership at this point, adding this block id to the list of completed blocks.
-/// If the set of completed blocks already had this ID, this is a NOP.
+/// This function may be called multiple times. The language guarantees that statuses will be updated the same way regardless
+/// of when we call this function.
 #[allow(clippy::needless_collect)]
 fn check_ownership_walk(
     source_file: &SourceFileIdentifier,
     def: &mut DefinitionM,
     messages: &mut Vec<ErrorMessage>,
     statuses: &mut OwnershipStatuses,
-    completed_blocks: &mut HashSet<BasicBlockId>,
     block_id: BasicBlockId,
 ) {
-    if completed_blocks.contains(&block_id) {
-        return;
-    }
-    completed_blocks.insert(block_id);
-
     let block = def
         .control_flow_graph
         .basic_blocks
@@ -237,15 +224,19 @@ fn check_ownership_walk(
             StatementKind::DropIfAlive { variable } => {
                 let drop_stmts = make_dropped(statuses, stmt.range, *variable);
                 let len = drop_stmts.len();
-                //println!("Splicing {} stmts at {}", drop_stmts.len(), i - 1);
-                //println!("{:#?}", block.statements);
                 block.statements.splice((i - 1)..i, drop_stmts);
-                //println!("{:#?}", block.statements);
                 i += len;
                 i -= 1;
             }
-            StatementKind::Drop { .. } => unreachable!(),
-            StatementKind::Free { .. } => unreachable!(),
+            StatementKind::Drop { variable } => {
+                // In a previous run of this function, we dropped this variable.
+                // So we call make_dropped like before, but don't update any instructions.
+                make_dropped(statuses, stmt.range, *variable);
+            }
+            StatementKind::Free { .. } => {
+                // In a previous run of this function, we freed this variable.
+                // Don't update any instructions.
+            }
             StatementKind::CreateLambda { .. } => unimplemented!("lambdas not implemented"),
             StatementKind::ConstructData { fields, target, .. } => {
                 for field_value in fields.values() {
@@ -268,14 +259,7 @@ fn check_ownership_walk(
     match &mut block.terminator.kind {
         TerminatorKind::Goto(target) => {
             let target = *target;
-            check_ownership_walk(
-                source_file,
-                def,
-                messages,
-                statuses,
-                completed_blocks,
-                target,
-            )
+            check_ownership_walk(source_file, def, messages, statuses, target)
         }
         TerminatorKind::SwitchDiscriminator {
             enum_place, cases, ..
@@ -302,7 +286,6 @@ fn check_ownership_walk(
                         def,
                         messages,
                         &mut inner_statuses,
-                        completed_blocks,
                         target_block,
                     );
                     (target_block, inner_statuses)
@@ -358,7 +341,6 @@ fn collate_statuses_single(
     range: Range,
     branch_statuses: Vec<(BasicBlockId, OwnershipStatus)>,
 ) -> OwnershipStatus {
-    println!("Collating {:#?}", branch_statuses);
     // If one branch considers a variable not initialised, then the variable is
     // hidden from the outside scope. In this case, this variable contains the location
     // where the variable was defined.
@@ -402,11 +384,6 @@ fn collate_statuses_single(
             }
         }
     }
-
-    println!(
-        "Got {:#?}; {:#?}; {:#?}",
-        moved_into_blocks, destructured_in_blocks, not_moved_blocks
-    );
 
     if let Some(definition) = not_initialised_but_defined_at {
         OwnershipStatus::NotInitialised { definition }
