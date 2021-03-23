@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -6,7 +6,7 @@ use quill_common::{
 };
 use quill_mir::{
     ArgumentIndex, BasicBlockId, DefinitionM, LocalVariableName, Operand, Rvalue, SourceFileMIR,
-    StatementKind, TerminatorKind,
+    Statement, StatementKind, TerminatorKind,
 };
 
 /// Checks to make sure that borrows of data do not outlive the data they borrow,
@@ -56,12 +56,20 @@ enum OwnershipStatus {
         /// Where did we drop this variable?
         dropped: Range,
     },
+    Destructured {
+        /// Where did we destructure this variable?
+        destructured: Range,
+    },
     /// Sometimes, this object is moved/owned/dropped, and sometimes not, depending on which basic blocks we pass through
     /// in the real control flow of the function.
     Conditional {
         /// Originally, this object is considered 'owned'. But if we pass through the given basic blocks, its ownership
         /// status is considered 'moved' into the given range.
         moved_into_blocks: HashMap<BasicBlockId, Range>,
+        /// If we pass through the given blocks, its ownership status is considered 'destructured'.
+        /// We must free its memory, but not call its drop code.
+        destructured_in_blocks: HashMap<BasicBlockId, Range>,
+        /// Through these paths, the object is still owned. Drop and free must be called.
         not_moved_blocks: HashMap<BasicBlockId, Range>,
     },
 }
@@ -108,7 +116,15 @@ fn check_ownership(
             .collect(),
     };
 
-    check_ownership_walk(source_file, def, messages, &mut statuses, def.entry_point);
+    let mut completed_blocks = HashSet::new();
+    check_ownership_walk(
+        source_file,
+        def,
+        messages,
+        &mut statuses,
+        &mut completed_blocks,
+        def.entry_point,
+    );
     println!("{}", def);
 
     // Now, check to make sure all variables are successfully moved out or dropped.
@@ -125,33 +141,53 @@ fn check_ownership(
             )),
             OwnershipStatus::Moved { .. } => {}
             OwnershipStatus::Dropped { .. } => {}
-            OwnershipStatus::Conditional {
-                moved_into_blocks,
-                not_moved_blocks,
-            } => messages.push(ErrorMessage::new(
+            OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new(
                 format!(
-                    "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}",
-                    name, moved_into_blocks, not_moved_blocks,
+                    "local variable `{}` was destructured but not freed (this is a compiler bug)",
+                    name
                 ),
                 Severity::Error,
-                Diagnostic::at(source_file, &range),
+                Diagnostic::at(source_file, &destructured),
             )),
+            OwnershipStatus::Conditional {
+                moved_into_blocks,
+                destructured_in_blocks,
+                not_moved_blocks,
+            } => {
+                if !not_moved_blocks.is_empty() {
+                    messages.push(ErrorMessage::new(
+                        format!(
+                            "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}; {:#?}",
+                            name, moved_into_blocks, destructured_in_blocks, not_moved_blocks,
+                        ),
+                        Severity::Error,
+                        Diagnostic::at(source_file, &range),
+                    ));
+                }
+            }
             OwnershipStatus::NotInitialised { .. } => {
                 // The local variable is hidden from this scope, so it must have already been dropped or moved.
-            },
+            }
         }
     }
 }
 
-/// Check the ownership at this point.
+/// Check the ownership at this point, adding this block id to the list of completed blocks.
+/// If the set of completed blocks already had this ID, this is a NOP.
 #[allow(clippy::needless_collect)]
 fn check_ownership_walk(
     source_file: &SourceFileIdentifier,
     def: &mut DefinitionM,
     messages: &mut Vec<ErrorMessage>,
     statuses: &mut OwnershipStatuses,
+    completed_blocks: &mut HashSet<BasicBlockId>,
     block_id: BasicBlockId,
 ) {
+    if completed_blocks.contains(&block_id) {
+        return;
+    }
+    completed_blocks.insert(block_id);
+
     let block = def
         .control_flow_graph
         .basic_blocks
@@ -160,9 +196,12 @@ fn check_ownership_walk(
 
     // Iterate over each statement to check if that statement's action is ok to perform, given the current ownership of variables at this point.
     // If the statement is a drop (for example), we might need to add or remove statements, so it's not just a normal "for" loop.
-    let mut i: isize = 0;
-    while (i as usize) < block.statements.len() {
-        let stmt = &mut block.statements[i as usize];
+    let mut i = 0;
+    while i < block.statements.len() {
+        // NOTE! The i++ statement happens HERE not at the end of the loop - this is done to prevent overflow!
+        let stmt = &mut block.statements[i];
+        i += 1;
+
         match &mut stmt.kind {
             StatementKind::Assign { target, source } => {
                 make_rvalue_used(source_file, messages, statuses, stmt.range, source.clone());
@@ -196,16 +235,18 @@ fn check_ownership_walk(
             StatementKind::StorageLive(_) => unreachable!(),
             StatementKind::StorageDead(_) => unreachable!(),
             StatementKind::DropIfAlive { variable } => {
-                let drop_stmt = make_dropped(statuses, stmt.range, *variable);
-                if let Some(drop_stmt) = drop_stmt {
-                    stmt.kind = drop_stmt;
-                } else {
-                    block.statements.remove(i as usize);
-                    i -= 1;
-                }
+                let drop_stmts = make_dropped(statuses, stmt.range, *variable);
+                let len = drop_stmts.len();
+                //println!("Splicing {} stmts at {}", drop_stmts.len(), i - 1);
+                //println!("{:#?}", block.statements);
+                block.statements.splice((i - 1)..i, drop_stmts);
+                //println!("{:#?}", block.statements);
+                i += len;
+                i -= 1;
             }
             StatementKind::Drop { .. } => unreachable!(),
-            StatementKind::CreateLambda { .. } => panic!("lambdas not implemented"),
+            StatementKind::Free { .. } => unreachable!(),
+            StatementKind::CreateLambda { .. } => unimplemented!("lambdas not implemented"),
             StatementKind::ConstructData { fields, target, .. } => {
                 for field_value in fields.values() {
                     make_rvalue_used(
@@ -219,7 +260,6 @@ fn check_ownership_walk(
                 make_owned(statuses, stmt.range, *target);
             }
         }
-        i += 1;
     }
 
     // Now consider the block's terminator.
@@ -228,7 +268,14 @@ fn check_ownership_walk(
     match &mut block.terminator.kind {
         TerminatorKind::Goto(target) => {
             let target = *target;
-            check_ownership_walk(source_file, def, messages, statuses, target)
+            check_ownership_walk(
+                source_file,
+                def,
+                messages,
+                statuses,
+                completed_blocks,
+                target,
+            )
         }
         TerminatorKind::SwitchDiscriminator {
             enum_place, cases, ..
@@ -240,7 +287,7 @@ fn check_ownership_walk(
                 statuses,
                 terminator_range,
                 enum_place.local,
-                false,
+                UseType::Reference,
             );
 
             // Now, walk on each branch and collate the results.
@@ -255,6 +302,7 @@ fn check_ownership_walk(
                         def,
                         messages,
                         &mut inner_statuses,
+                        completed_blocks,
                         target_block,
                     );
                     (target_block, inner_statuses)
@@ -270,7 +318,7 @@ fn check_ownership_walk(
                 statuses,
                 terminator_range,
                 *value,
-                true,
+                UseType::Move,
             );
         }
     }
@@ -310,19 +358,20 @@ fn collate_statuses_single(
     range: Range,
     branch_statuses: Vec<(BasicBlockId, OwnershipStatus)>,
 ) -> OwnershipStatus {
+    println!("Collating {:#?}", branch_statuses);
     // If one branch considers a variable not initialised, then the variable is
     // hidden from the outside scope. In this case, this variable contains the location
     // where the variable was defined.
     let mut not_initialised_but_defined_at = None;
 
     let mut moved_into_blocks = HashMap::new();
+    let mut destructured_in_blocks = HashMap::new();
     let mut not_moved_blocks = HashMap::new();
 
     for (block, status) in branch_statuses {
         match status {
             OwnershipStatus::NotInitialised { definition } => {
                 not_initialised_but_defined_at = Some(definition);
-                not_moved_blocks.insert(block, definition);
             }
             OwnershipStatus::Owned { assignment } => {
                 not_moved_blocks.insert(block, assignment);
@@ -333,12 +382,19 @@ fn collate_statuses_single(
             OwnershipStatus::Dropped { dropped } => {
                 moved_into_blocks.insert(block, dropped);
             }
+            OwnershipStatus::Destructured { destructured } => {
+                destructured_in_blocks.insert(block, destructured);
+            }
             OwnershipStatus::Conditional {
                 moved_into_blocks: m,
+                destructured_in_blocks: d,
                 not_moved_blocks: n,
             } => {
                 for (k, v) in m {
                     moved_into_blocks.insert(k, v);
+                }
+                for (k, v) in d {
+                    destructured_in_blocks.insert(k, v);
                 }
                 for (k, v) in n {
                     not_moved_blocks.insert(k, v);
@@ -347,15 +403,25 @@ fn collate_statuses_single(
         }
     }
 
+    println!(
+        "Got {:#?}; {:#?}; {:#?}",
+        moved_into_blocks, destructured_in_blocks, not_moved_blocks
+    );
+
     if let Some(definition) = not_initialised_but_defined_at {
         OwnershipStatus::NotInitialised { definition }
-    } else if moved_into_blocks.is_empty() {
+    } else if moved_into_blocks.is_empty() && destructured_in_blocks.is_empty() {
         OwnershipStatus::Owned { assignment: range }
-    } else if not_moved_blocks.is_empty() {
+    } else if not_moved_blocks.is_empty() && destructured_in_blocks.is_empty() {
         OwnershipStatus::Moved { moved: range }
+    } else if moved_into_blocks.is_empty() && not_moved_blocks.is_empty() {
+        OwnershipStatus::Destructured {
+            destructured: range,
+        }
     } else {
         OwnershipStatus::Conditional {
             moved_into_blocks,
+            destructured_in_blocks,
             not_moved_blocks,
         }
     }
@@ -371,13 +437,37 @@ fn make_rvalue_used(
 ) {
     match rvalue {
         Rvalue::Use(Operand::Move(place)) => {
-            make_used(source_file, messages, statuses, range, place.local, true)
+            // If we're moving out of a place contained inside a local variable, that variable is said to have been 'destructured'.
+            make_used(
+                source_file,
+                messages,
+                statuses,
+                range,
+                place.local,
+                if place.projection.is_empty() {
+                    UseType::Move
+                } else {
+                    UseType::Destructure
+                },
+            )
         }
-        Rvalue::Use(Operand::Copy(place)) => {
-            make_used(source_file, messages, statuses, range, place.local, false)
-        }
+        Rvalue::Use(Operand::Copy(place)) => make_used(
+            source_file,
+            messages,
+            statuses,
+            range,
+            place.local,
+            UseType::Reference,
+        ),
         Rvalue::Use(Operand::Constant(_)) => {}
     }
+}
+
+enum UseType {
+    Move,
+    Destructure,
+    /// Just a copy or a borrow, doesn't affect dropping/freeing at all.
+    Reference,
 }
 
 /// Adjusts the statuses to reflect that this value has now been used.
@@ -390,7 +480,7 @@ fn make_used(
     statuses: &mut OwnershipStatuses,
     range: Range,
     variable: LocalVariableName,
-    move_out: bool,
+    use_type: UseType,
 ) {
     // Make sure that this variable is currently owned.
     // We shouldn't be able to use an uninitialised or dropped variable because of earlier scope checks.
@@ -408,8 +498,20 @@ fn make_used(
             },
         )),
         OwnershipStatus::Dropped { .. } => unreachable!(),
+        OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new_with(
+            "this variable has already been destructured, so it cannot be used here".to_string(),
+            Severity::Error,
+            Diagnostic::at(source_file, &range),
+            HelpMessage {
+                message: "previously destructured here".to_string(),
+                help_type: HelpType::Note,
+                diagnostic: Diagnostic::at(source_file, destructured),
+            },
+        )),
         OwnershipStatus::Conditional {
-            moved_into_blocks, ..
+            moved_into_blocks,
+            destructured_in_blocks,
+            ..
         } => messages.push(ErrorMessage::new_with_many(
             "this variable might have already been moved out, so it cannot be used here"
                 .to_string(),
@@ -422,12 +524,29 @@ fn make_used(
                     help_type: HelpType::Note,
                     diagnostic: Diagnostic::at(source_file, moved),
                 })
+                .chain(
+                    destructured_in_blocks
+                        .values()
+                        .map(|destructured| HelpMessage {
+                            message: "may have been previously destructured here".to_string(),
+                            help_type: HelpType::Note,
+                            diagnostic: Diagnostic::at(source_file, destructured),
+                        }),
+                )
                 .collect(),
         )),
     }
 
-    if move_out {
-        *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Moved { moved: range };
+    match use_type {
+        UseType::Move => {
+            *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Moved { moved: range }
+        }
+        UseType::Destructure => {
+            *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Destructured {
+                destructured: range,
+            }
+        }
+        UseType::Reference => {}
     }
 }
 
@@ -441,12 +560,12 @@ fn make_owned(statuses: &mut OwnershipStatuses, range: Range, variable: LocalVar
 
 /// Adjusts the statuses to reflect that this value is now dropped.
 /// If this was an invalid operation to perform, the output messages will reflect this.
-/// Returns the statement that will perform the actual drop (if required).
+/// Returns the statement(s) that will perform the actual drop (if required).
 fn make_dropped(
     statuses: &mut OwnershipStatuses,
     range: Range,
     variable: LocalVariableName,
-) -> Option<StatementKind> {
+) -> Vec<Statement> {
     // If this variable is currently alive, we need to translate this instruction into an unconditional drop instruction.
     // Otherwise, we need to add drop flags and drop the variable if and only if it's not been moved out so far.
     let stat = statuses.locals.get_mut(&variable).unwrap();
@@ -455,15 +574,31 @@ fn make_dropped(
         OwnershipStatus::Owned { .. } => {
             // Unconditionally drop this variable.
             *stat = OwnershipStatus::Dropped { dropped: range };
-            Some(StatementKind::Drop { variable })
+            vec![
+                Statement {
+                    range,
+                    kind: StatementKind::Drop { variable },
+                },
+                Statement {
+                    range,
+                    kind: StatementKind::Free { variable },
+                },
+            ]
         }
         OwnershipStatus::Moved { .. } => {
             // Unconditionally do not drop this variable. It's already been moved out.
-            None
+            Vec::new()
         }
         OwnershipStatus::Dropped { .. } => {
             // Unconditionally do not drop this variable. It's already been dropped.
-            None
+            Vec::new()
+        }
+        OwnershipStatus::Destructured { .. } => {
+            // Unconditionally do not drop this variable, but free its memory.
+            vec![Statement {
+                range,
+                kind: StatementKind::Free { variable },
+            }]
         }
         OwnershipStatus::Conditional { .. } => {
             // Maybe drop this variable, depending on drop flags.
