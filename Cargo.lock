@@ -108,18 +108,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indicatif"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7baab56125e25686df467fe470785512329883aab42696d661247aca2a2896e4"
-dependencies = [
- "console",
- "lazy_static",
- "number_prefix",
- "regex",
-]
-
-[[package]]
 name = "inkwell"
 version = "0.1.0"
 source = "git+https://github.com/TheDan64/inkwell?branch=master#1c5e323dc185310741dc9c52f78490505b5298c8"
@@ -202,12 +190,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ee1c47aaa256ecabcaea351eae4a9b01ef39ed810004e298d2511ed284b1525"
 
 [[package]]
-name = "number_prefix"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17b02fc0ff9a9e4b35b3342880f48e896ebf69f2967921fe8646bf5b7125956a"
-
-[[package]]
 name = "once_cell"
 version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -266,13 +248,10 @@ dependencies = [
 name = "quill"
 version = "0.1.0"
 dependencies = [
- "console",
- "guess_host_triple",
- "indicatif",
- "inkwell",
  "quill_borrow_check",
  "quill_index",
  "quill_lexer",
+ "quill_llvm",
  "quill_mir",
  "quill_parser",
  "quill_type_deduce",
@@ -315,6 +294,24 @@ version = "0.1.0"
 dependencies = [
  "quill_common",
  "quill_source_file",
+ "tokio",
+]
+
+[[package]]
+name = "quill_llvm"
+version = "0.1.0"
+dependencies = [
+ "guess_host_triple",
+ "inkwell",
+ "quill_borrow_check",
+ "quill_common",
+ "quill_index",
+ "quill_lexer",
+ "quill_mir",
+ "quill_parser",
+ "quill_source_file",
+ "quill_type",
+ "quill_type_deduce",
  "tokio",
 ]
 
