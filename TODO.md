@@ -2,3 +2,4 @@
 - Convert `lambda` closures into MIR; in order to do this, we'd probably need some kind of function trait or typeclass so that it can store the data that it captures. But this would probably break the type checker, so it might be better to make the MIR agnostic over whether it's calling a function or a lambda, and then only when monomorphising and converting to LIR should we care about the specifics.
 - Make it a hard error to use a `let` statement outside a block. This can mess with move checking and it's basically a useless feature anyway since it returns the unit type.
 - Make a proper `main` entry point function.
+- When destructuring an object, drop all fields that we don't care about.

@@ -219,8 +219,6 @@ fn check_ownership_walk(
                 );
                 make_owned(statuses, stmt.range, *target);
             }
-            StatementKind::StorageLive(_) => unreachable!(),
-            StatementKind::StorageDead(_) => unreachable!(),
             StatementKind::DropIfAlive { variable } => {
                 let drop_stmts = make_dropped(statuses, stmt.range, *variable);
                 let len = drop_stmts.len();
@@ -250,6 +248,7 @@ fn check_ownership_walk(
                 }
                 make_owned(statuses, stmt.range, *target);
             }
+            _ => unreachable!(),
         }
     }
 

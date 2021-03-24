@@ -1,10 +1,10 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
 use quill_common::{location::Location, name::QualifiedName};
 use quill_mir::{ProjectMIR, SourceFileMIR};
 
 #[tokio::test]
-async fn test_llvm() {
+async fn test_convert_func_objects() {
     use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
     use quill_func_objects::convert_func_objects;
@@ -45,7 +45,7 @@ async fn test_llvm() {
         let mir = error_emitter.consume_diagnostic(mir);
         error_emitter.emit_all().await;
 
-        // If the borrow check fails, the test will fail.
+        // If the conversion fails, the test will fail.
         let mir: SourceFileMIR = mir.unwrap();
         let mut proj = ProjectMIR {
             files: {
@@ -62,6 +62,12 @@ async fn test_llvm() {
 
         convert_func_objects(&mut proj);
 
-        quill_llvm::build(Path::new("../../test_output"), fname, &proj);
+        for (file_id, file) in proj.files {
+            println!("-----\n{}\n-----", file_id);
+            for (def_name, def) in file.definitions {
+                println!("def: {}", def_name);
+                println!("{}", def);
+            }
+        }
     }
 }

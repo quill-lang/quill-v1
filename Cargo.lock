@@ -249,6 +249,7 @@ name = "quill"
 version = "0.1.0"
 dependencies = [
  "quill_borrow_check",
+ "quill_func_objects",
  "quill_index",
  "quill_lexer",
  "quill_llvm",
@@ -275,6 +276,22 @@ dependencies = [
 [[package]]
 name = "quill_common"
 version = "0.1.0"
+
+[[package]]
+name = "quill_func_objects"
+version = "0.1.0"
+dependencies = [
+ "quill_borrow_check",
+ "quill_common",
+ "quill_index",
+ "quill_lexer",
+ "quill_mir",
+ "quill_parser",
+ "quill_source_file",
+ "quill_type",
+ "quill_type_deduce",
+ "tokio",
+]
 
 [[package]]
 name = "quill_index"
@@ -305,6 +322,7 @@ dependencies = [
  "inkwell",
  "quill_borrow_check",
  "quill_common",
+ "quill_func_objects",
  "quill_index",
  "quill_lexer",
  "quill_mir",
