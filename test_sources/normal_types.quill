@@ -28,3 +28,10 @@ pub def block: Option[Option[Unit]] {
 //     or True {} = \a -> a,
 //     or _ = \a -> False {}
 // }
+
+def main: unit {
+    main = (
+        unwrap_or Some { value = Unit {} } block;
+        create_either 104;
+    )
+}

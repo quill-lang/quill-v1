@@ -1,6 +1,7 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
-use quill_mir::SourceFileMIR;
+use quill_common::{location::Location, name::QualifiedName};
+use quill_mir::{ProjectMIR, SourceFileMIR};
 
 #[tokio::test]
 async fn test_llvm() {
@@ -45,7 +46,19 @@ async fn test_llvm() {
 
         // If the borrow check fails, the test will fail.
         let mir: SourceFileMIR = mir.unwrap();
+        let proj = ProjectMIR {
+            files: {
+                let mut map = HashMap::new();
+                map.insert(file_ident.clone(), mir);
+                map
+            },
+            entry_point: QualifiedName {
+                source_file: file_ident,
+                name: "main".to_string(),
+                range: Location { line: 0, col: 0 }.into(),
+            },
+        };
 
-        quill_llvm::build(Path::new("../../test_output"), fname, mir);
+        quill_llvm::build(Path::new("../../test_output"), fname, &proj);
     }
 }

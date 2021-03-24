@@ -1,13 +1,10 @@
-use inkwell::module::{Linkage, Module};
+use codegen::CodeGenContext;
+use inkwell::targets::{CodeModel, RelocMode, TargetTriple};
 use inkwell::targets::{InitializationConfig, Target};
-use inkwell::AddressSpace;
-use inkwell::{
-    builder::Builder,
-    targets::{CodeModel, RelocMode, TargetTriple},
-};
-use inkwell::{comdat::ComdatSelectionKind, OptimizationLevel};
+use inkwell::OptimizationLevel;
 use inkwell::{context::Context, targets::FileType};
-use quill_mir::SourceFileMIR;
+use quill_mir::ProjectMIR;
+use repr::Representations;
 use std::{
     error::Error,
     fmt::{Debug, Display},
@@ -17,13 +14,10 @@ use std::{
     process::{Command, Output},
 };
 
-struct CodeGen<'ctx> {
-    context: &'ctx Context,
-    module: Module<'ctx>,
-    builder: Builder<'ctx>,
-}
+mod codegen;
+mod repr;
 
-impl<'ctx> CodeGen<'ctx> {
+/*impl<'ctx> CodeGen<'ctx> {
     fn compile_main(&self) {
         let i8_t = self.context.i8_type();
         let i32_t = self.context.i32_type();
@@ -69,7 +63,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.build_return(Some(&i32_t.const_int(0, false)));
     }
-}
+}*/
 
 struct ExecutionError {
     program: String,
@@ -96,7 +90,7 @@ impl Display for ExecutionError {
 }
 
 /// Builds an LLVM module for the given input source file.
-pub fn build(dir: &Path, project_name: &str, _mir: SourceFileMIR) {
+pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR) {
     // println!("Building module...");
 
     let host_triple = guess_host_triple::guess_host_triple().unwrap();
@@ -106,13 +100,13 @@ pub fn build(dir: &Path, project_name: &str, _mir: SourceFileMIR) {
 
     let context = Context::create();
     let module = context.create_module(project_name);
-    let codegen = CodeGen {
+    let codegen = CodeGenContext {
         context: &context,
         module,
         builder: context.create_builder(),
     };
 
-    codegen.compile_main();
+    let reprs = Representations::new(&codegen, mir);
 
     // println!("Compiling to target machine...");
 

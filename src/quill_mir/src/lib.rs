@@ -8,10 +8,10 @@ use std::{
 
 use quill_common::{
     diagnostic::DiagnosticResult,
-    location::{Range, Ranged},
+    location::{Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_index::{ProjectIndex, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
 use quill_parser::NameP;
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{
@@ -20,6 +20,13 @@ use quill_type_deduce::{
     },
     TypeConstructorInvocation,
 };
+
+#[derive(Debug)]
+pub struct ProjectMIR {
+    pub files: HashMap<SourceFileIdentifier, SourceFileMIR>,
+    /// The qualified name where the "main" function is.
+    pub entry_point: QualifiedName,
+}
 
 #[derive(Debug)]
 pub struct SourceFileMIR {
@@ -66,7 +73,7 @@ impl Display for BasicBlockId {
 pub struct DefinitionM {
     range: Range,
     /// The type variables at the start of this definition.
-    pub type_variables: Vec<String>,
+    pub type_variables: Vec<TypeParameter>,
     /// How many parameters must be supplied to this function? Their types are kept in the local variable names map.
     pub arity: u64,
     /// Contains argument types.

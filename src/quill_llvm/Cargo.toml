@@ -7,15 +7,15 @@ edition = "2018"
 [dependencies]
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm11-0"] }
 guess_host_triple = "^0.1"
+quill_common = { path = "../quill_common" }
+quill_index = { path = "../quill_index" }
+quill_type = { path = "../quill_type" }
+quill_type_deduce = { path = "../quill_type_deduce" }
 quill_mir = { path = "../quill_mir" }
 
 [dev-dependencies]
-quill_common = { path = "../quill_common" }
 quill_parser = { path = "../quill_parser" }
-quill_type_deduce = { path = "../quill_type_deduce" }
 quill_source_file = { path = "../quill_source_file" }
 quill_lexer = { path = "../quill_lexer" }
-quill_type = { path = "../quill_type" }
-quill_index = { path = "../quill_index" }
 quill_borrow_check = { path = "../quill_borrow_check" }
 tokio = { version = "^1.0", features = ["macros", "rt"] }

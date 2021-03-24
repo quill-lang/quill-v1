@@ -10,7 +10,7 @@ use quill_common::{
     location::{Location, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_index::{ProjectIndex, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
 use quill_parser::{DefinitionCaseP, ExprPatP, FileP, NameP};
 use quill_type::{PrimitiveType, Type};
 
@@ -64,7 +64,7 @@ impl Display for SourceFileHIR {
 pub struct Definition {
     range: Range,
     /// The type variables at the start of this definition.
-    pub type_variables: Vec<String>,
+    pub type_variables: Vec<TypeParameter>,
     pub arg_types: Vec<Type>,
     pub return_type: Type,
     pub cases: Vec<DefinitionCase>,
@@ -884,8 +884,11 @@ impl<'a> TypeChecker<'a> {
                     Definition {
                         range: def_name.range,
                         type_variables: type_parameters
-                            .iter()
-                            .map(|id| id.name.name.clone())
+                            .into_iter()
+                            .map(|id| TypeParameter {
+                                name: id.name.name,
+                                parameters: id.parameters,
+                            })
                             .collect(),
                         arg_types,
                         return_type,
