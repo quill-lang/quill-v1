@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use inkwell::types::StructType;
 use quill_common::name::QualifiedName;
 use quill_index::DataI;
-use quill_mir::{DefinitionM, ProjectMIR};
+use quill_mir::{DefinitionM, ProjectMIR, StatementKind};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
@@ -19,7 +19,7 @@ pub struct MonomorphisationParameters {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct MonomorphisedType {
-    ty: QualifiedName,
+    name: QualifiedName,
     mono: MonomorphisationParameters,
 }
 
@@ -27,6 +27,8 @@ struct MonomorphisedType {
 struct MonomorphisedFunction {
     func: QualifiedName,
     mono: MonomorphisationParameters,
+    /// Must never contain a zero.
+    curry_steps: Vec<u64>,
 }
 
 pub struct DataRepresentation<'ctx> {
@@ -90,6 +92,7 @@ impl Monomorphisation {
             MonomorphisationParameters {
                 type_parameters: Vec::new(),
             },
+            Vec::new(),
         );
 
         mono
@@ -102,11 +105,13 @@ impl Monomorphisation {
         mir: &ProjectMIR,
         func: QualifiedName,
         mono: MonomorphisationParameters,
+        curry_steps: Vec<u64>,
     ) {
         let def = &mir.files[&func.source_file].definitions[&func.name];
         if self.functions.insert(MonomorphisedFunction {
             func,
             mono: mono.clone(),
+            curry_steps,
         }) {
             // Work out what functions are called (and what types are referenced) by this function.
             for info in def.local_variable_names.values() {
@@ -117,10 +122,59 @@ impl Monomorphisation {
                 );
                 self.track_type(ty);
             }
+
+            for block in def.control_flow_graph.basic_blocks.values() {
+                for stmt in &block.statements {
+                    match &stmt.kind {
+                        StatementKind::InvokeFunction {
+                            name,
+                            type_variables,
+                            arguments,
+                            ..
+                        } => {
+                            self.track_def(
+                                mir,
+                                name.clone(),
+                                MonomorphisationParameters {
+                                    type_parameters: type_variables.clone(),
+                                },
+                                if arguments.is_empty() {
+                                    Vec::new()
+                                } else {
+                                    vec![arguments.len() as u64]
+                                },
+                            );
+                        }
+                        StatementKind::ConstructFunctionObject {
+                            name,
+                            type_variables,
+                            curry_steps,
+                            ..
+                        } => {
+                            self.track_def(
+                                mir,
+                                name.clone(),
+                                MonomorphisationParameters {
+                                    type_parameters: type_variables.clone(),
+                                },
+                                curry_steps.clone(),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
     }
 
     fn track_type(&mut self, ty: Type) {
-        println!("Tracking {}", ty);
+        if let Type::Named { name, parameters } = ty {
+            self.types.insert(MonomorphisedType {
+                name,
+                mono: MonomorphisationParameters {
+                    type_parameters: parameters,
+                },
+            });
+        }
     }
 }

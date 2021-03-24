@@ -86,8 +86,13 @@ pub fn replace_type_variables(
                                     })
                                     .collect(),
                             }
+                        } else if parameters.is_empty() {
+                            Type::Named {
+                                name,
+                                parameters: replacement_parameters,
+                            }
                         } else {
-                            panic!("can't apply type parameters to an already-quantified type")
+                            panic!("can't apply type parameters when both types are quantified")
                         }
                     }
                     Type::Variable {
@@ -108,16 +113,16 @@ pub fn replace_type_variables(
                                     })
                                     .collect(),
                             }
+                        } else if parameters.is_empty() {
+                            Type::Variable {
+                                variable,
+                                parameters: replacement_parameters,
+                            }
                         } else {
-                            panic!("can't apply type parameters to an already-quantified type")
+                            panic!("can't apply type parameters when both types are quantified")
                         }
                     }
-                    Type::Function(_, _) => {
-                        panic!("can't apply type parameters to functions")
-                    }
-                    Type::Primitive(_) => {
-                        panic!("can't apply type parameters to primitive types")
-                    }
+                    t => t,
                 }
             } else {
                 // This was not in the list; just return it verbatim.

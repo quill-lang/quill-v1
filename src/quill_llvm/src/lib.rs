@@ -162,14 +162,13 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR) {
         .output()
         .unwrap();
     if !cmake_configure.status.success() {
-        eprintln!(
+        panic!(
             "Errored: {}",
             ExecutionError {
                 program: "cmake configure".to_owned(),
                 output: cmake_configure,
             }
         );
-        return;
     }
 
     // println!("Linking...");
@@ -181,14 +180,13 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR) {
         .output()
         .unwrap();
     if !cmake_build.status.success() {
-        eprintln!(
+        panic!(
             "Errored: {}",
             ExecutionError {
                 program: "cmake build".to_owned(),
                 output: cmake_build,
             }
         );
-        return;
     }
 
     //println!("Running executable...");
