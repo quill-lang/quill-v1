@@ -64,26 +64,15 @@ fn convert_stmt(stmt: Statement, arities: &HashMap<QualifiedName, u64>) -> Vec<S
                         arguments: Vec::new(),
                     },
                 }]
-            } else if arity == 1 {
-                // Otherwise, we'll need to make a (unary) function object.
+            } else {
+                // We need to create a new "dummy" function that applies one argument to this function.
                 vec![Statement {
                     range: stmt.range,
                     kind: StatementKind::ConstructFunctionObject {
                         name,
                         type_variables,
                         target,
-                        curried_arguments: Vec::new(),
-                    },
-                }]
-            } else {
-                // We need to create a new "dummy" function that applies one argument to this function.
-                // In later compilation steps, this instruction will be replaced simply by ConstructFunctionObject.
-                vec![Statement {
-                    range: stmt.range,
-                    kind: StatementKind::ConstructCurriedFunctionObject {
-                        name,
-                        type_variables,
-                        target,
+                        curry_steps: std::iter::repeat(1).take(arity as usize).collect(),
                         curried_arguments: Vec::new(),
                     },
                 }]
