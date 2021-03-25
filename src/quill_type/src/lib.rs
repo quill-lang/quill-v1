@@ -59,7 +59,7 @@ impl Type {
         }
         match self {
             Type::Named { name, parameters } => {
-                write!(f, "{}", name.name)?;
+                write!(f, "{}", name)?;
                 if !parameters.is_empty() {
                     write!(f, "[")?;
                     for (i, param) in parameters.iter().enumerate() {

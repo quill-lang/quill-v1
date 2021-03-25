@@ -124,7 +124,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
             &TargetTriple::create(host_triple),
             "x86-64",
             "+avx2",
-            OptimizationLevel::Default,
+            OptimizationLevel::None,
             RelocMode::PIC,
             CodeModel::Default,
         )

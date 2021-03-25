@@ -235,7 +235,8 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
             BasicTypeEnum::IntType(codegen.context.i32_type()),
             BasicTypeEnum::ArrayType(codegen.context.i8_type().array_type(size - 4)),
         ];
-        let llvm_ty = codegen.context.struct_type(&llvm_field_types, false);
+        let llvm_ty = codegen.context.opaque_struct_type(&mono.to_string());
+        llvm_ty.set_body(&llvm_field_types, false);
 
         EnumRepresentation {
             llvm_repr: LLVMRepresentation {
