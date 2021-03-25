@@ -3,6 +3,7 @@ use inkwell::targets::{CodeModel, RelocMode, TargetTriple};
 use inkwell::targets::{InitializationConfig, Target};
 use inkwell::OptimizationLevel;
 use inkwell::{context::Context, targets::FileType};
+use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
 use repr::Representations;
 use std::{
@@ -90,7 +91,7 @@ impl Display for ExecutionError {
 }
 
 /// Builds an LLVM module for the given input source file.
-pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR) {
+pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIndex) {
     // println!("Building module...");
 
     let host_triple = guess_host_triple::guess_host_triple().unwrap();
@@ -106,7 +107,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR) {
         builder: context.create_builder(),
     };
 
-    let reprs = Representations::new(&codegen, mir);
+    let reprs = Representations::new(&codegen, mir, index);
 
     // println!("Compiling to target machine...");
 

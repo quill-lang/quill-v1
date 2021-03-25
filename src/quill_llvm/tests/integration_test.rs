@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use quill_common::{location::Location, name::QualifiedName};
-use quill_mir::{ProjectMIR, SourceFileMIR};
+use quill_mir::ProjectMIR;
 
 #[tokio::test]
 async fn test_llvm() {
@@ -37,6 +37,7 @@ async fn test_llvm() {
                         .bind(|typeck| to_mir(&project_index, typeck))
                         .deny()
                         .bind(|mir| borrow_check(&file_ident, mir))
+                        .map(|result| (result, project_index))
                 })
             })
             .deny();
@@ -46,7 +47,7 @@ async fn test_llvm() {
         error_emitter.emit_all().await;
 
         // If the borrow check fails, the test will fail.
-        let mir: SourceFileMIR = mir.unwrap();
+        let (mir, index) = mir.unwrap();
         let mut proj = ProjectMIR {
             files: {
                 let mut map = HashMap::new();
@@ -62,6 +63,6 @@ async fn test_llvm() {
 
         convert_func_objects(&mut proj);
 
-        quill_llvm::build(Path::new("../../test_output"), fname, &proj);
+        quill_llvm::build(Path::new("../../test_output"), fname, &proj, &index);
     }
 }

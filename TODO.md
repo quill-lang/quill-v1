@@ -3,3 +3,4 @@
 - Make it a hard error to use a `let` statement outside a block. This can mess with move checking and it's basically a useless feature anyway since it returns the unit type.
 - Make a proper `main` entry point function.
 - When destructuring an object, drop all fields that we don't care about.
+- Make data structures use heap allocation when Tarjan's algorithm finds a cycle.
