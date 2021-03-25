@@ -76,7 +76,7 @@ pub struct DefinitionM {
     pub type_variables: Vec<TypeParameter>,
     /// How many parameters must be supplied to this function? Their types are kept in the local variable names map.
     pub arity: u64,
-    /// Contains argument types.
+    /// Contains argument types as well as local variable types.
     pub local_variable_names: BTreeMap<LocalVariableName, LocalVariableInfo>,
     pub return_type: Type,
     pub control_flow_graph: ControlFlowGraph,

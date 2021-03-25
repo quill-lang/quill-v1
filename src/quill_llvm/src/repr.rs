@@ -6,10 +6,10 @@ use std::{
     fmt::Display,
 };
 
-use inkwell::types::{BasicTypeEnum, StructType};
+use inkwell::types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType};
 use quill_common::name::QualifiedName;
 use quill_index::{EnumI, ProjectIndex, TypeConstructorI, TypeDeclarationTypeI, TypeParameter};
-use quill_mir::{ProjectMIR, StatementKind};
+use quill_mir::{ArgumentIndex, LocalVariableName, ProjectMIR, StatementKind};
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
 
@@ -21,7 +21,7 @@ pub struct MonomorphisationParameters {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct MonomorphisedType {
+pub struct MonomorphisedType {
     name: QualifiedName,
     mono: MonomorphisationParameters,
 }
@@ -50,11 +50,67 @@ struct IndirectedMonomorphisedType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct MonomorphisedFunction {
-    func: QualifiedName,
-    mono: MonomorphisationParameters,
+pub struct MonomorphisedFunction {
+    pub func: QualifiedName,
+    pub mono: MonomorphisationParameters,
     /// Must never contain a zero.
-    curry_steps: Vec<u64>,
+    pub curry_steps: Vec<u64>,
+}
+
+impl Display for MonomorphisedFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.func)?;
+        if !self.mono.type_parameters.is_empty() {
+            write!(f, "[")?;
+            for ty_param in &self.mono.type_parameters {
+                write!(f, "{},", ty_param)?;
+            }
+            write!(f, "]")?;
+        }
+        write!(f, "{:?}", self.curry_steps)
+    }
+}
+
+impl MonomorphisedFunction {
+    pub fn llvm_type<'ctx>(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
+        mir: &ProjectMIR,
+    ) -> FunctionType<'ctx> {
+        let def = &mir.files[&self.func.source_file].definitions[&self.func.name];
+        let args = (0..def.arity)
+            .filter_map(|i| {
+                let info = def
+                    .local_variable_names
+                    .get(&LocalVariableName::Argument(ArgumentIndex(i)))
+                    .unwrap();
+                let ty = replace_type_variables(
+                    info.ty.clone(),
+                    &def.type_variables,
+                    &self.mono.type_parameters,
+                );
+                reprs.repr(ty).map(|repr| repr.llvm_type)
+            })
+            .collect::<Vec<_>>();
+
+        let return_type = replace_type_variables(
+            def.return_type.clone(),
+            &def.type_variables,
+            &self.mono.type_parameters,
+        );
+        reprs
+            .repr(return_type)
+            .map(|repr| match repr.llvm_type {
+                BasicTypeEnum::ArrayType(array) => array.fn_type(&args, false),
+                BasicTypeEnum::FloatType(float) => float.fn_type(&args, false),
+                BasicTypeEnum::IntType(int) => int.fn_type(&args, false),
+                BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&args, false),
+                BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&args, false),
+                BasicTypeEnum::VectorType(vec) => vec.fn_type(&args, false),
+            })
+            .unwrap_or_else(|| codegen.context.void_type().fn_type(&args, false))
+    }
 }
 
 pub enum FieldIndex {
@@ -232,8 +288,8 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
             .unwrap();
 
         let llvm_field_types = vec![
-            BasicTypeEnum::IntType(codegen.context.i32_type()),
-            BasicTypeEnum::ArrayType(codegen.context.i8_type().array_type(size - 4)),
+            BasicTypeEnum::IntType(codegen.context.i64_type()),
+            BasicTypeEnum::ArrayType(codegen.context.i8_type().array_type(size - 8)),
         ];
         let llvm_ty = codegen.context.opaque_struct_type(&mono.to_string());
         llvm_ty.set_body(&llvm_field_types, false);
@@ -263,20 +319,21 @@ pub struct AnyTypeRepresentation<'ctx> {
 }
 
 impl<'a, 'ctx> Representations<'a, 'ctx> {
-    pub fn new(codegen: &'a CodeGenContext<'ctx>, mir: &ProjectMIR, index: &ProjectIndex) -> Self {
+    pub fn new(
+        codegen: &'a CodeGenContext<'ctx>,
+        mir: &ProjectMIR,
+        index: &ProjectIndex,
+        mono_types: HashSet<MonomorphisedType>,
+    ) -> Self {
         let mut reprs = Self {
             codegen,
             datas: HashMap::new(),
             enums: HashMap::new(),
         };
 
-        // Work out all of the types that will be used.
-        let mono = Monomorphisation::new(mir);
-        // println!("Mono: {:#?}", mono);
-
         // Sort the types according to what types are used in what other types.
         // After this step, heap indirections have been added so the exact size of each type is known.
-        let sorted_types = sort_types(mono.types, index);
+        let sorted_types = sort_types(mono_types, index);
         // println!("Sorted: {:#?}", sorted_types);
 
         for mono_ty in sorted_types {
@@ -359,16 +416,16 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
 }
 
 #[derive(Debug)]
-struct Monomorphisation {
-    types: HashSet<MonomorphisedType>,
-    functions: HashSet<MonomorphisedFunction>,
+pub struct Monomorphisation {
+    pub types: HashSet<MonomorphisedType>,
+    pub functions: HashSet<MonomorphisedFunction>,
 }
 
 impl Monomorphisation {
     /// Monomorphise the project. We start by considering the "main" function, and then
     /// track everything that it calls, so that we can work out which concrete type parameters
     /// are used.
-    fn new(mir: &ProjectMIR) -> Self {
+    pub fn new(mir: &ProjectMIR) -> Self {
         let mut mono = Self {
             types: HashSet::new(),
             functions: HashSet::new(),
