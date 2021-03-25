@@ -1,13 +1,16 @@
 //! Computes the LLVM data representation of a data or enum declaration in Quill code,
 //! and generates indices for GEP calls in LLVM IR.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
-use inkwell::{targets, types::StructType};
+use inkwell::types::{BasicTypeEnum, StructType};
 use quill_common::name::QualifiedName;
-use quill_index::{DataI, ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
-use quill_mir::{DefinitionM, ProjectMIR, StatementKind};
-use quill_type::Type;
+use quill_index::{EnumI, ProjectIndex, TypeConstructorI, TypeDeclarationTypeI, TypeParameter};
+use quill_mir::{ProjectMIR, StatementKind};
+use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
 
 use crate::codegen::CodeGenContext;
@@ -21,6 +24,20 @@ pub struct MonomorphisationParameters {
 struct MonomorphisedType {
     name: QualifiedName,
     mono: MonomorphisationParameters,
+}
+
+impl Display for MonomorphisedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)?;
+        if !self.mono.type_parameters.is_empty() {
+            write!(f, "[")?;
+            for ty_param in &self.mono.type_parameters {
+                write!(f, "{},", ty_param)?;
+            }
+            write!(f, "]")?;
+        }
+        Ok(())
+    }
 }
 
 /// A monomorphised type, where some of its fields may have a layer of heap indirection.
@@ -40,13 +57,6 @@ struct MonomorphisedFunction {
     curry_steps: Vec<u64>,
 }
 
-pub struct DataRepresentation<'ctx> {
-    /// The LLVM representation of the data structure.
-    llvm_ty: StructType<'ctx>,
-    /// Maps Quill field names to the index of the field in the LLVM struct representation.
-    fields: HashMap<String, FieldIndex>,
-}
-
 pub enum FieldIndex {
     /// The field is inside the struct at this position.
     Literal(i32),
@@ -54,21 +64,209 @@ pub enum FieldIndex {
     Heap(i32),
 }
 
-impl<'ctx> DataRepresentation<'ctx> {
-    fn new(codegen: &CodeGenContext<'ctx>, ty: &DataI, mono: &MonomorphisationParameters) -> Self {
-        unimplemented!()
+pub struct LLVMRepresentation<'ctx> {
+    ty: StructType<'ctx>,
+    size: u32,
+    alignment: u32,
+}
+
+pub struct DataRepresentation<'ctx> {
+    /// The LLVM representation of the data structure, if it requires a representation at all.
+    llvm_repr: Option<LLVMRepresentation<'ctx>>,
+    /// Maps Quill field names to the index of the field in the LLVM struct representation.
+    fields: HashMap<String, FieldIndex>,
+}
+
+pub struct EnumRepresentation<'ctx> {
+    /// The LLVM representation of the enum structure.
+    llvm_repr: LLVMRepresentation<'ctx>,
+    /// Maps variant names to data representations of the enum variants.
+    /// If a discriminant is required in the data representation, it will have field name `.discriminant`.
+    variants: HashMap<String, DataRepresentation<'ctx>>,
+}
+
+struct DataRepresentationBuilder<'a, 'ctx> {
+    reprs: &'a Representations<'a, 'ctx>,
+
+    llvm_field_types: Vec<BasicTypeEnum<'ctx>>,
+    fields: HashMap<String, FieldIndex>,
+
+    size: u32,
+    alignment: u32,
+}
+
+impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
+    fn new(reprs: &'a Representations<'a, 'ctx>) -> Self {
+        Self {
+            reprs,
+            llvm_field_types: Vec::new(),
+            fields: HashMap::new(),
+            size: 0,
+            alignment: 1,
+        }
+    }
+
+    fn add_field(
+        &mut self,
+        field_name: String,
+        field_type: Type,
+        type_params: &[TypeParameter],
+        mono: &MonomorphisationParameters,
+    ) {
+        if let Some(repr) = self.reprs.repr(replace_type_variables(
+            field_type,
+            &type_params,
+            &mono.type_parameters,
+        )) {
+            self.llvm_field_types.push(repr.llvm_type);
+            self.fields.insert(
+                field_name,
+                FieldIndex::Literal(self.llvm_field_types.len() as i32),
+            );
+
+            // Update size and alignment.
+            self.alignment = std::cmp::max(self.alignment, repr.alignment);
+            // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
+            let padding_to_add = repr.alignment - self.size % repr.alignment;
+            self.size += if padding_to_add == repr.alignment {
+                0
+            } else {
+                padding_to_add
+            };
+            self.size += repr.size;
+        } else {
+            // This field had no representation.
+        }
+    }
+
+    /// Add the fields from a type constructor to this data type.
+    fn add_fields(
+        &mut self,
+        type_ctor: &TypeConstructorI,
+        type_params: &[TypeParameter],
+        mono: &MonomorphisationParameters,
+        indirected_fields: Vec<String>,
+    ) {
+        for (field_name, field_ty) in &type_ctor.fields {
+            self.add_field(field_name.name.clone(), field_ty.clone(), type_params, mono);
+        }
+    }
+
+    /// Returns a data representation.
+    fn build(self, name: &str) -> DataRepresentation<'ctx> {
+        if self.llvm_field_types.is_empty() {
+            DataRepresentation {
+                llvm_repr: None,
+                fields: self.fields,
+            }
+        } else {
+            let llvm_ty = self.reprs.codegen.context.opaque_struct_type(name);
+            llvm_ty.set_body(&self.llvm_field_types, false);
+            println!("Created {:?}", llvm_ty);
+            DataRepresentation {
+                llvm_repr: Some(LLVMRepresentation {
+                    ty: llvm_ty,
+                    size: self.size,
+                    alignment: self.alignment,
+                }),
+                fields: self.fields,
+            }
+        }
+    }
+}
+
+impl<'a, 'ctx> EnumRepresentation<'ctx> {
+    /// By this point, `reprs` should contain the representations of all (non-indirected) fields in this enum type.
+    fn new(
+        reprs: &Representations<'a, 'ctx>,
+        codegen: &CodeGenContext<'ctx>,
+        ty: &EnumI,
+        mono: &MonomorphisedType,
+        indirected_fields: Vec<(String, String)>,
+    ) -> Self {
+        // Construct each enum variant as a data type with an extra integer discriminant field at the start.
+        let variants = ty
+            .variants
+            .iter()
+            .map(|variant| {
+                let mut builder = DataRepresentationBuilder::new(reprs);
+                builder.add_field(
+                    ".discriminant".to_string(),
+                    Type::Primitive(PrimitiveType::Int),
+                    &ty.type_params,
+                    &mono.mono,
+                );
+                builder.add_fields(
+                    &variant.type_ctor,
+                    &ty.type_params,
+                    &mono.mono,
+                    indirected_fields
+                        .iter()
+                        .filter_map(|(variant_name, field_name)| {
+                            if *variant_name == variant.name.name {
+                                Some(field_name.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                );
+
+                (
+                    variant.name.name.clone(),
+                    builder.build(&format!("{}@{}", mono, variant.name.name)),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        // Now work out the largest size of an enum variant and use that as the size of the "base" enum case.
+        let size = variants
+            .values()
+            .map(|repr| repr.llvm_repr.as_ref().unwrap().size)
+            .max()
+            .unwrap();
+        let alignment = variants
+            .values()
+            .map(|repr| repr.llvm_repr.as_ref().unwrap().alignment)
+            .max()
+            .unwrap();
+
+        let llvm_field_types = vec![
+            BasicTypeEnum::IntType(codegen.context.i32_type()),
+            BasicTypeEnum::ArrayType(codegen.context.i8_type().array_type(size - 4)),
+        ];
+        let llvm_ty = codegen.context.struct_type(&llvm_field_types, false);
+
+        EnumRepresentation {
+            llvm_repr: LLVMRepresentation {
+                ty: llvm_ty,
+                size,
+                alignment,
+            },
+            variants,
+        }
     }
 }
 
 /// Stores the representations of all data/struct types in a project, post monomorphisation.
-pub struct Representations<'ctx> {
+pub struct Representations<'a, 'ctx> {
+    codegen: &'a CodeGenContext<'ctx>,
     datas: HashMap<MonomorphisedType, DataRepresentation<'ctx>>,
+    enums: HashMap<MonomorphisedType, EnumRepresentation<'ctx>>,
 }
 
-impl<'ctx> Representations<'ctx> {
-    pub fn new(codegen: &CodeGenContext<'ctx>, mir: &ProjectMIR, index: &ProjectIndex) -> Self {
+pub struct AnyTypeRepresentation<'ctx> {
+    pub llvm_type: BasicTypeEnum<'ctx>,
+    pub size: u32,
+    pub alignment: u32,
+}
+
+impl<'a, 'ctx> Representations<'a, 'ctx> {
+    pub fn new(codegen: &'a CodeGenContext<'ctx>, mir: &ProjectMIR, index: &ProjectIndex) -> Self {
         let mut reprs = Self {
+            codegen,
             datas: HashMap::new(),
+            enums: HashMap::new(),
         };
 
         // Work out all of the types that will be used.
@@ -80,17 +278,82 @@ impl<'ctx> Representations<'ctx> {
         let sorted_types = sort_types(mono.types, index);
         // println!("Sorted: {:#?}", sorted_types);
 
-        // for mono_ty in mono.types {
-        //     let decl = &index[&mono_ty.name.source_file].types[&mono_ty.name.name];
-        //     match &decl.decl_type {
-        //         TypeDeclarationTypeI::Data(datai) => {
-
-        //         }
-        //         TypeDeclarationTypeI::Enum(enumi) => {}
-        //     }
-        // }
+        for mono_ty in sorted_types {
+            let decl = &index[&mono_ty.ty.name.source_file].types[&mono_ty.ty.name.name];
+            match &decl.decl_type {
+                TypeDeclarationTypeI::Data(datai) => {
+                    let mut builder = DataRepresentationBuilder::new(&reprs);
+                    builder.add_fields(
+                        &datai.type_ctor,
+                        &datai.type_params,
+                        &mono_ty.ty.mono,
+                        mono_ty
+                            .indirected
+                            .into_iter()
+                            .map(|(opt, field)| {
+                                assert!(opt.is_none());
+                                field
+                            })
+                            .collect(),
+                    );
+                    let repr = builder.build(&mono_ty.ty.to_string());
+                    reprs.datas.insert(mono_ty.ty, repr);
+                }
+                TypeDeclarationTypeI::Enum(enumi) => {
+                    let repr = EnumRepresentation::new(
+                        &reprs,
+                        codegen,
+                        enumi,
+                        &mono_ty.ty,
+                        mono_ty
+                            .indirected
+                            .into_iter()
+                            .map(|(opt, field)| (opt.unwrap(), field))
+                            .collect(),
+                    );
+                    reprs.enums.insert(mono_ty.ty, repr);
+                }
+            };
+        }
 
         reprs
+    }
+
+    /// If the given type needs no representation, None is returned.
+    pub fn repr(&self, ty: Type) -> Option<AnyTypeRepresentation<'ctx>> {
+        match ty {
+            Type::Named { name, parameters } => {
+                let mono_ty = MonomorphisedType {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                if let Some(repr) = self.datas.get(&mono_ty) {
+                    repr.llvm_repr.as_ref().map(|repr| AnyTypeRepresentation {
+                        llvm_type: BasicTypeEnum::StructType(repr.ty),
+                        size: repr.size,
+                        alignment: repr.alignment,
+                    })
+                } else if let Some(repr) = self.enums.get(&mono_ty) {
+                    Some(AnyTypeRepresentation {
+                        llvm_type: BasicTypeEnum::StructType(repr.llvm_repr.ty),
+                        size: repr.llvm_repr.size,
+                        alignment: repr.llvm_repr.alignment,
+                    })
+                } else {
+                    unreachable!()
+                }
+            }
+            Type::Variable { .. } => unreachable!(),
+            Type::Function(_, _) => unimplemented!(),
+            Type::Primitive(PrimitiveType::Unit) => None,
+            Type::Primitive(PrimitiveType::Int) => Some(AnyTypeRepresentation {
+                llvm_type: BasicTypeEnum::IntType(self.codegen.context.i64_type()),
+                size: 8,
+                alignment: 8,
+            }),
+        }
     }
 }
 
