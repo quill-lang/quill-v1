@@ -20,54 +20,6 @@ mod codegen;
 mod func;
 mod repr;
 
-/*impl<'ctx> CodeGen<'ctx> {
-    fn compile_main(&self) {
-        let i8_t = self.context.i8_type();
-        let i32_t = self.context.i32_type();
-        let i64_t = self.context.i64_type();
-
-        let fn_type = i32_t.fn_type(
-            &[
-                i32_t.into(),
-                i8_t.ptr_type(AddressSpace::Generic)
-                    .ptr_type(AddressSpace::Generic)
-                    .into(),
-            ],
-            false,
-        );
-        let function = self.module.add_function("main", fn_type, None);
-        let basic_block = self.context.append_basic_block(function, "entry");
-
-        self.builder.position_at_end(basic_block);
-
-        let puts = self.module.add_function(
-            "puts",
-            i32_t.fn_type(&[i8_t.ptr_type(AddressSpace::Generic).into()], false),
-            Some(Linkage::External),
-        );
-        let hello_world_message = unsafe {
-            self.builder
-                .build_global_string("Hello, world!", "hello_world")
-        };
-        let comdat = self.module.get_or_insert_comdat("hello_world");
-        comdat.set_selection_kind(ComdatSelectionKind::ExactMatch);
-        hello_world_message.set_comdat(comdat);
-        hello_world_message.set_linkage(Linkage::LinkOnceODR);
-        hello_world_message.set_constant(true);
-        let hello_world_deref = unsafe {
-            self.builder.build_in_bounds_gep(
-                hello_world_message.as_pointer_value(),
-                &[i64_t.const_int(0, false), i64_t.const_int(0, false)],
-                "hello_world_deref",
-            )
-        };
-        self.builder
-            .build_call(puts, &[hello_world_deref.into()], "call");
-
-        self.builder.build_return(Some(&i32_t.const_int(0, false)));
-    }
-}*/
-
 struct ExecutionError {
     program: String,
     output: Output,

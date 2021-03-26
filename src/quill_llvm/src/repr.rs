@@ -4,10 +4,12 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
+    unimplemented,
 };
 
 use inkwell::{
     types::{BasicTypeEnum, FunctionType, PointerType, StructType},
+    values::{BasicValue, PointerValue},
     AddressSpace,
 };
 use quill_common::name::QualifiedName;
@@ -204,7 +206,7 @@ impl MonomorphisedFunction {
                 }
             }
 
-            let repr = builder.build(&descriptor.to_string());
+            let repr = builder.build(descriptor.to_string());
             reprs.func_objects.insert(descriptor, repr.clone());
             repr
         };
@@ -321,9 +323,9 @@ impl MonomorphisedFunction {
 #[derive(Copy, Clone)]
 pub enum FieldIndex {
     /// The field is inside the struct at this position.
-    Literal(i32),
+    Literal(u32),
     /// A pointer to the field is inside the struct at this position.
-    Heap(i32),
+    Heap(u32),
 }
 
 #[derive(Clone)]
@@ -338,7 +340,54 @@ pub struct DataRepresentation<'ctx> {
     /// The LLVM representation of the data structure, if it requires a representation at all.
     pub llvm_repr: Option<LLVMRepresentation<'ctx>>,
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
-    pub fields: HashMap<String, FieldIndex>,
+    /// If this contains *any* fields, `llvm_repr` is Some.
+    fields: HashMap<String, FieldIndex>,
+    name: String,
+}
+
+impl<'ctx> DataRepresentation<'ctx> {
+    /// Retrieves the element of this data with the given field, or None if no such field exists,
+    /// or if there was no representation for the field.
+    /// `ptr` is a pointer to this struct.
+    /// This uses the codegen builder to append instructions if required.
+    pub fn load(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        field: &str,
+    ) -> Option<PointerValue<'ctx>> {
+        self.fields.get(field).map(|field| match field {
+            FieldIndex::Literal(index) => codegen
+                .builder
+                .build_struct_gep(ptr, *index, &self.name)
+                .unwrap(),
+            FieldIndex::Heap(_) => unimplemented!(),
+        })
+    }
+
+    /// Stores a value into the element of this data with the given field, or panics no operation if no such field exists,
+    /// or if there was no representation for the field.
+    /// `ptr` is a pointer to this struct.
+    /// This uses the codegen builder to append instructions if required.
+    pub fn store<V: BasicValue<'ctx>>(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        value: V,
+        field_name: &str,
+    ) {
+        let field = self.fields.get(field_name).unwrap();
+        match field {
+            FieldIndex::Literal(index) => {
+                let ptr = codegen
+                    .builder
+                    .build_struct_gep(ptr, *index, field_name)
+                    .unwrap();
+                codegen.builder.build_store(ptr, value);
+            }
+            FieldIndex::Heap(_) => unimplemented!(),
+        }
+    }
 }
 
 pub struct EnumRepresentation<'ctx> {
@@ -389,11 +438,11 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
     }
 
     fn add_field_raw(&mut self, field_name: String, repr: AnyTypeRepresentation<'ctx>) {
-        self.llvm_field_types.push(repr.llvm_type);
         self.fields.insert(
             field_name,
-            FieldIndex::Literal(self.llvm_field_types.len() as i32),
+            FieldIndex::Literal(self.llvm_field_types.len() as u32),
         );
+        self.llvm_field_types.push(repr.llvm_type);
 
         // Update size and alignment.
         self.alignment = std::cmp::max(self.alignment, repr.alignment);
@@ -421,14 +470,15 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
     }
 
     /// Returns a data representation.
-    fn build(self, name: &str) -> DataRepresentation<'ctx> {
+    fn build(self, name: String) -> DataRepresentation<'ctx> {
         if self.llvm_field_types.is_empty() {
             DataRepresentation {
                 llvm_repr: None,
                 fields: self.fields,
+                name,
             }
         } else {
-            let llvm_ty = self.reprs.codegen.context.opaque_struct_type(name);
+            let llvm_ty = self.reprs.codegen.context.opaque_struct_type(&name);
             llvm_ty.set_body(&self.llvm_field_types, false);
             DataRepresentation {
                 llvm_repr: Some(LLVMRepresentation {
@@ -437,6 +487,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
                     alignment: self.alignment,
                 }),
                 fields: self.fields,
+                name,
             }
         }
     }
@@ -481,7 +532,7 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
 
                 (
                     variant.name.name.clone(),
-                    builder.build(&format!("{}@{}", mono, variant.name.name)),
+                    builder.build(format!("{}@{}", mono, variant.name.name)),
                 )
             })
             .collect::<HashMap<_, _>>();
@@ -568,7 +619,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                             })
                             .collect(),
                     );
-                    let repr = builder.build(&mono_ty.ty.to_string());
+                    let repr = builder.build(mono_ty.ty.to_string());
                     reprs.datas.insert(mono_ty.ty, repr);
                 }
                 TypeDeclarationTypeI::Enum(enumi) => {

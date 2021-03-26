@@ -1,3 +1,4 @@
+use inkwell::AddressSpace;
 use quill_mir::ProjectMIR;
 
 use crate::{
@@ -7,7 +8,7 @@ use crate::{
 
 pub fn compile_function<'ctx>(
     codegen: &CodeGenContext<'ctx>,
-    reprs: &Representations,
+    reprs: &Representations<'_, 'ctx>,
     mir: &ProjectMIR,
     func: MonomorphisedFunction,
 ) {
@@ -38,7 +39,32 @@ pub fn compile_function<'ctx>(
                 .try_as_basic_value()
                 .unwrap_left();
 
-            codegen.builder.build_return(Some(&mem));
+            // Bitcast to the right type.
+            let fobj = codegen.builder.build_bitcast(
+                mem,
+                fobj_repr
+                    .llvm_repr
+                    .as_ref()
+                    .unwrap()
+                    .ty
+                    .ptr_type(AddressSpace::Generic),
+                "fobj",
+            );
+
+            // Store the next function's address inside the new function object.
+            let mut next_func = func;
+            next_func.direct = false;
+            let next_func_value = codegen.module.get_function(&next_func.to_string()).unwrap();
+
+            let fptr = codegen.builder.build_bitcast(
+                next_func_value.as_global_value().as_pointer_value(),
+                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+                "fptr",
+            );
+
+            fobj_repr.store(codegen, fobj.into_pointer_value(), fptr, ".fptr");
+
+            codegen.builder.build_return(Some(&fobj));
         }
     } else {
         // An indirect function contains the real function body if there is only one step of curring left.
