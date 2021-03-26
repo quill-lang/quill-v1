@@ -117,11 +117,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     // Now that we've computed data type representations we can actually compile the functions.
     // First, declare them all.
     for func in &mono.functions {
-        codegen.module.add_function(
-            &func.to_string(),
-            func.llvm_type(&codegen, &reprs, mir),
-            None,
-        );
+        func.add_llvm_type(&codegen, &reprs, mir);
     }
     for func in mono.functions {
         compile_function(&codegen, func);

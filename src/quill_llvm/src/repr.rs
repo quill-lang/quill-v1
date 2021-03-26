@@ -6,7 +6,10 @@ use std::{
     fmt::Display,
 };
 
-use inkwell::types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType};
+use inkwell::{
+    types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType},
+    AddressSpace,
+};
 use quill_common::name::QualifiedName;
 use quill_index::{EnumI, ProjectIndex, TypeConstructorI, TypeDeclarationTypeI, TypeParameter};
 use quill_mir::{ArgumentIndex, LocalVariableName, ProjectMIR, StatementKind};
@@ -55,6 +58,25 @@ pub struct MonomorphisedFunction {
     pub mono: MonomorphisationParameters,
     /// Must never contain a zero.
     pub curry_steps: Vec<u64>,
+    /// If this is true, the function will be monomorphised as a "direct" function; no function pointer is supplied and
+    /// all arguments before (but NOT including) the given curry steps are given as function parameters. The return type is a function object
+    /// that will compute the result of the function when executed with an "indirect" function call (or multiple in a chain).
+    /// If this is false, the function is considered "indirect"; a function pointer (representing this function) is supplied as
+    /// the first parameter. The next n parameters are the params for the first curry step.
+    ///
+    /// For example, if `curry_steps = [1,1]`, `arity = 2`, and `direct = false` then the function's signature will be
+    /// `(fobj0, first parameter) -> fobj1` where `fobj0` is a function object containing no data, and `fobj1` is a function
+    /// object storing the first parameter, pointing to an this function with `curry_steps = [1]` and `direct = false`.
+    ///
+    /// If `curry_steps = [1,1]`, `arity = 2`, and `direct = true` then the function's signature will be
+    /// `() -> fobj0` where `fobj0` if a function object containing no data and pointing to this function with `curry_steps = [1,1]`
+    /// and `direct = false`.
+    ///
+    /// We can think of indirect functions as "going one level down the currying chain", since they always consume and emit a function
+    /// object (unless, of course, this is the last currying step - in which case the actual function is executed and its return type
+    /// becomes the only return value). Direct functions allow us to "jump inside the currying chain" - providing an amount of parameters,
+    /// we can create a function object holding these parameters.
+    pub direct: bool,
 }
 
 impl Display for MonomorphisedFunction {
@@ -67,18 +89,24 @@ impl Display for MonomorphisedFunction {
             }
             write!(f, "]")?;
         }
-        write!(f, "{:?}", self.curry_steps)
+        write!(f, "{:?}", self.curry_steps)?;
+        if self.direct {
+            write!(f, "d")
+        } else {
+            write!(f, "i")
+        }
     }
 }
 
 impl MonomorphisedFunction {
-    pub fn llvm_type<'ctx>(
+    fn generate_llvm_type<'ctx>(
         &self,
         codegen: &CodeGenContext<'ctx>,
         reprs: &Representations<'_, 'ctx>,
         mir: &ProjectMIR,
     ) -> FunctionType<'ctx> {
         let def = &mir.files[&self.func.source_file].definitions[&self.func.name];
+
         let args = (0..def.arity)
             .filter_map(|i| {
                 let info = def
@@ -99,17 +127,99 @@ impl MonomorphisedFunction {
             &def.type_variables,
             &self.mono.type_parameters,
         );
-        reprs
-            .repr(return_type)
-            .map(|repr| match repr.llvm_type {
-                BasicTypeEnum::ArrayType(array) => array.fn_type(&args, false),
-                BasicTypeEnum::FloatType(float) => float.fn_type(&args, false),
-                BasicTypeEnum::IntType(int) => int.fn_type(&args, false),
-                BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&args, false),
-                BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&args, false),
-                BasicTypeEnum::VectorType(vec) => vec.fn_type(&args, false),
-            })
-            .unwrap_or_else(|| codegen.context.void_type().fn_type(&args, false))
+
+        let curry_steps_amount = self.curry_steps.iter().sum::<u64>() as usize;
+
+        // Check to see if this function is direct or indirect.
+        if self.direct {
+            // The parameters to this function are exactly the first n arguments, where n = sum(curry_steps) - arity.
+            let real_args = args
+                .iter()
+                .take(def.arity as usize - curry_steps_amount)
+                .copied()
+                .collect::<Vec<_>>();
+
+            // The return value is the function return type if curry_steps_amount == 0, else it's a function object.
+            if curry_steps_amount == 0 {
+                reprs
+                    .repr(return_type)
+                    .map(|repr| match repr.llvm_type {
+                        BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
+                        BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
+                        BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
+                        BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&real_args, false),
+                        BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&real_args, false),
+                        BasicTypeEnum::VectorType(vec) => vec.fn_type(&real_args, false),
+                    })
+                    .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
+            } else {
+                let mut func_object_field_types = vec![BasicTypeEnum::PointerType(
+                    codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+                )];
+                func_object_field_types.extend(
+                    args.iter()
+                        .copied()
+                        .take(args.len() - *self.curry_steps.last().unwrap() as usize),
+                );
+
+                let function_object = codegen
+                    .context
+                    .struct_type(&func_object_field_types, false)
+                    .ptr_type(AddressSpace::Generic);
+
+                function_object.fn_type(&real_args, false)
+            }
+        } else {
+            // The parameters to this function are a function object, then some curried arguments.
+            let mut func_object_field_types = vec![BasicTypeEnum::PointerType(
+                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+            )];
+            func_object_field_types.extend(
+                args.iter()
+                    .copied()
+                    .take(args.len() - *self.curry_steps.last().unwrap() as usize),
+            );
+
+            let function_object = codegen
+                .context
+                .struct_type(&func_object_field_types, false)
+                .ptr_type(AddressSpace::Generic);
+
+            let mut real_args = vec![BasicTypeEnum::PointerType(function_object)];
+            real_args.extend(
+                args.iter()
+                    .copied()
+                    .skip(def.arity as usize - curry_steps_amount)
+                    .take(self.curry_steps[0] as usize),
+            );
+
+            if self.curry_steps.len() == 1 {
+                reprs
+                    .repr(return_type)
+                    .map(|repr| match repr.llvm_type {
+                        BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
+                        BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
+                        BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
+                        BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&real_args, false),
+                        BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&real_args, false),
+                        BasicTypeEnum::VectorType(vec) => vec.fn_type(&real_args, false),
+                    })
+                    .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
+            } else {
+                function_object.fn_type(&real_args, false)
+            }
+        }
+    }
+
+    /// Generates the LLVM type representing this function, then adds the type to the codegen module.
+    pub fn add_llvm_type<'ctx>(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
+        mir: &ProjectMIR,
+    ) {
+        let ty = self.generate_llvm_type(codegen, reprs, mir);
+        codegen.module.add_function(&self.to_string(), ty, None);
     }
 }
 
@@ -218,7 +328,6 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         } else {
             let llvm_ty = self.reprs.codegen.context.opaque_struct_type(name);
             llvm_ty.set_body(&self.llvm_field_types, false);
-            println!("Created {:?}", llvm_ty);
             DataRepresentation {
                 llvm_repr: Some(LLVMRepresentation {
                     ty: llvm_ty,
@@ -437,6 +546,7 @@ impl Monomorphisation {
             MonomorphisationParameters {
                 type_parameters: Vec::new(),
             },
+            true,
             Vec::new(),
         );
 
@@ -450,13 +560,15 @@ impl Monomorphisation {
         mir: &ProjectMIR,
         func: QualifiedName,
         mono: MonomorphisationParameters,
+        direct: bool,
         curry_steps: Vec<u64>,
     ) {
         let def = &mir.files[&func.source_file].definitions[&func.name];
         if self.functions.insert(MonomorphisedFunction {
-            func,
+            func: func.clone(),
             mono: mono.clone(),
-            curry_steps,
+            curry_steps: curry_steps.clone(),
+            direct,
         }) {
             // Work out what functions are called (and what types are referenced) by this function.
             for info in def.local_variable_names.values() {
@@ -474,7 +586,6 @@ impl Monomorphisation {
                         StatementKind::InvokeFunction {
                             name,
                             type_variables,
-                            arguments,
                             ..
                         } => {
                             self.track_def(
@@ -483,11 +594,8 @@ impl Monomorphisation {
                                 MonomorphisationParameters {
                                     type_parameters: type_variables.clone(),
                                 },
-                                if arguments.is_empty() {
-                                    Vec::new()
-                                } else {
-                                    vec![arguments.len() as u64]
-                                },
+                                true,
+                                Vec::new(),
                             );
                         }
                         StatementKind::ConstructFunctionObject {
@@ -502,12 +610,26 @@ impl Monomorphisation {
                                 MonomorphisationParameters {
                                     type_parameters: type_variables.clone(),
                                 },
+                                true,
                                 curry_steps.clone(),
                             );
                         }
                         _ => {}
                     }
                 }
+            }
+
+            // Add all functions that are generated by partially applying this one.
+            let mut next_curry_steps = curry_steps;
+            while !next_curry_steps.is_empty() {
+                self.track_def(
+                    mir,
+                    func.clone(),
+                    mono.clone(),
+                    false,
+                    next_curry_steps.clone(),
+                );
+                next_curry_steps.remove(0);
             }
         }
     }
