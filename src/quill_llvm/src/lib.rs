@@ -1,12 +1,9 @@
 use codegen::CodeGenContext;
 use func::compile_function;
+use inkwell::targets::{CodeModel, RelocMode, TargetTriple};
 use inkwell::targets::{InitializationConfig, Target};
 use inkwell::OptimizationLevel;
 use inkwell::{context::Context, targets::FileType};
-use inkwell::{
-    module::Linkage,
-    targets::{CodeModel, RelocMode, TargetTriple},
-};
 use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
 use repr::{Monomorphisation, Representations};
@@ -106,21 +103,17 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
 
     let context = Context::create();
     let module = context.create_module(project_name);
-    let codegen = CodeGenContext {
-        context: &context,
-        module,
-        builder: context.create_builder(),
-    };
+    let codegen = CodeGenContext::new(&context, module);
 
     let mono = Monomorphisation::new(mir);
-    let reprs = Representations::new(&codegen, mir, index, mono.types);
+    let mut reprs = Representations::new(&codegen, mir, index, mono.types);
     // Now that we've computed data type representations we can actually compile the functions.
     // First, declare them all.
     for func in &mono.functions {
-        func.add_llvm_type(&codegen, &reprs, mir);
+        func.add_llvm_type(&codegen, &mut reprs, mir);
     }
     for func in mono.functions {
-        compile_function(&codegen, func);
+        compile_function(&codegen, &reprs, mir, func);
     }
 
     // println!("Compiling to target machine...");

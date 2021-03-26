@@ -7,7 +7,7 @@ use std::{
 };
 
 use inkwell::{
-    types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType},
+    types::{BasicTypeEnum, FunctionType, PointerType, StructType},
     AddressSpace,
 };
 use quill_common::name::QualifiedName;
@@ -31,7 +31,7 @@ pub struct MonomorphisedType {
 
 impl Display for MonomorphisedType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)?;
+        write!(f, "t/{}", self.name)?;
         if !self.mono.type_parameters.is_empty() {
             write!(f, "[")?;
             for ty_param in &self.mono.type_parameters {
@@ -98,21 +98,56 @@ impl Display for MonomorphisedFunction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionObjectDescriptor {
+    pub func: QualifiedName,
+    pub mono: MonomorphisationParameters,
+    /// If this monomorphisation of this function requires a currying step,
+    /// this contains the amount of parameters applied in the *last* such step.
+    pub last_curry_step: Option<u64>,
+}
+
+impl Display for FunctionObjectDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "o/{}", self.func)?;
+        if !self.mono.type_parameters.is_empty() {
+            write!(f, "[")?;
+            for ty_param in &self.mono.type_parameters {
+                write!(f, "{},", ty_param)?;
+            }
+            write!(f, "]")?;
+        }
+        if let Some(last) = self.last_curry_step {
+            write!(f, "{}", last)?;
+        }
+        Ok(())
+    }
+}
+
 /// Stores the representations of a monomorphised function's arguments and return type.
 struct ArgReprs<'ctx> {
     /// For each argument of the original Quill function, what argument index in LLVM was it mapped to?
     /// If it had no representation, this returns None.
     arg_repr_indices: Vec<Option<usize>>,
-    args_with_reprs: Vec<BasicTypeEnum<'ctx>>,
+    args_with_reprs: Vec<AnyTypeRepresentation<'ctx>>,
     return_type: Option<BasicTypeEnum<'ctx>>,
     arity: u64,
+    function_object: DataRepresentation<'ctx>,
 }
 
 impl MonomorphisedFunction {
+    pub fn function_object_descriptor(&self) -> FunctionObjectDescriptor {
+        FunctionObjectDescriptor {
+            func: self.func.clone(),
+            mono: self.mono.clone(),
+            last_curry_step: self.curry_steps.last().copied(),
+        }
+    }
+
     fn generate_arg_reprs<'ctx>(
         &self,
         codegen: &CodeGenContext<'ctx>,
-        reprs: &Representations<'_, 'ctx>,
+        reprs: &mut Representations<'_, 'ctx>,
         mir: &ProjectMIR,
     ) -> ArgReprs<'ctx> {
         let def = &mir.files[&self.func.source_file].definitions[&self.func.name];
@@ -128,7 +163,7 @@ impl MonomorphisedFunction {
                     &def.type_variables,
                     &self.mono.type_parameters,
                 );
-                reprs.repr(ty).map(|repr| repr.llvm_type)
+                reprs.repr(ty)
             })
             .collect::<Vec<_>>();
 
@@ -144,40 +179,54 @@ impl MonomorphisedFunction {
             &self.mono.type_parameters,
         );
 
+        let descriptor = self.function_object_descriptor();
+        let function_object = if let Some(repr) = reprs.func_objects.get(&descriptor) {
+            repr.clone()
+        } else {
+            let mut builder = DataRepresentationBuilder::new(reprs);
+            // Add the function pointer as the first field.
+            builder.add_field_raw(
+                ".fptr".to_string(),
+                AnyTypeRepresentation {
+                    llvm_type: codegen
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::Generic)
+                        .into(),
+                    size: 8,
+                    alignment: 8,
+                },
+            );
+            // Add only the arguments not pertaining to the last currying step.
+            for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
+                if let Some(repr) = arg_repr_indices[i as usize].map(|i| args_with_reprs[i]) {
+                    builder.add_field_raw(format!("field_{}", i), repr);
+                }
+            }
+
+            let repr = builder.build(&descriptor.to_string());
+            reprs.func_objects.insert(descriptor, repr.clone());
+            repr
+        };
+
         ArgReprs {
             arg_repr_indices,
             args_with_reprs,
             return_type: reprs.repr(return_type).map(|repr| repr.llvm_type),
             arity: def.arity,
+            function_object,
         }
     }
 
     fn generate_llvm_type<'ctx>(
         &self,
         codegen: &CodeGenContext<'ctx>,
-        reprs: &Representations<'_, 'ctx>,
+        reprs: &mut Representations<'_, 'ctx>,
         mir: &ProjectMIR,
     ) -> FunctionType<'ctx> {
         let arg_reprs = self.generate_arg_reprs(codegen, reprs, mir);
 
         let curry_steps_amount = self.curry_steps.iter().sum::<u64>() as usize;
-
-        let mut func_object_field_types = vec![BasicTypeEnum::PointerType(
-            codegen.context.i8_type().ptr_type(AddressSpace::Generic),
-        )];
-        // Add only the arguments not pertaining to the last currying step.
-        func_object_field_types.extend(
-            (0..arg_reprs.arity - self.curry_steps.last().copied().unwrap_or(0)).filter_map(
-                |idx| {
-                    arg_reprs.arg_repr_indices[idx as usize].map(|i| arg_reprs.args_with_reprs[i])
-                },
-            ),
-        );
-
-        let function_object = codegen
-            .context
-            .struct_type(&func_object_field_types, false)
-            .ptr_type(AddressSpace::Generic);
 
         // Check to see if this function is direct or indirect.
         if self.direct {
@@ -186,7 +235,8 @@ impl MonomorphisedFunction {
             let real_args = (0..arg_reprs.arity as usize
                 - self.curry_steps.iter().sum::<u64>() as usize)
                 .filter_map(|idx| {
-                    arg_reprs.arg_repr_indices[idx].map(|idx| arg_reprs.args_with_reprs[idx])
+                    arg_reprs.arg_repr_indices[idx]
+                        .map(|idx| arg_reprs.args_with_reprs[idx].llvm_type)
                 })
                 .collect::<Vec<_>>();
 
@@ -204,18 +254,31 @@ impl MonomorphisedFunction {
                     })
                     .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
             } else {
-                function_object.fn_type(&real_args, false)
+                arg_reprs
+                    .function_object
+                    .llvm_repr
+                    .unwrap()
+                    .ty
+                    .ptr_type(AddressSpace::Generic)
+                    .fn_type(&real_args, false)
             }
         } else {
             // The parameters to this function are a function ptr, and then the first n arguments, where n = curry_steps[0].
             // But some of these args may not have representations, so we'll need to be careful.
-            let mut real_args = vec![BasicTypeEnum::PointerType(function_object)];
-            let args_already_calculated =
-                arg_reprs.arity as usize - self.curry_steps.iter().sum::<u64>() as usize;
+            let mut real_args = vec![arg_reprs
+                .function_object
+                .llvm_repr
+                .as_ref()
+                .unwrap()
+                .ty
+                .ptr_type(AddressSpace::Generic)
+                .into()];
+            let args_already_calculated = arg_reprs.arity as usize - curry_steps_amount;
             real_args.extend(
                 (args_already_calculated..args_already_calculated + self.curry_steps[0] as usize)
                     .filter_map(|idx| {
-                        arg_reprs.arg_repr_indices[idx].map(|idx| arg_reprs.args_with_reprs[idx])
+                        arg_reprs.arg_repr_indices[idx]
+                            .map(|idx| arg_reprs.args_with_reprs[idx].llvm_type)
                     }),
             );
 
@@ -232,7 +295,13 @@ impl MonomorphisedFunction {
                     })
                     .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
             } else {
-                function_object.fn_type(&real_args, false)
+                arg_reprs
+                    .function_object
+                    .llvm_repr
+                    .unwrap()
+                    .ty
+                    .ptr_type(AddressSpace::Generic)
+                    .fn_type(&real_args, false)
             }
         }
     }
@@ -241,7 +310,7 @@ impl MonomorphisedFunction {
     pub fn add_llvm_type<'ctx>(
         &self,
         codegen: &CodeGenContext<'ctx>,
-        reprs: &Representations<'_, 'ctx>,
+        reprs: &mut Representations<'_, 'ctx>,
         mir: &ProjectMIR,
     ) {
         let ty = self.generate_llvm_type(codegen, reprs, mir);
@@ -249,6 +318,7 @@ impl MonomorphisedFunction {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum FieldIndex {
     /// The field is inside the struct at this position.
     Literal(i32),
@@ -256,25 +326,27 @@ pub enum FieldIndex {
     Heap(i32),
 }
 
+#[derive(Clone)]
 pub struct LLVMRepresentation<'ctx> {
-    ty: StructType<'ctx>,
-    size: u32,
-    alignment: u32,
+    pub ty: StructType<'ctx>,
+    pub size: u32,
+    pub alignment: u32,
 }
 
+#[derive(Clone)]
 pub struct DataRepresentation<'ctx> {
     /// The LLVM representation of the data structure, if it requires a representation at all.
-    llvm_repr: Option<LLVMRepresentation<'ctx>>,
+    pub llvm_repr: Option<LLVMRepresentation<'ctx>>,
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
-    fields: HashMap<String, FieldIndex>,
+    pub fields: HashMap<String, FieldIndex>,
 }
 
 pub struct EnumRepresentation<'ctx> {
     /// The LLVM representation of the enum structure.
-    llvm_repr: LLVMRepresentation<'ctx>,
+    pub llvm_repr: LLVMRepresentation<'ctx>,
     /// Maps variant names to data representations of the enum variants.
     /// If a discriminant is required in the data representation, it will have field name `.discriminant`.
-    variants: HashMap<String, DataRepresentation<'ctx>>,
+    pub variants: HashMap<String, DataRepresentation<'ctx>>,
 }
 
 struct DataRepresentationBuilder<'a, 'ctx> {
@@ -310,25 +382,29 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
             &type_params,
             &mono.type_parameters,
         )) {
-            self.llvm_field_types.push(repr.llvm_type);
-            self.fields.insert(
-                field_name,
-                FieldIndex::Literal(self.llvm_field_types.len() as i32),
-            );
-
-            // Update size and alignment.
-            self.alignment = std::cmp::max(self.alignment, repr.alignment);
-            // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
-            let padding_to_add = repr.alignment - self.size % repr.alignment;
-            self.size += if padding_to_add == repr.alignment {
-                0
-            } else {
-                padding_to_add
-            };
-            self.size += repr.size;
+            self.add_field_raw(field_name, repr);
         } else {
             // This field had no representation.
         }
+    }
+
+    fn add_field_raw(&mut self, field_name: String, repr: AnyTypeRepresentation<'ctx>) {
+        self.llvm_field_types.push(repr.llvm_type);
+        self.fields.insert(
+            field_name,
+            FieldIndex::Literal(self.llvm_field_types.len() as i32),
+        );
+
+        // Update size and alignment.
+        self.alignment = std::cmp::max(self.alignment, repr.alignment);
+        // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
+        let padding_to_add = repr.alignment - self.size % repr.alignment;
+        self.size += if padding_to_add == repr.alignment {
+            0
+        } else {
+            padding_to_add
+        };
+        self.size += repr.size;
     }
 
     /// Add the fields from a type constructor to this data type.
@@ -445,8 +521,10 @@ pub struct Representations<'a, 'ctx> {
     codegen: &'a CodeGenContext<'ctx>,
     datas: HashMap<MonomorphisedType, DataRepresentation<'ctx>>,
     enums: HashMap<MonomorphisedType, EnumRepresentation<'ctx>>,
+    func_objects: HashMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
 }
 
+#[derive(Clone, Copy)]
 pub struct AnyTypeRepresentation<'ctx> {
     pub llvm_type: BasicTypeEnum<'ctx>,
     pub size: u32,
@@ -464,6 +542,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             codegen,
             datas: HashMap::new(),
             enums: HashMap::new(),
+            func_objects: HashMap::new(),
         };
 
         // Sort the types according to what types are used in what other types.
@@ -547,6 +626,10 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 alignment: 8,
             }),
         }
+    }
+
+    pub fn fobj(&self, descriptor: &FunctionObjectDescriptor) -> Option<&DataRepresentation<'ctx>> {
+        self.func_objects.get(descriptor)
     }
 }
 
