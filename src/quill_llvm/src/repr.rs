@@ -98,17 +98,27 @@ impl Display for MonomorphisedFunction {
     }
 }
 
+/// Stores the representations of a monomorphised function's arguments and return type.
+struct ArgReprs<'ctx> {
+    /// For each argument of the original Quill function, what argument index in LLVM was it mapped to?
+    /// If it had no representation, this returns None.
+    arg_repr_indices: Vec<Option<usize>>,
+    args_with_reprs: Vec<BasicTypeEnum<'ctx>>,
+    return_type: Option<BasicTypeEnum<'ctx>>,
+    arity: u64,
+}
+
 impl MonomorphisedFunction {
-    fn generate_llvm_type<'ctx>(
+    fn generate_arg_reprs<'ctx>(
         &self,
         codegen: &CodeGenContext<'ctx>,
         reprs: &Representations<'_, 'ctx>,
         mir: &ProjectMIR,
-    ) -> FunctionType<'ctx> {
+    ) -> ArgReprs<'ctx> {
         let def = &mir.files[&self.func.source_file].definitions[&self.func.name];
 
-        let args = (0..def.arity)
-            .filter_map(|i| {
+        let args_options = (0..def.arity)
+            .map(|i| {
                 let info = def
                     .local_variable_names
                     .get(&LocalVariableName::Argument(ArgumentIndex(i)))
@@ -122,28 +132,69 @@ impl MonomorphisedFunction {
             })
             .collect::<Vec<_>>();
 
+        let mut arg_repr_indices = Vec::new();
+        for arg in &args_options {
+            arg_repr_indices.push(arg.map(|_| arg_repr_indices.len()));
+        }
+        let args_with_reprs = args_options.iter().copied().flatten().collect::<Vec<_>>();
+
         let return_type = replace_type_variables(
             def.return_type.clone(),
             &def.type_variables,
             &self.mono.type_parameters,
         );
 
+        ArgReprs {
+            arg_repr_indices,
+            args_with_reprs,
+            return_type: reprs.repr(return_type).map(|repr| repr.llvm_type),
+            arity: def.arity,
+        }
+    }
+
+    fn generate_llvm_type<'ctx>(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
+        mir: &ProjectMIR,
+    ) -> FunctionType<'ctx> {
+        let arg_reprs = self.generate_arg_reprs(codegen, reprs, mir);
+
         let curry_steps_amount = self.curry_steps.iter().sum::<u64>() as usize;
+
+        let mut func_object_field_types = vec![BasicTypeEnum::PointerType(
+            codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+        )];
+        // Add only the arguments not pertaining to the last currying step.
+        func_object_field_types.extend(
+            (0..arg_reprs.arity - self.curry_steps.last().copied().unwrap_or(0)).filter_map(
+                |idx| {
+                    arg_reprs.arg_repr_indices[idx as usize].map(|i| arg_reprs.args_with_reprs[i])
+                },
+            ),
+        );
+
+        let function_object = codegen
+            .context
+            .struct_type(&func_object_field_types, false)
+            .ptr_type(AddressSpace::Generic);
 
         // Check to see if this function is direct or indirect.
         if self.direct {
-            // The parameters to this function are exactly the first n arguments, where n = sum(curry_steps) - arity.
-            let real_args = args
-                .iter()
-                .take(def.arity as usize - curry_steps_amount)
-                .copied()
+            // The parameters to this function are exactly the first n arguments, where n = arity - sum(curry_steps).
+            // But some of these args may not have representations, so we'll need to be careful.
+            let real_args = (0..arg_reprs.arity as usize
+                - self.curry_steps.iter().sum::<u64>() as usize)
+                .filter_map(|idx| {
+                    arg_reprs.arg_repr_indices[idx].map(|idx| arg_reprs.args_with_reprs[idx])
+                })
                 .collect::<Vec<_>>();
 
             // The return value is the function return type if curry_steps_amount == 0, else it's a function object.
             if curry_steps_amount == 0 {
-                reprs
-                    .repr(return_type)
-                    .map(|repr| match repr.llvm_type {
+                arg_reprs
+                    .return_type
+                    .map(|repr| match repr {
                         BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
                         BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
                         BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
@@ -153,50 +204,25 @@ impl MonomorphisedFunction {
                     })
                     .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
             } else {
-                let mut func_object_field_types = vec![BasicTypeEnum::PointerType(
-                    codegen.context.i8_type().ptr_type(AddressSpace::Generic),
-                )];
-                func_object_field_types.extend(
-                    args.iter()
-                        .copied()
-                        .take(args.len() - *self.curry_steps.last().unwrap() as usize),
-                );
-
-                let function_object = codegen
-                    .context
-                    .struct_type(&func_object_field_types, false)
-                    .ptr_type(AddressSpace::Generic);
-
                 function_object.fn_type(&real_args, false)
             }
         } else {
-            // The parameters to this function are a function object, then some curried arguments.
-            let mut func_object_field_types = vec![BasicTypeEnum::PointerType(
-                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
-            )];
-            func_object_field_types.extend(
-                args.iter()
-                    .copied()
-                    .take(args.len() - *self.curry_steps.last().unwrap() as usize),
-            );
-
-            let function_object = codegen
-                .context
-                .struct_type(&func_object_field_types, false)
-                .ptr_type(AddressSpace::Generic);
-
+            // The parameters to this function are a function ptr, and then the first n arguments, where n = curry_steps[0].
+            // But some of these args may not have representations, so we'll need to be careful.
             let mut real_args = vec![BasicTypeEnum::PointerType(function_object)];
+            let args_already_calculated =
+                arg_reprs.arity as usize - self.curry_steps.iter().sum::<u64>() as usize;
             real_args.extend(
-                args.iter()
-                    .copied()
-                    .skip(def.arity as usize - curry_steps_amount)
-                    .take(self.curry_steps[0] as usize),
+                (args_already_calculated..args_already_calculated + self.curry_steps[0] as usize)
+                    .filter_map(|idx| {
+                        arg_reprs.arg_repr_indices[idx].map(|idx| arg_reprs.args_with_reprs[idx])
+                    }),
             );
 
             if self.curry_steps.len() == 1 {
-                reprs
-                    .repr(return_type)
-                    .map(|repr| match repr.llvm_type {
+                arg_reprs
+                    .return_type
+                    .map(|repr| match repr {
                         BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
                         BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
                         BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
