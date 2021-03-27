@@ -203,6 +203,7 @@ impl MonomorphisedFunction {
             for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
                 if let Some(repr) = arg_repr_indices[i as usize].map(|i| args_with_reprs[i]) {
                     builder.add_field_raw(format!("field_{}", i), repr);
+                    println!("Building {} {}", descriptor.to_string(), i);
                 }
             }
 
@@ -387,6 +388,10 @@ impl<'ctx> DataRepresentation<'ctx> {
             }
             FieldIndex::Heap(_) => unimplemented!(),
         }
+    }
+
+    pub fn has_field(&self, name: &str) -> bool {
+        self.fields.contains_key(name)
     }
 }
 

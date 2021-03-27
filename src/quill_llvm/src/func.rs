@@ -1,4 +1,4 @@
-use inkwell::AddressSpace;
+use inkwell::{passes::PassManager, values::FunctionValue, AddressSpace};
 use quill_mir::ProjectMIR;
 
 use crate::{
@@ -12,6 +12,7 @@ pub fn compile_function<'ctx>(
     mir: &ProjectMIR,
     func: MonomorphisedFunction,
 ) {
+    let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
 
     // Check what kind of function this is.
@@ -72,6 +73,44 @@ pub fn compile_function<'ctx>(
             // We need to create the real function body.
         } else {
             // We need to update this function object to point to the next curry step.
+            let block = codegen.context.append_basic_block(func_value, "entry");
+            codegen.builder.position_at_end(block);
+
+            let fobj = func_value.get_nth_param(0).unwrap();
+            let fobj_repr = reprs.fobj(&func.function_object_descriptor()).unwrap();
+
+            // Store the next function's address inside the new function object.
+            let mut next_func = func;
+            let args_not_supplied = next_func.curry_steps.iter().sum::<u64>();
+            let args_supplied = def.arity - args_not_supplied;
+            let num_args = next_func.curry_steps.remove(0);
+            let next_func_value = codegen.module.get_function(&next_func.to_string()).unwrap();
+
+            let fptr = codegen.builder.build_bitcast(
+                next_func_value.as_global_value().as_pointer_value(),
+                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+                "fptr",
+            );
+
+            fobj_repr.store(codegen, fobj.into_pointer_value(), fptr, ".fptr");
+
+            // Store the other arguments in the function object.
+            for arg in args_supplied..args_supplied + num_args {
+                let field = format!("field_{}", arg);
+                if fobj_repr.has_field(&field) {
+                    println!("Processing {} at {}", field, arg - args_supplied + 1);
+                    fobj_repr.store(
+                        codegen,
+                        fobj.into_pointer_value(),
+                        func_value
+                            .get_nth_param((arg - args_supplied + 1) as u32)
+                            .unwrap(),
+                        &field,
+                    );
+                }
+            }
+
+            codegen.builder.build_return(Some(&fobj));
         }
     }
 }

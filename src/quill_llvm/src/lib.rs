@@ -1,9 +1,15 @@
 use codegen::CodeGenContext;
 use func::compile_function;
-use inkwell::targets::{CodeModel, RelocMode, TargetTriple};
-use inkwell::targets::{InitializationConfig, Target};
-use inkwell::OptimizationLevel;
 use inkwell::{context::Context, targets::FileType};
+use inkwell::{module::Module, OptimizationLevel};
+use inkwell::{
+    passes::PassManager,
+    targets::{CodeModel, RelocMode, TargetTriple},
+};
+use inkwell::{
+    targets::{InitializationConfig, Target},
+    values::FunctionValue,
+};
 use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
 use repr::{Monomorphisation, Representations};
@@ -64,9 +70,15 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     for func in &mono.functions {
         func.add_llvm_type(&codegen, &mut reprs, mir);
     }
-    for func in mono.functions {
-        compile_function(&codegen, &reprs, mir, func);
+    for func in &mono.functions {
+        compile_function(&codegen, &reprs, mir, func.clone());
     }
+
+    let pm = PassManager::<Module>::create(&());
+    pm.add_verifier_pass();
+    println!("Verifying...");
+    pm.run_on(&codegen.module);
+    println!("Done.");
 
     // println!("Compiling to target machine...");
 
