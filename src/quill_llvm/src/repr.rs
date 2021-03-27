@@ -8,7 +8,7 @@ use std::{
 };
 
 use inkwell::{
-    types::{BasicTypeEnum, FunctionType, PointerType, StructType},
+    types::{BasicTypeEnum, FunctionType, StructType},
     values::{BasicValue, PointerValue},
     AddressSpace,
 };
@@ -27,8 +27,8 @@ pub struct MonomorphisationParameters {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MonomorphisedType {
-    name: QualifiedName,
-    mono: MonomorphisationParameters,
+    pub name: QualifiedName,
+    pub mono: MonomorphisationParameters,
 }
 
 impl Display for MonomorphisedType {
@@ -342,7 +342,10 @@ pub struct DataRepresentation<'ctx> {
     pub llvm_repr: Option<LLVMRepresentation<'ctx>>,
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
     /// If this contains *any* fields, `llvm_repr` is Some.
-    fields: HashMap<String, FieldIndex>,
+    field_indices: HashMap<String, FieldIndex>,
+    field_types: HashMap<String, Type>,
+    field_sizes: HashMap<String, u64>,
+    field_alignments: HashMap<String, u64>,
     name: String,
 }
 
@@ -357,7 +360,7 @@ impl<'ctx> DataRepresentation<'ctx> {
         ptr: PointerValue<'ctx>,
         field: &str,
     ) -> Option<PointerValue<'ctx>> {
-        self.fields.get(field).map(|field| match field {
+        self.field_indices.get(field).map(|field| match field {
             FieldIndex::Literal(index) => codegen
                 .builder
                 .build_struct_gep(ptr, *index, &self.name)
@@ -377,7 +380,7 @@ impl<'ctx> DataRepresentation<'ctx> {
         value: V,
         field_name: &str,
     ) {
-        let field = self.fields.get(field_name).unwrap();
+        let field = self.field_indices.get(field_name).unwrap();
         match field {
             FieldIndex::Literal(index) => {
                 let ptr = codegen
@@ -390,8 +393,37 @@ impl<'ctx> DataRepresentation<'ctx> {
         }
     }
 
+    /// Stores the value behind the given pointer inside this struct.
+    pub fn store_ptr(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        src: PointerValue<'ctx>,
+        field_name: &str,
+    ) {
+        let dest = self.load(codegen, ptr, field_name).unwrap();
+        codegen
+            .builder
+            .build_memcpy(
+                dest,
+                self.field_alignments[field_name] as u32,
+                src,
+                self.field_alignments[field_name] as u32,
+                codegen
+                    .context
+                    .ptr_sized_int_type(codegen.target_data(), None)
+                    .const_int(self.field_sizes[field_name], false),
+            )
+            .unwrap();
+    }
+
+    /// Checks to see if a field *with representation* exists in this data structure.
     pub fn has_field(&self, name: &str) -> bool {
-        self.fields.contains_key(name)
+        self.field_indices.contains_key(name)
+    }
+
+    pub fn field_ty(&self, name: &str) -> &Type {
+        &self.field_types[name]
     }
 }
 
@@ -403,11 +435,50 @@ pub struct EnumRepresentation<'ctx> {
     pub variants: HashMap<String, DataRepresentation<'ctx>>,
 }
 
+impl<'ctx> EnumRepresentation<'ctx> {
+    /// Retrieves the element of this data with the given field, or None if no such field exists,
+    /// or if there was no representation for the field.
+    /// `ptr` is a pointer to this struct.
+    /// This uses the codegen builder to append instructions if required.
+    pub fn load(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        variant: &str,
+        field: &str,
+    ) -> Option<PointerValue<'ctx>> {
+        self.variants
+            .get(variant)
+            .and_then(|variant| variant.load(codegen, ptr, field))
+    }
+
+    /// Stores a value into the element of this data with the given field, or panics no operation if no such field exists,
+    /// or if there was no representation for the field.
+    /// `ptr` is a pointer to this struct.
+    /// This uses the codegen builder to append instructions if required.
+    pub fn store<V: BasicValue<'ctx>>(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        value: V,
+        variant: &str,
+        field_name: &str,
+    ) {
+        self.variants
+            .get(variant)
+            .unwrap()
+            .store(codegen, ptr, value, field_name);
+    }
+}
+
 struct DataRepresentationBuilder<'a, 'ctx> {
     reprs: &'a Representations<'a, 'ctx>,
 
     llvm_field_types: Vec<BasicTypeEnum<'ctx>>,
-    fields: HashMap<String, FieldIndex>,
+    field_indices: HashMap<String, FieldIndex>,
+    field_types: HashMap<String, Type>,
+    field_sizes: HashMap<String, u64>,
+    field_alignments: HashMap<String, u64>,
 
     size: u32,
     alignment: u32,
@@ -418,7 +489,10 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         Self {
             reprs,
             llvm_field_types: Vec::new(),
-            fields: HashMap::new(),
+            field_indices: HashMap::new(),
+            field_types: HashMap::new(),
+            field_sizes: HashMap::new(),
+            field_alignments: HashMap::new(),
             size: 0,
             alignment: 1,
         }
@@ -431,6 +505,8 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         type_params: &[TypeParameter],
         mono: &MonomorphisationParameters,
     ) {
+        self.field_types
+            .insert(field_name.clone(), field_type.clone());
         if let Some(repr) = self.reprs.repr(replace_type_variables(
             field_type,
             &type_params,
@@ -442,8 +518,13 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         }
     }
 
+    /// Does not cache a MIR type, only stores the LLVM type.
     fn add_field_raw(&mut self, field_name: String, repr: AnyTypeRepresentation<'ctx>) {
-        self.fields.insert(
+        self.field_sizes
+            .insert(field_name.clone(), repr.size as u64);
+        self.field_alignments
+            .insert(field_name.clone(), repr.alignment as u64);
+        self.field_indices.insert(
             field_name,
             FieldIndex::Literal(self.llvm_field_types.len() as u32),
         );
@@ -479,7 +560,10 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         if self.llvm_field_types.is_empty() {
             DataRepresentation {
                 llvm_repr: None,
-                fields: self.fields,
+                field_indices: self.field_indices,
+                field_types: self.field_types,
+                field_sizes: self.field_sizes,
+                field_alignments: self.field_alignments,
                 name,
             }
         } else {
@@ -491,7 +575,10 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
                     size: self.size,
                     alignment: self.alignment,
                 }),
-                fields: self.fields,
+                field_indices: self.field_indices,
+                field_types: self.field_types,
+                field_sizes: self.field_sizes,
+                field_alignments: self.field_alignments,
                 name,
             }
         }
@@ -578,6 +665,8 @@ pub struct Representations<'a, 'ctx> {
     datas: HashMap<MonomorphisedType, DataRepresentation<'ctx>>,
     enums: HashMap<MonomorphisedType, EnumRepresentation<'ctx>>,
     func_objects: HashMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
+    /// Use this type for a general function object that you don't know the type of.
+    general_func_obj_ty: AnyTypeRepresentation<'ctx>,
 }
 
 #[derive(Clone, Copy)]
@@ -594,11 +683,25 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         index: &ProjectIndex,
         mono_types: HashSet<MonomorphisedType>,
     ) -> Self {
+        let general_func_obj_ty = codegen.context.opaque_struct_type("fobj");
+        general_func_obj_ty.set_body(
+            &[codegen
+                .context
+                .i8_type()
+                .ptr_type(AddressSpace::Generic)
+                .into()],
+            false,
+        );
         let mut reprs = Self {
             codegen,
             datas: HashMap::new(),
             enums: HashMap::new(),
             func_objects: HashMap::new(),
+            general_func_obj_ty: AnyTypeRepresentation {
+                llvm_type: general_func_obj_ty.ptr_type(AddressSpace::Generic).into(),
+                size: 8,
+                alignment: 8,
+            },
         };
 
         // Sort the types according to what types are used in what other types.
@@ -674,7 +777,10 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 }
             }
             Type::Variable { .. } => unreachable!(),
-            Type::Function(_, _) => unimplemented!(),
+            Type::Function(_, _) => {
+                // This is a function object.
+                Some(self.general_func_obj_ty)
+            }
             Type::Primitive(PrimitiveType::Unit) => None,
             Type::Primitive(PrimitiveType::Int) => Some(AnyTypeRepresentation {
                 llvm_type: BasicTypeEnum::IntType(self.codegen.context.i64_type()),
@@ -684,7 +790,18 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         }
     }
 
-    pub fn fobj(&self, descriptor: &FunctionObjectDescriptor) -> Option<&DataRepresentation<'ctx>> {
+    pub fn get_data(&self, descriptor: &MonomorphisedType) -> Option<&DataRepresentation<'ctx>> {
+        self.datas.get(descriptor)
+    }
+
+    pub fn get_enum(&self, descriptor: &MonomorphisedType) -> Option<&EnumRepresentation<'ctx>> {
+        self.enums.get(descriptor)
+    }
+
+    pub fn get_fobj(
+        &self,
+        descriptor: &FunctionObjectDescriptor,
+    ) -> Option<&DataRepresentation<'ctx>> {
         self.func_objects.get(descriptor)
     }
 }

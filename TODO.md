@@ -4,3 +4,5 @@
 - Make a proper `main` entry point function.
 - When destructuring an object, drop all fields that we don't care about.
 - Make data structures use heap allocation when Tarjan's algorithm finds a cycle.
+- Use `TargetData` to compute size/alignment of data.
+- Use LLVM's malloc instead of libc's.

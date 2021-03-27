@@ -1,14 +1,11 @@
 use codegen::CodeGenContext;
 use func::compile_function;
+use inkwell::targets::{InitializationConfig, Target};
 use inkwell::{context::Context, targets::FileType};
 use inkwell::{module::Module, OptimizationLevel};
 use inkwell::{
     passes::PassManager,
     targets::{CodeModel, RelocMode, TargetTriple},
-};
-use inkwell::{
-    targets::{InitializationConfig, Target},
-    values::FunctionValue,
 };
 use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
@@ -61,6 +58,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
 
     let context = Context::create();
     let module = context.create_module(project_name);
+    module.set_triple(&TargetTriple::create(host_triple));
     let codegen = CodeGenContext::new(&context, module);
 
     let mono = Monomorphisation::new(mir);

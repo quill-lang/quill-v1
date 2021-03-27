@@ -2,7 +2,7 @@
 //! Much of this code is heavily inspired by the Rust compiler.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Display,
 };
 
@@ -69,7 +69,7 @@ impl Display for BasicBlockId {
 ///
 /// Further, in this struct, different pattern match cases in a function are unified into one control flow graph,
 /// where the pattern matching is carried out explicitly. Local variables from each case are unified into one list.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DefinitionM {
     pub range: Range,
     /// The type variables at the start of this definition.
@@ -134,7 +134,7 @@ impl Display for LocalVariableName {
 }
 
 /// Information about a local variable, either explicitly or implicitly defined.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalVariableInfo {
     /// Where was the local variable defined?
     /// If this is just an expression, then this is the range of the expression.
@@ -155,7 +155,7 @@ impl Display for LocalVariableInfo {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ControlFlowGraph {
     next_block_id: BasicBlockId,
     /// Every basic block has a unique index, which is its index inside this basic blocks map.
@@ -171,18 +171,201 @@ impl ControlFlowGraph {
         self.basic_blocks.insert(id, basic_block);
         id
     }
+
+    /// Assigns new basic block IDs to ensure we're in SSA form, only using variables and blocks after they're defined.
+    /// Returns the new entry point.
+    fn reorder(&mut self, entry_point: BasicBlockId) -> BasicBlockId {
+        // We use a topological sort (Kahn's algorithm) to reorder basic blocks.
+
+        // Cache some things about each block.
+        // In particular, we need to know which blocks define and use which local variables, and
+        // which other blocks a block can end up jumping to.
+        let mut values_defined = HashMap::new();
+        let mut values_used = HashMap::new();
+        let mut target_blocks = HashMap::new();
+        for (&node, block) in &self.basic_blocks {
+            let mut block_values_defined = HashSet::new();
+            let mut block_values_used = HashSet::new();
+            let mut more_block_values_used = HashSet::new();
+
+            let mut use_rvalue = |rvalue: &Rvalue| match rvalue {
+                Rvalue::Use(Operand::Copy(place)) | Rvalue::Use(Operand::Move(place)) => {
+                    block_values_used.insert(place.local);
+                }
+                _ => {}
+            };
+
+            for stmt in &block.statements {
+                match &stmt.kind {
+                    StatementKind::Assign { target, .. }
+                    | StatementKind::InstanceSymbol { target, .. }
+                    | StatementKind::Apply { target, .. }
+                    | StatementKind::InvokeFunction { target, .. }
+                    | StatementKind::ConstructFunctionObject { target, .. }
+                    | StatementKind::ApplyFunctionObject { target, .. }
+                    | StatementKind::InvokeFunctionObject { target, .. }
+                    | StatementKind::CreateLambda { target, .. }
+                    | StatementKind::ConstructData { target, .. } => {
+                        block_values_defined.insert(*target);
+                    }
+                    _ => {}
+                }
+
+                match &stmt.kind {
+                    StatementKind::Assign { source, .. } => {
+                        use_rvalue(source);
+                    }
+                    StatementKind::Apply {
+                        argument, function, ..
+                    } => {
+                        use_rvalue(argument);
+                        use_rvalue(function);
+                    }
+                    StatementKind::InvokeFunction { arguments, .. } => {
+                        for arg in arguments {
+                            use_rvalue(arg);
+                        }
+                    }
+                    StatementKind::ConstructFunctionObject {
+                        curried_arguments, ..
+                    } => {
+                        for arg in curried_arguments {
+                            use_rvalue(arg);
+                        }
+                    }
+                    StatementKind::ApplyFunctionObject {
+                        argument, function, ..
+                    } => {
+                        use_rvalue(argument);
+                        use_rvalue(function);
+                    }
+                    StatementKind::InvokeFunctionObject {
+                        additional_arguments,
+                        ..
+                    } => {
+                        for arg in additional_arguments {
+                            use_rvalue(arg);
+                        }
+                    }
+                    StatementKind::ConstructData { fields, .. } => {
+                        for field in fields.values() {
+                            use_rvalue(field);
+                        }
+                    }
+                    StatementKind::DropIfAlive { variable } => {
+                        more_block_values_used.insert(*variable);
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut block_target_blocks = HashSet::new();
+            // First, check possible places we'll jump to in the terminator.
+            match &self.basic_blocks[&node].terminator.kind {
+                TerminatorKind::Goto(target) => {
+                    block_target_blocks.insert(*target);
+                }
+                TerminatorKind::SwitchDiscriminator {
+                    enum_place, cases, ..
+                } => {
+                    block_values_used.insert(enum_place.local);
+                    for target in cases.values() {
+                        block_target_blocks.insert(*target);
+                    }
+                }
+                TerminatorKind::Invalid => unreachable!(),
+                TerminatorKind::Return { value } => {
+                    block_values_used.insert(*value);
+                }
+            }
+
+            values_defined.insert(node, block_values_defined);
+            block_values_used.extend(more_block_values_used);
+            values_used.insert(node, block_values_used);
+            target_blocks.insert(node, block_target_blocks);
+        }
+
+        // Now that we have all this information, we can make a set of all the edges in this directed graph.
+        let mut edges = HashMap::new();
+        for &node in self.basic_blocks.keys() {
+            let mut this_edges = HashSet::new();
+
+            for var in values_defined[&node].iter().copied() {
+                for &other_node in self.basic_blocks.keys() {
+                    if values_used[&other_node].contains(&var) {
+                        this_edges.insert(other_node);
+                    }
+                }
+            }
+
+            this_edges.extend(target_blocks[&node].iter().copied());
+
+            edges.insert(node, this_edges);
+        }
+
+        // Now run Kahn's algorithm.
+        // The set of start nodes is exactly the entry point of the function.
+        let mut l = Vec::new();
+        let mut s = vec![entry_point];
+        while let Some(node) = s.pop() {
+            l.push(node);
+            // Look for each node that follows from this block.
+            for following in edges.remove(&node).into_iter().flatten() {
+                // Check to see if there are any other incoming edges into this following node.
+                if edges
+                    .values()
+                    .flatten()
+                    .find(|id| **id == following)
+                    .is_none()
+                {
+                    s.push(following);
+                }
+            }
+        }
+
+        assert!(edges.is_empty());
+
+        // Now, reorder the basic block IDs according to this new order in `l`.
+        // This map maps from old block IDs to new block IDs.
+        let block_id_map = l
+            .into_iter()
+            .enumerate()
+            .map(|(new_id, old_id)| (old_id, BasicBlockId(new_id as u64)))
+            .collect::<HashMap<_, _>>();
+
+        // First we'll move them around in the CFG then we'll update all references to these IDs inside terminators.
+        for (old_id, block) in std::mem::take(&mut self.basic_blocks) {
+            self.basic_blocks.insert(block_id_map[&old_id], block);
+        }
+        // Now update all the references.
+        for block in self.basic_blocks.values_mut() {
+            match &mut block.terminator.kind {
+                TerminatorKind::Goto(target) => {
+                    *target = block_id_map[&target];
+                }
+                TerminatorKind::SwitchDiscriminator { cases, .. } => {
+                    for target in cases.values_mut() {
+                        *target = block_id_map[&target];
+                    }
+                }
+                TerminatorKind::Invalid => unreachable!(),
+                TerminatorKind::Return { .. } => {}
+            }
+        }
+        block_id_map[&entry_point]
+    }
 }
 
 /// A basic block is a block of code that can be executed, and may manipulate values.
 /// Control flow is entirely linear inside a basic block.
 /// After this basic block, we may branch to one of several places.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BasicBlock {
     pub statements: Vec<Statement>,
     pub terminator: Terminator,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Statement {
     pub range: Range,
     pub kind: StatementKind,
@@ -194,7 +377,7 @@ impl Display for Statement {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StatementKind {
     /// Moves an rvalue into a local variable.
     Assign {
@@ -281,7 +464,7 @@ pub enum StatementKind {
     CreateLambda {
         ty: Type,
         params: Vec<NameP>,
-        expr: Box<Expression>,
+        // expr: Box<Expression>,
         target: LocalVariableName,
     },
     /// Creates an object of a given type, and puts it in target.
@@ -483,7 +666,7 @@ impl Display for Operand {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Terminator {
     pub range: Range,
     pub kind: TerminatorKind,
@@ -495,7 +678,7 @@ impl Display for Terminator {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TerminatorKind {
     /// Jump to another basic block unconditionally.
     Goto(BasicBlockId),
@@ -618,7 +801,7 @@ fn to_mir_def(project_index: &ProjectIndex, def: Definition) -> DiagnosticResult
     // for sub-expressions.
     let entry_point = create_cfg(project_index, &mut ctx, def);
 
-    DiagnosticResult::ok(DefinitionM {
+    let mut def = DefinitionM {
         range,
         type_variables,
         arity,
@@ -626,7 +809,10 @@ fn to_mir_def(project_index: &ProjectIndex, def: Definition) -> DiagnosticResult
         return_type,
         control_flow_graph: ctx.control_flow_graph,
         entry_point,
-    })
+    };
+    def.entry_point = def.control_flow_graph.reorder(def.entry_point);
+
+    DiagnosticResult::ok(def)
 }
 
 /// Creates a control flow graph for a function definition.
@@ -1495,7 +1681,7 @@ fn generate_expr(
                     kind: StatementKind::CreateLambda {
                         ty,
                         params,
-                        expr: substituted_expr,
+                        //expr: substituted_expr,
                         target: LocalVariableName::Local(variable),
                     },
                 }],
