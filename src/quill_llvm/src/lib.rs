@@ -86,6 +86,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     let object_path = build_folder.join(path);
     let asm_path = build_folder.join(path.with_extension("asm"));
     let bc_path = build_folder.join(path.with_extension("bc"));
+    let bc_opt_path = build_folder.join(path.with_extension("opt.bc"));
 
     let target = Target::from_name("x86-64").unwrap();
     let target_machine = target
@@ -104,6 +105,19 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     let _ = Command::new("llvm-dis")
         .arg(bc_path.to_str().unwrap())
         .status();
+
+    let opt = PassManager::<Module>::create(&());
+    opt.add_jump_threading_pass();
+    opt.add_memcpy_optimize_pass();
+    println!("Optimising...");
+    opt.run_on(&codegen.module);
+    println!("Done.");
+
+    codegen.module.write_bitcode_to_path(&bc_opt_path);
+    let _ = Command::new("llvm-dis")
+        .arg(bc_opt_path.to_str().unwrap())
+        .status();
+
     assert!(target_machine
         .write_to_file(&codegen.module, FileType::Assembly, &asm_path)
         .is_ok());
