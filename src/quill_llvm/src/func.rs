@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use inkwell::{
     basic_block::BasicBlock,
+    types::BasicTypeEnum,
     values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace,
 };
@@ -15,8 +16,8 @@ use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
 use crate::{
     codegen::CodeGenContext,
     repr::{
-        AnyTypeRepresentation, MonomorphisationParameters, MonomorphisedFunction,
-        MonomorphisedType, Representations,
+        AnyTypeRepresentation, FunctionObjectDescriptor, MonomorphisationParameters,
+        MonomorphisedFunction, MonomorphisedType, Representations,
     },
 };
 
@@ -247,17 +248,90 @@ fn create_real_func_body<'ctx>(
                     target,
                     curry_steps,
                     curried_arguments,
-                } => {}
-                StatementKind::ApplyFunctionObject {
-                    argument,
-                    function,
-                    target,
-                } => {}
+                } => {
+                    let mono_func = MonomorphisedFunction {
+                        func: name.clone(),
+                        mono: MonomorphisationParameters {
+                            type_parameters: type_variables.clone(),
+                        },
+                        curry_steps: curry_steps.clone(),
+                        direct: true,
+                    };
+                    let func = codegen.module.get_function(&mono_func.to_string()).unwrap();
+                    let inner_def = &mir.files[&name.source_file].definitions[&name.name];
+                    let args = curried_arguments
+                        .iter()
+                        .enumerate()
+                        .map(|(i, rvalue)| {
+                            let rvalue_info = &inner_def.local_variable_names
+                                [&LocalVariableName::Argument(ArgumentIndex(i as u64))];
+                            let rvalue_ty = replace_type_variables(
+                                rvalue_info.ty.clone(),
+                                &inner_def.type_variables,
+                                type_variables,
+                            );
+                            let ptr =
+                                get_pointer_to_rvalue(codegen, reprs, &locals, &rvalue_ty, rvalue);
+                            codegen.builder.build_load(ptr, &format!("arg{}", i))
+                        })
+                        .collect::<Vec<_>>();
+
+                    if let Some(return_type) = func.get_type().get_return_type() {
+                        let target_value = codegen
+                            .builder
+                            .build_alloca(return_type, &target.to_string());
+                        locals.insert(*target, target_value);
+                        let call_site_value =
+                            codegen
+                                .builder
+                                .build_call(func, &args, &format!("{}_call", target));
+                        if let Some(call_site_value) = call_site_value.try_as_basic_value().left() {
+                            codegen.builder.build_store(target_value, call_site_value);
+                        }
+                    } else {
+                        codegen.builder.build_call(func, &args, &target.to_string());
+                    }
+                }
+                StatementKind::ApplyFunctionObject { .. } => {
+                    // Remove this and just have the "invoke function object" statement?
+                    unimplemented!();
+                }
                 StatementKind::InvokeFunctionObject {
                     func_object,
                     target,
                     additional_arguments,
-                } => {}
+                    return_type,
+                    additional_argument_types,
+                } => {
+                    /*let func_object_ptr = get_pointer_to_rvalue(
+                        codegen,
+                        reprs,
+                        &locals,
+                        &Type::Primitive(quill_type::PrimitiveType::Unit),
+                        func_object,
+                    );
+                    // Get the first element of this function object, which is the function pointer.
+                    let fptr_raw = codegen
+                        .builder
+                        .build_struct_gep(func_object_ptr, 0, "fptr_raw")
+                        .unwrap();
+                    let return_ty = reprs.repr(return_type.clone()).map(|repr| repr.llvm_type);
+                    let arg_types = additional_argument_types
+                        .iter()
+                        .filter_map(|ty| reprs.repr(ty.clone()))
+                        .map(|repr| repr.llvm_type)
+                        .collect::<Vec<_>>();
+                    let func_ty = match return_ty {
+                        Some(BasicTypeEnum::ArrayType(v)) => v.fn_type(&arg_types, false),
+                        Some(BasicTypeEnum::FloatType(v)) => v.fn_type(&arg_types, false),
+                        Some(BasicTypeEnum::IntType(v)) => v.fn_type(&arg_types, false),
+                        Some(BasicTypeEnum::PointerType(v)) => v.fn_type(&arg_types, false),
+                        Some(BasicTypeEnum::StructType(v)) => v.fn_type(&arg_types, false),
+                        Some(BasicTypeEnum::VectorType(v)) => v.fn_type(&arg_types, false),
+                        None => codegen.context.void_type().fn_type(&arg_types, false),
+                    };
+                    //let fptr = codegen.builder.build_bitcast(fptr_raw, func_ty, "fptr");*/
+                }
                 StatementKind::Drop { variable } => {}
                 StatementKind::Free { variable } => {}
                 StatementKind::ConstructData {
@@ -371,6 +445,7 @@ fn create_real_func_body<'ctx>(
     blocks[&def.entry_point]
 }
 
+/// TODO: rvalue_ty is not properly used.
 fn get_pointer_to_rvalue<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &Representations<'_, 'ctx>,

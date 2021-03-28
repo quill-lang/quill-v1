@@ -202,6 +202,7 @@ fn check_ownership_walk(
                 argument,
                 function,
                 target,
+                ..
             } => {
                 make_rvalue_used(
                     source_file,

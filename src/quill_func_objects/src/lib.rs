@@ -82,6 +82,8 @@ fn convert_stmt(stmt: Statement, arities: &HashMap<QualifiedName, u64>) -> Vec<S
             argument,
             function,
             target,
+            return_type,
+            argument_type,
         } => {
             // In this step, the function is always going to be a function object.
             // We should now execute it with the InvokeFunctionObject instruction, because at this point of compilation,
@@ -93,6 +95,8 @@ fn convert_stmt(stmt: Statement, arities: &HashMap<QualifiedName, u64>) -> Vec<S
                     func_object: function,
                     target,
                     additional_arguments: vec![argument],
+                    return_type,
+                    additional_argument_types: vec![argument_type],
                 },
             }]
         }
