@@ -10,7 +10,7 @@ use quill_mir::{
     ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionM, LocalVariableName, Operand,
     PlaceSegment, ProjectMIR, Rvalue, StatementKind, TerminatorKind,
 };
-use quill_type::Type;
+use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
 
 use crate::{
@@ -303,24 +303,31 @@ fn create_real_func_body<'ctx>(
                     return_type,
                     additional_argument_types,
                 } => {
-                    /*let func_object_ptr = get_pointer_to_rvalue(
+                    let func_object_ptr = get_pointer_to_rvalue(
                         codegen,
                         reprs,
                         &locals,
                         &Type::Primitive(quill_type::PrimitiveType::Unit),
                         func_object,
                     );
+                    let func_object_ptr = codegen
+                        .builder
+                        .build_load(func_object_ptr, "fobj_loaded")
+                        .into_pointer_value();
                     // Get the first element of this function object, which is the function pointer.
                     let fptr_raw = codegen
                         .builder
-                        .build_struct_gep(func_object_ptr, 0, "fptr_raw")
+                        .build_struct_gep(func_object_ptr, 0, "fptr_raw_ptr")
                         .unwrap();
+                    let fptr_raw = codegen.builder.build_load(fptr_raw, "fptr_raw");
                     let return_ty = reprs.repr(return_type.clone()).map(|repr| repr.llvm_type);
-                    let arg_types = additional_argument_types
-                        .iter()
-                        .filter_map(|ty| reprs.repr(ty.clone()))
-                        .map(|repr| repr.llvm_type)
-                        .collect::<Vec<_>>();
+                    let mut arg_types = vec![reprs.general_func_obj_ty.llvm_type];
+                    arg_types.extend(
+                        additional_argument_types
+                            .iter()
+                            .filter_map(|ty| reprs.repr(ty.clone()))
+                            .map(|repr| repr.llvm_type),
+                    );
                     let func_ty = match return_ty {
                         Some(BasicTypeEnum::ArrayType(v)) => v.fn_type(&arg_types, false),
                         Some(BasicTypeEnum::FloatType(v)) => v.fn_type(&arg_types, false),
@@ -330,7 +337,47 @@ fn create_real_func_body<'ctx>(
                         Some(BasicTypeEnum::VectorType(v)) => v.fn_type(&arg_types, false),
                         None => codegen.context.void_type().fn_type(&arg_types, false),
                     };
-                    //let fptr = codegen.builder.build_bitcast(fptr_raw, func_ty, "fptr");*/
+                    let fptr = codegen
+                        .builder
+                        .build_bitcast(fptr_raw, func_ty.ptr_type(AddressSpace::Generic), "fptr")
+                        .into_pointer_value();
+
+                    let mut args = vec![codegen.builder.build_bitcast(
+                        func_object_ptr,
+                        reprs.general_func_obj_ty.llvm_type,
+                        "fobj_bitcast",
+                    )];
+                    for (i, arg) in additional_arguments.iter().enumerate() {
+                        args.push(codegen.builder.build_load(
+                            get_pointer_to_rvalue(
+                                codegen,
+                                reprs,
+                                &locals,
+                                &Type::Primitive(PrimitiveType::Unit),
+                                arg,
+                            ),
+                            &format!("arg{}", i),
+                        ))
+                    }
+
+                    println!("Calling {:?}", fptr);
+                    println!("With {:?}", args);
+
+                    if let Some(return_type) = return_ty {
+                        let target_value = codegen
+                            .builder
+                            .build_alloca(return_type, &target.to_string());
+                        locals.insert(*target, target_value);
+                        let call_site_value =
+                            codegen
+                                .builder
+                                .build_call(fptr, &args, &format!("{}_call", target));
+                        if let Some(call_site_value) = call_site_value.try_as_basic_value().left() {
+                            codegen.builder.build_store(target_value, call_site_value);
+                        }
+                    } else {
+                        codegen.builder.build_call(fptr, &args, &target.to_string());
+                    }
                 }
                 StatementKind::Drop { variable } => {}
                 StatementKind::Free { variable } => {}

@@ -693,7 +693,7 @@ pub struct Representations<'a, 'ctx> {
     enums: HashMap<MonomorphisedType, EnumRepresentation<'ctx>>,
     func_objects: HashMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
     /// Use this type for a general function object that you don't know the type of.
-    general_func_obj_ty: AnyTypeRepresentation<'ctx>,
+    pub general_func_obj_ty: AnyTypeRepresentation<'ctx>,
 }
 
 #[derive(Clone, Copy)]
