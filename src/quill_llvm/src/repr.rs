@@ -433,6 +433,8 @@ pub struct EnumRepresentation<'ctx> {
     /// Maps variant names to data representations of the enum variants.
     /// If a discriminant is required in the data representation, it will have field name `.discriminant`.
     pub variants: HashMap<String, DataRepresentation<'ctx>>,
+    /// The discriminant values associated with each variant, if there is a discriminant.
+    pub variant_discriminants: HashMap<String, u64>,
 }
 
 impl<'ctx> EnumRepresentation<'ctx> {
@@ -468,6 +470,23 @@ impl<'ctx> EnumRepresentation<'ctx> {
             .get(variant)
             .unwrap()
             .store(codegen, ptr, value, field_name);
+    }
+
+    /// Assigns the discriminant of this enum to represent the given variant.
+    pub fn store_discriminant(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        variant: &str,
+    ) {
+        if let Some(discriminant) = self.variant_discriminants.get(variant) {
+            self.variants[variant].store(
+                codegen,
+                ptr,
+                codegen.context.i64_type().const_int(*discriminant, false),
+                ".discriminant",
+            );
+        }
     }
 }
 
@@ -648,6 +667,13 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
         let llvm_ty = codegen.context.opaque_struct_type(&mono.to_string());
         llvm_ty.set_body(&llvm_field_types, false);
 
+        let variant_discriminants = ty
+            .variants
+            .iter()
+            .enumerate()
+            .map(|(i, variant)| (variant.name.name.clone(), i as u64))
+            .collect::<HashMap<_, _>>();
+
         EnumRepresentation {
             llvm_repr: LLVMRepresentation {
                 ty: llvm_ty,
@@ -655,6 +681,7 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
                 alignment,
             },
             variants,
+            variant_discriminants,
         }
     }
 }

@@ -244,6 +244,8 @@ fn create_real_func_body<'ctx>(
                                 },
                             })
                             .unwrap();
+                            // Assign the discriminant.
+                            enum_repr.store_discriminant(codegen, target_value, variant);
                         let variant_repr = &enum_repr.variants[variant];
                         for (field_name, field_rvalue) in fields {
                             if variant_repr.has_field(field_name) {
