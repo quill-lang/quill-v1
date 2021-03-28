@@ -6,8 +6,8 @@ use inkwell::{
     AddressSpace,
 };
 use quill_mir::{
-    BasicBlockId, ControlFlowGraph, DefinitionM, LocalVariableName, Operand, PlaceSegment,
-    ProjectMIR, Rvalue, StatementKind, TerminatorKind,
+    ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionM, LocalVariableName, Operand,
+    PlaceSegment, ProjectMIR, Rvalue, StatementKind, TerminatorKind,
 };
 use quill_type::Type;
 use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
@@ -35,7 +35,7 @@ pub fn compile_function<'ctx>(
         if func.curry_steps.is_empty() {
             // We need to now create the real function body.
             let block = codegen.context.append_basic_block(func_value, "entry");
-            let contents_block = create_real_func_body(codegen, reprs, func, def, func_value);
+            let contents_block = create_real_func_body(codegen, reprs, mir, func, def, func_value);
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
@@ -136,6 +136,7 @@ pub fn compile_function<'ctx>(
 fn create_real_func_body<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &Representations<'_, 'ctx>,
+    mir: &ProjectMIR,
     func: MonomorphisedFunction,
     def: &DefinitionM,
     func_value: FunctionValue<'ctx>,
@@ -195,7 +196,51 @@ fn create_real_func_body<'ctx>(
                     type_variables,
                     target,
                     arguments,
-                } => {}
+                } => {
+                    let mono_func = MonomorphisedFunction {
+                        func: name.clone(),
+                        mono: MonomorphisationParameters {
+                            type_parameters: type_variables.clone(),
+                        },
+                        curry_steps: Vec::new(),
+                        direct: true,
+                    };
+                    let func = codegen.module.get_function(&mono_func.to_string()).unwrap();
+                    let inner_def = &mir.files[&name.source_file].definitions[&name.name];
+                    let args = arguments
+                        .iter()
+                        .enumerate()
+                        .map(|(i, rvalue)| {
+                            let rvalue_info = &inner_def.local_variable_names
+                                [&LocalVariableName::Argument(ArgumentIndex(i as u64))];
+                            let rvalue_ty = replace_type_variables(
+                                rvalue_info.ty.clone(),
+                                &inner_def.type_variables,
+                                type_variables,
+                            );
+                            let ptr =
+                                get_pointer_to_rvalue(codegen, reprs, &locals, &rvalue_ty, rvalue);
+                            codegen.builder.build_load(ptr, &format!("arg{}", i))
+                        })
+                        .collect::<Vec<_>>();
+
+                    let target_ty = def.local_variable_names[target].ty.clone();
+                    if let Some(target_repr) = reprs.repr(target_ty.clone()) {
+                        let target_value = codegen
+                            .builder
+                            .build_alloca(target_repr.llvm_type, &target.to_string());
+                        locals.insert(*target, target_value);
+                        let call_site_value =
+                            codegen
+                                .builder
+                                .build_call(func, &args, &format!("{}_call", target));
+                        if let Some(call_site_value) = call_site_value.try_as_basic_value().left() {
+                            codegen.builder.build_store(target_value, call_site_value);
+                        }
+                    } else {
+                        codegen.builder.build_call(func, &args, &target.to_string());
+                    }
+                }
                 StatementKind::ConstructFunctionObject {
                     name,
                     type_variables,
@@ -244,8 +289,8 @@ fn create_real_func_body<'ctx>(
                                 },
                             })
                             .unwrap();
-                            // Assign the discriminant.
-                            enum_repr.store_discriminant(codegen, target_value, variant);
+                        // Assign the discriminant.
+                        enum_repr.store_discriminant(codegen, target_value, variant);
                         let variant_repr = &enum_repr.variants[variant];
                         for (field_name, field_rvalue) in fields {
                             if variant_repr.has_field(field_name) {

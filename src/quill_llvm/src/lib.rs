@@ -108,6 +108,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
 
     let opt = PassManager::<Module>::create(&());
     opt.add_jump_threading_pass();
+    opt.add_promote_memory_to_register_pass();
     opt.add_memcpy_optimize_pass();
     println!("Optimising...");
     opt.run_on(&codegen.module);
