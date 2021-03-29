@@ -9,7 +9,7 @@ use inkwell::{
 };
 use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
-use repr::{Monomorphisation, Representations};
+use repr::{Monomorphisation, MonomorphisationParameters, MonomorphisedFunction, Representations};
 use std::{
     error::Error,
     fmt::{Debug, Display},
@@ -72,6 +72,35 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
         compile_function(&codegen, &reprs, index, mir, func.clone());
     }
 
+    // Now introduce the main function.
+    let main_func =
+        codegen
+            .module
+            .add_function("main", codegen.context.i32_type().fn_type(&[], false), None);
+    let main_block = codegen.context.append_basic_block(main_func, "entry");
+    codegen.builder.position_at_end(main_block);
+    codegen.builder.build_call(
+        codegen
+            .module
+            .get_function(
+                &MonomorphisedFunction {
+                    func: mir.entry_point.clone(),
+                    curry_steps: Vec::new(),
+                    mono: MonomorphisationParameters {
+                        type_parameters: Vec::new(),
+                    },
+                    direct: true,
+                }
+                .to_string(),
+            )
+            .unwrap(),
+        &[],
+        "call_main",
+    );
+    codegen
+        .builder
+        .build_return(Some(&codegen.context.i32_type().const_int(0, false)));
+
     let pm = PassManager::<Module>::create(&());
     pm.add_verifier_pass();
     println!("Verifying...");
@@ -112,7 +141,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     opt.add_memcpy_optimize_pass();
     println!("Optimising...");
     opt.run_on(&codegen.module);
-    println!("Done.");
+    println!("Writing bitcode, assembly, and object file...");
 
     codegen.module.write_bitcode_to_path(&bc_opt_path);
     let _ = Command::new("llvm-dis")
@@ -129,7 +158,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     // Create a "glue" file to force CMake to use the C linker and actually link libc, instead of whatever it normally does.
     File::create(build_folder.join("glue.c")).unwrap();
 
-    // println!("Configuring CMake...");
+    println!("Configuring CMake...");
 
     {
         use std::io::Write;
@@ -156,7 +185,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
         );
     }
 
-    // println!("Linking...");
+    println!("Linking...");
 
     let cmake_build = Command::new("cmake")
         .arg("--build")
@@ -174,11 +203,12 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
         );
     }
 
-    //println!("Running executable...");
+    println!("Running executable...");
     assert!(run_executable(build_folder.join("bin"))
         .status()
         .unwrap()
         .success());
+    println!("Done!");
 }
 
 fn run_executable(dir: PathBuf) -> Command {

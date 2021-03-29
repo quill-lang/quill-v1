@@ -197,7 +197,6 @@ pub fn compile_function<'ctx>(
             for arg in args_supplied..args_supplied + num_args {
                 let field = format!("field_{}", arg);
                 if fobj_repr.has_field(&field) {
-                    println!("Processing {} at {}", field, arg - args_supplied + 1);
                     fobj_repr.store(
                         codegen,
                         fobj.into_pointer_value(),
@@ -223,11 +222,7 @@ fn create_real_func_body<'ctx>(
     func_value: FunctionValue<'ctx>,
     mut locals: HashMap<LocalVariableName, PointerValue<'ctx>>,
 ) -> BasicBlock<'ctx> {
-    println!("Compiling MIR");
-    println!("{}", def);
     let mut def = monomorphise(reprs, &func, def);
-    println!("Monomorphised:");
-    println!("{}", def);
 
     // Create new LLVM basic blocks for each MIR basic block.
     let blocks = def
