@@ -6,6 +6,7 @@ use inkwell::{
     values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace,
 };
+use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_mir::{
     ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionM, LocalVariableName, Operand,
     PlaceSegment, ProjectMIR, Rvalue, StatementKind, TerminatorKind,
@@ -24,6 +25,7 @@ use crate::{
 pub fn compile_function<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &Representations<'_, 'ctx>,
+    index: &ProjectIndex,
     mir: &ProjectMIR,
     func: MonomorphisedFunction,
 ) {
@@ -36,7 +38,29 @@ pub fn compile_function<'ctx>(
         if func.curry_steps.is_empty() {
             // We need to now create the real function body.
             let block = codegen.context.append_basic_block(func_value, "entry");
-            let contents_block = create_real_func_body(codegen, reprs, mir, func, def, func_value);
+            codegen.builder.position_at_end(block);
+            let mut locals = HashMap::new();
+            for arg in 0..def.arity {
+                if reprs
+                    .repr(replace_type_variables(
+                        def.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(arg))]
+                            .ty
+                            .clone(),
+                        &def.type_variables,
+                        &func.mono.type_parameters,
+                    ))
+                    .is_some()
+                {
+                    let value = func_value.get_nth_param(arg as u32).unwrap();
+                    let arg_ptr = codegen
+                        .builder
+                        .build_alloca(value.get_type(), &format!("param{}", arg));
+                    codegen.builder.build_store(arg_ptr, value);
+                    locals.insert(LocalVariableName::Argument(ArgumentIndex(arg)), arg_ptr);
+                }
+            }
+            let contents_block =
+                create_real_func_body(codegen, reprs, index, mir, func, def, func_value, locals);
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
@@ -90,6 +114,65 @@ pub fn compile_function<'ctx>(
         // An indirect function contains the real function body if there is only one step of curring left.
         if func.curry_steps.len() == 1 {
             // We need to create the real function body.
+            let block = codegen.context.append_basic_block(func_value, "entry");
+            codegen.builder.position_at_end(block);
+            let mut locals = HashMap::new();
+
+            // Store the arguments given in the function pointer.
+            let fobj_repr = reprs.get_fobj(&func.function_object_descriptor()).unwrap();
+            let mem = func_value.get_first_param().unwrap();
+            let fobj = codegen
+                .builder
+                .build_bitcast(
+                    mem,
+                    fobj_repr
+                        .llvm_repr
+                        .as_ref()
+                        .unwrap()
+                        .ty
+                        .ptr_type(AddressSpace::Generic),
+                    "fobj",
+                )
+                .into_pointer_value();
+            for arg in 0..def.arity - func.curry_steps[0] {
+                let arg_ptr = fobj_repr.load(codegen, fobj, &format!("field_{}", arg));
+                if let Some(arg_ptr) = arg_ptr {
+                    locals.insert(LocalVariableName::Argument(ArgumentIndex(arg)), arg_ptr);
+                }
+            }
+
+            // Store the arguments given in the function itself.
+            for arg in 0..func.curry_steps[0] {
+                if reprs
+                    .repr(replace_type_variables(
+                        def.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(
+                            def.arity - func.curry_steps[0] + arg,
+                        ))]
+                            .ty
+                            .clone(),
+                        &def.type_variables,
+                        &func.mono.type_parameters,
+                    ))
+                    .is_some()
+                {
+                    let value = func_value.get_nth_param(arg as u32 + 1).unwrap();
+                    let arg_ptr = codegen
+                        .builder
+                        .build_alloca(value.get_type(), &format!("param{}", arg));
+                    codegen.builder.build_store(arg_ptr, value);
+                    locals.insert(
+                        LocalVariableName::Argument(ArgumentIndex(
+                            def.arity - func.curry_steps[0] + arg,
+                        )),
+                        arg_ptr,
+                    );
+                }
+            }
+
+            let contents_block =
+                create_real_func_body(codegen, reprs, index, mir, func, def, func_value, locals);
+            codegen.builder.position_at_end(block);
+            codegen.builder.build_unconditional_branch(contents_block);
         } else {
             // We need to update this function object to point to the next curry step.
             let block = codegen.context.append_basic_block(func_value, "entry");
@@ -137,14 +220,16 @@ pub fn compile_function<'ctx>(
 fn create_real_func_body<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &Representations<'_, 'ctx>,
+    index: &ProjectIndex,
     mir: &ProjectMIR,
     func: MonomorphisedFunction,
     def: &DefinitionM,
     func_value: FunctionValue<'ctx>,
+    mut locals: HashMap<LocalVariableName, PointerValue<'ctx>>,
 ) -> BasicBlock<'ctx> {
     println!("Compiling MIR");
     println!("{}", def);
-    let def = monomorphise(reprs, &func, def);
+    let mut def = monomorphise(reprs, &func, def);
     println!("Monomorphised:");
     println!("{}", def);
 
@@ -161,10 +246,8 @@ fn create_real_func_body<'ctx>(
         })
         .collect::<HashMap<_, _>>();
 
-    let mut locals = HashMap::new();
-
     // Compile each MIR basic block into LLVM IR.
-    for (id, block) in def.control_flow_graph.basic_blocks {
+    for (id, block) in std::mem::take(&mut def.control_flow_graph.basic_blocks) {
         codegen.builder.position_at_end(blocks[&id]);
 
         // Handle the statements.
@@ -183,7 +266,7 @@ fn create_real_func_body<'ctx>(
                         .build_memcpy(
                             target_value,
                             target_repr.alignment,
-                            get_pointer_to_rvalue(codegen, reprs, &locals, &target_ty, source),
+                            get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, source),
                             target_repr.alignment,
                             codegen
                                 .context
@@ -207,20 +290,12 @@ fn create_real_func_body<'ctx>(
                         direct: true,
                     };
                     let func = codegen.module.get_function(&mono_func.to_string()).unwrap();
-                    let inner_def = &mir.files[&name.source_file].definitions[&name.name];
                     let args = arguments
                         .iter()
                         .enumerate()
                         .map(|(i, rvalue)| {
-                            let rvalue_info = &inner_def.local_variable_names
-                                [&LocalVariableName::Argument(ArgumentIndex(i as u64))];
-                            let rvalue_ty = replace_type_variables(
-                                rvalue_info.ty.clone(),
-                                &inner_def.type_variables,
-                                type_variables,
-                            );
                             let ptr =
-                                get_pointer_to_rvalue(codegen, reprs, &locals, &rvalue_ty, rvalue);
+                                get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, rvalue);
                             codegen.builder.build_load(ptr, &format!("arg{}", i))
                         })
                         .collect::<Vec<_>>();
@@ -258,20 +333,12 @@ fn create_real_func_body<'ctx>(
                         direct: true,
                     };
                     let func = codegen.module.get_function(&mono_func.to_string()).unwrap();
-                    let inner_def = &mir.files[&name.source_file].definitions[&name.name];
                     let args = curried_arguments
                         .iter()
                         .enumerate()
                         .map(|(i, rvalue)| {
-                            let rvalue_info = &inner_def.local_variable_names
-                                [&LocalVariableName::Argument(ArgumentIndex(i as u64))];
-                            let rvalue_ty = replace_type_variables(
-                                rvalue_info.ty.clone(),
-                                &inner_def.type_variables,
-                                type_variables,
-                            );
                             let ptr =
-                                get_pointer_to_rvalue(codegen, reprs, &locals, &rvalue_ty, rvalue);
+                                get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, rvalue);
                             codegen.builder.build_load(ptr, &format!("arg{}", i))
                         })
                         .collect::<Vec<_>>();
@@ -303,13 +370,8 @@ fn create_real_func_body<'ctx>(
                     return_type,
                     additional_argument_types,
                 } => {
-                    let func_object_ptr = get_pointer_to_rvalue(
-                        codegen,
-                        reprs,
-                        &locals,
-                        &Type::Primitive(quill_type::PrimitiveType::Unit),
-                        func_object,
-                    );
+                    let func_object_ptr =
+                        get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, func_object);
                     let func_object_ptr = codegen
                         .builder
                         .build_load(func_object_ptr, "fobj_loaded")
@@ -349,19 +411,10 @@ fn create_real_func_body<'ctx>(
                     )];
                     for (i, arg) in additional_arguments.iter().enumerate() {
                         args.push(codegen.builder.build_load(
-                            get_pointer_to_rvalue(
-                                codegen,
-                                reprs,
-                                &locals,
-                                &Type::Primitive(PrimitiveType::Unit),
-                                arg,
-                            ),
+                            get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, arg),
                             &format!("arg{}", i),
                         ))
                     }
-
-                    println!("Calling {:?}", fptr);
-                    println!("With {:?}", args);
 
                     if let Some(return_type) = return_ty {
                         let target_value = codegen
@@ -420,9 +473,10 @@ fn create_real_func_body<'ctx>(
                                     target_value,
                                     get_pointer_to_rvalue(
                                         codegen,
+                                        index,
                                         reprs,
                                         &locals,
-                                        &target_ty,
+                                        &def,
                                         field_rvalue,
                                     ),
                                     field_name,
@@ -445,9 +499,10 @@ fn create_real_func_body<'ctx>(
                                     target_value,
                                     get_pointer_to_rvalue(
                                         codegen,
+                                        index,
                                         reprs,
                                         &locals,
-                                        &target_ty,
+                                        &def,
                                         field_rvalue,
                                     ),
                                     field_name,
@@ -492,23 +547,46 @@ fn create_real_func_body<'ctx>(
     blocks[&def.entry_point]
 }
 
-/// TODO: rvalue_ty is not properly used.
 fn get_pointer_to_rvalue<'ctx>(
     codegen: &CodeGenContext<'ctx>,
+    index: &ProjectIndex,
     reprs: &Representations<'_, 'ctx>,
     locals: &HashMap<LocalVariableName, PointerValue<'ctx>>,
-    rvalue_ty: &Type,
+    def: &DefinitionM,
     rvalue: &Rvalue,
 ) -> PointerValue<'ctx> {
     match rvalue {
         Rvalue::Use(Operand::Move(place)) | Rvalue::Use(Operand::Copy(place)) => {
             let mut ptr = locals[&place.local];
+            let mut rvalue_ty = def.local_variable_names[&place.local].ty.clone();
 
             for segment in place.projection.clone() {
                 match segment {
                     PlaceSegment::DataField { field } => {
                         // rvalue_ty is a data type.
-                        if let Type::Named { name, parameters } = rvalue_ty.clone() {
+                        if let Type::Named { name, parameters } = rvalue_ty {
+                            let decl = &index[&name.source_file].types[&name.name];
+                            if let TypeDeclarationTypeI::Data(datai) = &decl.decl_type {
+                                rvalue_ty = datai
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .find_map(|(field_name, field_type)| {
+                                        if field_name.name == field {
+                                            Some(replace_type_variables(
+                                                field_type.clone(),
+                                                &datai.type_params,
+                                                &parameters,
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap();
+                            } else {
+                                unreachable!()
+                            }
+
                             let data = reprs
                                 .get_data(&MonomorphisedType {
                                     name,
@@ -524,7 +602,33 @@ fn get_pointer_to_rvalue<'ctx>(
                     }
                     PlaceSegment::EnumField { variant, field } => {
                         // rvalue_ty is an enum type.
-                        if let Type::Named { name, parameters } = rvalue_ty.clone() {
+                        if let Type::Named { name, parameters } = rvalue_ty {
+                            let decl = &index[&name.source_file].types[&name.name];
+                            if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
+                                rvalue_ty = enumi
+                                    .variants
+                                    .iter()
+                                    .find(|the_variant| the_variant.name.name == variant)
+                                    .unwrap()
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .find_map(|(field_name, field_type)| {
+                                        if field_name.name == field {
+                                            Some(replace_type_variables(
+                                                field_type.clone(),
+                                                &enumi.type_params,
+                                                &parameters,
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap();
+                            } else {
+                                unreachable!()
+                            }
+
                             let the_enum = reprs
                                 .get_enum(&MonomorphisedType {
                                     name,

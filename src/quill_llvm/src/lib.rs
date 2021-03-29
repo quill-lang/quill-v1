@@ -69,7 +69,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
         func.add_llvm_type(&codegen, &mut reprs, mir);
     }
     for func in &mono.functions {
-        compile_function(&codegen, &reprs, mir, func.clone());
+        compile_function(&codegen, &reprs, index, mir, func.clone());
     }
 
     let pm = PassManager::<Module>::create(&());
