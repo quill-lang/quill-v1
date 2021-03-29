@@ -3,23 +3,20 @@ use std::collections::HashMap;
 use inkwell::{
     basic_block::BasicBlock,
     types::BasicTypeEnum,
-    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
+    values::{FunctionValue, PointerValue},
     AddressSpace,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_mir::{
-    ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionM, LocalVariableName, Operand,
-    PlaceSegment, ProjectMIR, Rvalue, StatementKind, TerminatorKind,
+    ArgumentIndex, DefinitionM, LocalVariableName, Operand, PlaceSegment, ProjectMIR, Rvalue,
+    StatementKind, TerminatorKind,
 };
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
 
 use crate::{
     codegen::CodeGenContext,
-    repr::{
-        AnyTypeRepresentation, FunctionObjectDescriptor, MonomorphisationParameters,
-        MonomorphisedFunction, MonomorphisedType, Representations,
-    },
+    repr::{MonomorphisationParameters, MonomorphisedFunction, MonomorphisedType, Representations},
 };
 
 pub fn compile_function<'ctx>(
@@ -60,7 +57,7 @@ pub fn compile_function<'ctx>(
                 }
             }
             let contents_block =
-                create_real_func_body(codegen, reprs, index, mir, func, def, func_value, locals);
+                create_real_func_body(codegen, reprs, index, func, def, func_value, locals);
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
@@ -170,7 +167,7 @@ pub fn compile_function<'ctx>(
             }
 
             let contents_block =
-                create_real_func_body(codegen, reprs, index, mir, func, def, func_value, locals);
+                create_real_func_body(codegen, reprs, index, func, def, func_value, locals);
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
@@ -221,7 +218,6 @@ fn create_real_func_body<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &Representations<'_, 'ctx>,
     index: &ProjectIndex,
-    mir: &ProjectMIR,
     func: MonomorphisedFunction,
     def: &DefinitionM,
     func_value: FunctionValue<'ctx>,
@@ -522,15 +518,58 @@ fn create_real_func_body<'ctx>(
                     .builder
                     .build_unconditional_branch(blocks[&other_id]);
             }
-            TerminatorKind::SwitchDiscriminator {
+            TerminatorKind::SwitchDiscriminant {
                 enum_name,
+                enum_parameters,
                 enum_place,
                 cases,
             } => {
-                // TODO make this work
+                let discriminant_ptr = get_pointer_to_rvalue(
+                    codegen,
+                    index,
+                    reprs,
+                    &locals,
+                    &def,
+                    &Rvalue::Use(Operand::Copy(
+                        enum_place.clone().then(PlaceSegment::EnumDiscriminant),
+                    )),
+                );
+                let discriminant = codegen
+                    .builder
+                    .build_load(discriminant_ptr, "discriminant")
+                    .into_int_value();
+                let else_block = blocks[cases.values().next().unwrap()];
+                let enum_repr = reprs
+                    .get_enum(&MonomorphisedType {
+                        name: enum_name.clone(),
+                        mono: MonomorphisationParameters {
+                            type_parameters: enum_parameters
+                                .iter()
+                                .map(|ty| {
+                                    replace_type_variables(
+                                        ty.clone(),
+                                        &def.type_variables,
+                                        &func.mono.type_parameters,
+                                    )
+                                })
+                                .collect(),
+                        },
+                    })
+                    .unwrap();
+                let cases = cases
+                    .iter()
+                    .map(|(name, block_id)| {
+                        let discriminant = enum_repr.variant_discriminants[name];
+                        let block = blocks[block_id];
+                        (
+                            codegen.context.i64_type().const_int(discriminant, false),
+                            block,
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 codegen
                     .builder
-                    .build_unconditional_branch(blocks[&cases.iter().next().unwrap().1]);
+                    .build_switch(discriminant, else_block, &cases);
             }
             TerminatorKind::Invalid => unreachable!(),
             TerminatorKind::Return { value } => {
@@ -638,6 +677,23 @@ fn get_pointer_to_rvalue<'ctx>(
                                 })
                                 .unwrap();
                             ptr = the_enum.load(codegen, ptr, &variant, &field).unwrap();
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    PlaceSegment::EnumDiscriminant => {
+                        // rvalue_ty is an enum type.
+                        if let Type::Named { name, parameters } = rvalue_ty {
+                            rvalue_ty = Type::Primitive(PrimitiveType::Int);
+                            let the_enum = reprs
+                                .get_enum(&MonomorphisedType {
+                                    name,
+                                    mono: MonomorphisationParameters {
+                                        type_parameters: parameters,
+                                    },
+                                })
+                                .unwrap();
+                            ptr = the_enum.get_discriminant(codegen, ptr);
                         } else {
                             unreachable!()
                         }

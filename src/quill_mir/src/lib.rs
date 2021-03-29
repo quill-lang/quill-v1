@@ -265,7 +265,7 @@ impl ControlFlowGraph {
                 TerminatorKind::Goto(target) => {
                     block_target_blocks.insert(*target);
                 }
-                TerminatorKind::SwitchDiscriminator {
+                TerminatorKind::SwitchDiscriminant {
                     enum_place, cases, ..
                 } => {
                     block_values_used.insert(enum_place.local);
@@ -343,7 +343,7 @@ impl ControlFlowGraph {
                 TerminatorKind::Goto(target) => {
                     *target = block_id_map[&target];
                 }
-                TerminatorKind::SwitchDiscriminator { cases, .. } => {
+                TerminatorKind::SwitchDiscriminant { cases, .. } => {
                     for target in cases.values_mut() {
                         *target = block_id_map[&target];
                     }
@@ -629,6 +629,7 @@ impl Place {
 pub enum PlaceSegment {
     DataField { field: String },
     EnumField { variant: String, field: String },
+    EnumDiscriminant,
 }
 
 impl Display for PlaceSegment {
@@ -636,6 +637,7 @@ impl Display for PlaceSegment {
         match self {
             PlaceSegment::DataField { field } => write!(f, ".{}", field),
             PlaceSegment::EnumField { variant, field } => write!(f, ".<{}>.{}", variant, field),
+            PlaceSegment::EnumDiscriminant => write!(f, ".discriminant"),
         }
     }
 }
@@ -691,9 +693,11 @@ pub enum TerminatorKind {
     /// Jump to another basic block unconditionally.
     Goto(BasicBlockId),
     /// Works out which variant of a enum type a given local variable is.
-    SwitchDiscriminator {
+    SwitchDiscriminant {
         /// What enum are we switching on?
         enum_name: QualifiedName,
+        /// What type parameters did this enum have?
+        enum_parameters: Vec<Type>,
         /// Where is this enum stored?
         enum_place: Place,
         /// Maps the names of enum discriminants to the basic block ID to jump to.
@@ -711,7 +715,7 @@ impl Display for TerminatorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TerminatorKind::Goto(target) => write!(f, "goto {}", target),
-            TerminatorKind::SwitchDiscriminator {
+            TerminatorKind::SwitchDiscriminant {
                 enum_name,
                 enum_place,
                 cases,
@@ -932,6 +936,7 @@ enum PatternMismatchReason {
     EnumDiscriminant {
         /// What was the name of the enum we want to pattern match?
         enum_name: QualifiedName,
+        enum_parameters: Vec<Type>,
         /// Maps enum discriminant names to the indices of the patterns that are matched by this discriminant.
         /// If a case is valid for any discriminant, it is put in *every* case.
         cases: HashMap<String, Vec<usize>>,
@@ -1005,8 +1010,8 @@ fn first_difference(
             // Let's store which patterns require which discriminants.
             // First, work out the list of all discriminants for this enum.
 
-            let enum_name = if let Type::Named { name, .. } = ty {
-                name
+            let (enum_name, enum_parameters) = if let Type::Named { name, parameters } = ty {
+                (name, parameters)
             } else {
                 unreachable!()
             };
@@ -1040,7 +1045,11 @@ fn first_difference(
 
             Some(PatternMismatch {
                 place: var,
-                reason: PatternMismatchReason::EnumDiscriminant { enum_name, cases },
+                reason: PatternMismatchReason::EnumDiscriminant {
+                    enum_name,
+                    enum_parameters,
+                    cases,
+                },
             })
         } else {
             // We do not need to match on the enum discriminator, so we now want to consider the first difference *inside* each pattern.
@@ -1235,6 +1244,7 @@ fn reference_discriminant(
                     pattern
                 }
             }
+            PlaceSegment::EnumDiscriminant => Pattern::Unknown(pattern.range()),
         }
     }
 }
@@ -1258,7 +1268,11 @@ fn perform_match_function(
         let diff_reason = diff.reason;
         let diff_place = diff.place;
         match diff_reason {
-            PatternMismatchReason::EnumDiscriminant { enum_name, cases } => {
+            PatternMismatchReason::EnumDiscriminant {
+                enum_name,
+                enum_parameters,
+                cases,
+            } => {
                 // Create a match operation for each enum discriminant case.
                 // If a pattern for a given case does not reference the enum's discriminant, we'll
                 // replace it with a dummy pattern that references the discriminant we just matched.
@@ -1342,8 +1356,9 @@ fn perform_match_function(
                     statements: Vec::new(),
                     terminator: Terminator {
                         range,
-                        kind: TerminatorKind::SwitchDiscriminator {
+                        kind: TerminatorKind::SwitchDiscriminant {
                             enum_name,
+                            enum_parameters,
                             enum_place: diff_place,
                             cases: cases_matched,
                         },

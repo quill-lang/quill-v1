@@ -472,6 +472,18 @@ impl<'ctx> EnumRepresentation<'ctx> {
             .store(codegen, ptr, value, field_name);
     }
 
+    /// Gets the discriminant of this enum.
+    pub fn get_discriminant(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+    ) -> PointerValue<'ctx> {
+        codegen
+            .builder
+            .build_struct_gep(ptr, 0, "discriminant_ptr")
+            .unwrap()
+    }
+
     /// Assigns the discriminant of this enum to represent the given variant.
     pub fn store_discriminant(
         &self,

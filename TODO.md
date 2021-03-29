@@ -6,3 +6,4 @@
 - Make data structures use heap allocation when Tarjan's algorithm finds a cycle.
 - Use `TargetData` to compute size/alignment of data.
 - Use LLVM's malloc instead of libc's.
+- Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.

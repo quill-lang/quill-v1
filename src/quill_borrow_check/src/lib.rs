@@ -261,7 +261,7 @@ fn check_ownership_walk(
             let target = *target;
             check_ownership_walk(source_file, def, messages, statuses, target)
         }
-        TerminatorKind::SwitchDiscriminator {
+        TerminatorKind::SwitchDiscriminant {
             enum_place, cases, ..
         } => {
             // Ensure that the enum place is OK to use.
