@@ -15,6 +15,7 @@ use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
 use quill_parser::NameP;
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{
+    replace_type_variables,
     type_check::{
         Definition, Expression, ExpressionContentsGeneric, ImmediateValue, Pattern, SourceFileHIR,
     },
@@ -851,6 +852,7 @@ fn create_cfg(
                 .filter_map(|(i, (arg_pattern, arg_type))| {
                     bind_pattern_variables(
                         ctx,
+                        project_index,
                         Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
                         arg_pattern,
                         arg_type.clone(),
@@ -1462,6 +1464,7 @@ fn generate_chain_with_terminator(
 /// If no variables need to be initialised, returns None.
 fn bind_pattern_variables(
     ctx: &mut DefinitionTranslationContext,
+    index: &ProjectIndex,
     value: Place,
     pat: &Pattern,
     ty: Type,
@@ -1493,11 +1496,24 @@ fn bind_pattern_variables(
         }
         Pattern::TypeConstructor { type_ctor, fields } => {
             // Bind each field individually, then chain all the blocks together.
+            // First work out the type parameters used for this type.
+            let decl = &index[&type_ctor.data_type.source_file].types[&type_ctor.data_type.name];
+            let named_type_parameters = match &decl.decl_type {
+                TypeDeclarationTypeI::Data(datai) => &datai.type_params,
+                TypeDeclarationTypeI::Enum(enumi) => &enumi.type_params,
+            };
+            let concrete_type_parameters = if let Type::Named { ref parameters, .. } = ty {
+                parameters
+            } else {
+                unreachable!()
+            };
+
             let blocks = fields
                 .iter()
                 .filter_map(|(field_name, ty, pat)| {
                     bind_pattern_variables(
                         ctx,
+                        index,
                         value
                             .clone()
                             .then(if let Some(variant) = type_ctor.variant.clone() {
@@ -1511,7 +1527,11 @@ fn bind_pattern_variables(
                                 }
                             }),
                         pat,
-                        ty.clone(),
+                        replace_type_variables(
+                            ty.clone(),
+                            named_type_parameters,
+                            concrete_type_parameters,
+                        ),
                     )
                 })
                 .collect::<Vec<_>>();

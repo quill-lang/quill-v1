@@ -42,3 +42,12 @@ pub def or_options: Option[Bool] -> Option[Bool] -> Option[Bool] {
 pub def test_let: unit {
     test_let = let a = 1,
 }
+
+def main: unit {
+    main = (
+        unwrap_or Some { value = unit } block;
+        create_either 104;
+        test_let;
+        unwrap_or False {} (or_options Some { value = True {} } Some { value = False {} });
+    )
+}
