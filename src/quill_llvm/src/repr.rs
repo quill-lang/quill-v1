@@ -707,7 +707,7 @@ pub struct Representations<'a, 'ctx> {
     pub general_func_obj_ty: AnyTypeRepresentation<'ctx>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct AnyTypeRepresentation<'ctx> {
     pub llvm_type: BasicTypeEnum<'ctx>,
     pub size: u32,

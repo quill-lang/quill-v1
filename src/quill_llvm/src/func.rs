@@ -5,8 +5,9 @@ use std::{
 
 use inkwell::{
     basic_block::BasicBlock,
+    module::Linkage,
     types::BasicTypeEnum,
-    values::{FunctionValue, PointerValue},
+    values::{FunctionValue, PointerValue, UnnamedAddress},
     AddressSpace,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
@@ -18,7 +19,7 @@ use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
 
 use crate::{
-    codegen::{self, CodeGenContext},
+    codegen::CodeGenContext,
     repr::{MonomorphisationParameters, MonomorphisedFunction, MonomorphisedType, Representations},
 };
 
@@ -307,7 +308,8 @@ fn create_real_func_body_cfg<'ctx>(
                                 &ctx.locals,
                                 &local_variable_names,
                                 source,
-                            ),
+                            )
+                            .unwrap(),
                             target_repr.alignment,
                             ctx.codegen
                                 .context
@@ -346,7 +348,8 @@ fn create_real_func_body_cfg<'ctx>(
                                 &ctx.locals,
                                 &local_variable_names,
                                 rvalue,
-                            );
+                            )
+                            .unwrap();
                             ctx.codegen.builder.build_load(ptr, &format!("arg{}", i))
                         })
                         .collect::<Vec<_>>();
@@ -405,7 +408,8 @@ fn create_real_func_body_cfg<'ctx>(
                                 &ctx.locals,
                                 &local_variable_names,
                                 rvalue,
-                            );
+                            )
+                            .unwrap();
                             ctx.codegen.builder.build_load(ptr, &format!("arg{}", i))
                         })
                         .collect::<Vec<_>>();
@@ -432,10 +436,6 @@ fn create_real_func_body_cfg<'ctx>(
                             .build_call(func, &args, &target.to_string());
                     }
                 }
-                StatementKind::ApplyFunctionObject { .. } => {
-                    // Remove this and just have the "invoke function object" statement?
-                    unimplemented!();
-                }
                 StatementKind::InvokeFunctionObject {
                     func_object,
                     target,
@@ -454,7 +454,7 @@ fn create_real_func_body_cfg<'ctx>(
                     let func_object_ptr = ctx
                         .codegen
                         .builder
-                        .build_load(func_object_ptr, "fobj_loaded")
+                        .build_load(func_object_ptr.unwrap(), "fobj_loaded")
                         .into_pointer_value();
                     // Get the first element of this function object, which is the function pointer.
                     let fptr_raw = ctx
@@ -495,17 +495,16 @@ fn create_real_func_body_cfg<'ctx>(
                         "fobj_bitcast",
                     )];
                     for (i, arg) in additional_arguments.iter().enumerate() {
-                        args.push(ctx.codegen.builder.build_load(
-                            get_pointer_to_rvalue(
-                                ctx.codegen,
-                                ctx.index,
-                                ctx.reprs,
-                                &ctx.locals,
-                                &local_variable_names,
-                                arg,
-                            ),
-                            &format!("arg{}", i),
-                        ))
+                        if let Some(ptr) = get_pointer_to_rvalue(
+                            ctx.codegen,
+                            ctx.index,
+                            ctx.reprs,
+                            &ctx.locals,
+                            &local_variable_names,
+                            arg,
+                        ) {
+                            args.push(ctx.codegen.builder.build_load(ptr, &format!("arg{}", i)))
+                        }
                     }
 
                     if let Some(return_type) = return_ty {
@@ -578,7 +577,8 @@ fn create_real_func_body_cfg<'ctx>(
                                         &ctx.locals,
                                         &local_variable_names,
                                         field_rvalue,
-                                    ),
+                                    )
+                                    .unwrap(),
                                     field_name,
                                 );
                             }
@@ -605,7 +605,8 @@ fn create_real_func_body_cfg<'ctx>(
                                         &ctx.locals,
                                         &local_variable_names,
                                         field_rvalue,
-                                    ),
+                                    )
+                                    .unwrap(),
                                     field_name,
                                 );
                             }
@@ -638,7 +639,8 @@ fn create_real_func_body_cfg<'ctx>(
                     &Rvalue::Use(Operand::Copy(
                         enum_place.clone().then(PlaceSegment::EnumDiscriminant),
                     )),
-                );
+                )
+                .unwrap();
                 let discriminant = ctx
                     .codegen
                     .builder
@@ -699,8 +701,8 @@ fn create_real_func_body_cfg<'ctx>(
 /// Generates handwritten LLVM code for intrinsics defined internally.
 fn create_real_func_body_intrinsic<'ctx>(
     ctx: BodyCreationContext<'_, 'ctx>,
-    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
-    type_variables: &[TypeParameter],
+    _local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    _type_variables: &[TypeParameter],
 ) -> BasicBlock<'ctx> {
     // TODO: add an assertion that the `ctx.func.func.source_file` comes from a specific "intrinsics" module.
     let block = ctx
@@ -732,6 +734,9 @@ fn create_real_func_body_intrinsic<'ctx>(
                 "call_printf_%d",
             );
             format_str.set_initializer(&ctx.codegen.context.const_string("%d\n".as_bytes(), true));
+            format_str.set_unnamed_address(UnnamedAddress::Global);
+            format_str.set_linkage(Linkage::Private);
+            format_str.set_constant(true);
 
             let format_str_gep = unsafe {
                 ctx.codegen.builder.build_in_bounds_gep(
@@ -744,14 +749,6 @@ fn create_real_func_body_intrinsic<'ctx>(
                 )
             };
 
-            println!(
-                "{:#?} => {:#?}",
-                format_str_gep,
-                ctx.codegen
-                    .context
-                    .i8_type()
-                    .ptr_type(AddressSpace::Generic)
-            );
             let format_str_cast = ctx.codegen.builder.build_address_space_cast(
                 format_str_gep,
                 ctx.codegen
@@ -779,6 +776,7 @@ fn create_real_func_body_intrinsic<'ctx>(
     block
 }
 
+/// Returns None if the rvalue had no representation.
 fn get_pointer_to_rvalue<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     index: &ProjectIndex,
@@ -786,115 +784,118 @@ fn get_pointer_to_rvalue<'ctx>(
     locals: &HashMap<LocalVariableName, PointerValue<'ctx>>,
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     rvalue: &Rvalue,
-) -> PointerValue<'ctx> {
+) -> Option<PointerValue<'ctx>> {
     match rvalue {
         Rvalue::Use(Operand::Move(place)) | Rvalue::Use(Operand::Copy(place)) => {
-            let mut ptr = locals[&place.local];
-            let mut rvalue_ty = local_variable_names[&place.local].ty.clone();
+            if let Some(mut ptr) = locals.get(&place.local).copied() {
+                let mut rvalue_ty = local_variable_names[&place.local].ty.clone();
 
-            for segment in place.projection.clone() {
-                match segment {
-                    PlaceSegment::DataField { field } => {
-                        // rvalue_ty is a data type.
-                        if let Type::Named { name, parameters } = rvalue_ty {
-                            let decl = &index[&name.source_file].types[&name.name];
-                            if let TypeDeclarationTypeI::Data(datai) = &decl.decl_type {
-                                rvalue_ty = datai
-                                    .type_ctor
-                                    .fields
-                                    .iter()
-                                    .find_map(|(field_name, field_type)| {
-                                        if field_name.name == field {
-                                            Some(replace_type_variables(
-                                                field_type.clone(),
-                                                &datai.type_params,
-                                                &parameters,
-                                            ))
-                                        } else {
-                                            None
-                                        }
+                for segment in place.projection.clone() {
+                    match segment {
+                        PlaceSegment::DataField { field } => {
+                            // rvalue_ty is a data type.
+                            if let Type::Named { name, parameters } = rvalue_ty {
+                                let decl = &index[&name.source_file].types[&name.name];
+                                if let TypeDeclarationTypeI::Data(datai) = &decl.decl_type {
+                                    rvalue_ty = datai
+                                        .type_ctor
+                                        .fields
+                                        .iter()
+                                        .find_map(|(field_name, field_type)| {
+                                            if field_name.name == field {
+                                                Some(replace_type_variables(
+                                                    field_type.clone(),
+                                                    &datai.type_params,
+                                                    &parameters,
+                                                ))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap();
+                                } else {
+                                    unreachable!()
+                                }
+
+                                let data = reprs
+                                    .get_data(&MonomorphisedType {
+                                        name,
+                                        mono: MonomorphisationParameters {
+                                            type_parameters: parameters,
+                                        },
                                     })
                                     .unwrap();
+                                ptr = data.load(codegen, ptr, &field).unwrap();
                             } else {
                                 unreachable!()
                             }
-
-                            let data = reprs
-                                .get_data(&MonomorphisedType {
-                                    name,
-                                    mono: MonomorphisationParameters {
-                                        type_parameters: parameters,
-                                    },
-                                })
-                                .unwrap();
-                            ptr = data.load(codegen, ptr, &field).unwrap();
-                        } else {
-                            unreachable!()
                         }
-                    }
-                    PlaceSegment::EnumField { variant, field } => {
-                        // rvalue_ty is an enum type.
-                        if let Type::Named { name, parameters } = rvalue_ty {
-                            let decl = &index[&name.source_file].types[&name.name];
-                            if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
-                                rvalue_ty = enumi
-                                    .variants
-                                    .iter()
-                                    .find(|the_variant| the_variant.name.name == variant)
-                                    .unwrap()
-                                    .type_ctor
-                                    .fields
-                                    .iter()
-                                    .find_map(|(field_name, field_type)| {
-                                        if field_name.name == field {
-                                            Some(replace_type_variables(
-                                                field_type.clone(),
-                                                &enumi.type_params,
-                                                &parameters,
-                                            ))
-                                        } else {
-                                            None
-                                        }
+                        PlaceSegment::EnumField { variant, field } => {
+                            // rvalue_ty is an enum type.
+                            if let Type::Named { name, parameters } = rvalue_ty {
+                                let decl = &index[&name.source_file].types[&name.name];
+                                if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
+                                    rvalue_ty = enumi
+                                        .variants
+                                        .iter()
+                                        .find(|the_variant| the_variant.name.name == variant)
+                                        .unwrap()
+                                        .type_ctor
+                                        .fields
+                                        .iter()
+                                        .find_map(|(field_name, field_type)| {
+                                            if field_name.name == field {
+                                                Some(replace_type_variables(
+                                                    field_type.clone(),
+                                                    &enumi.type_params,
+                                                    &parameters,
+                                                ))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap();
+                                } else {
+                                    unreachable!()
+                                }
+
+                                let the_enum = reprs
+                                    .get_enum(&MonomorphisedType {
+                                        name,
+                                        mono: MonomorphisationParameters {
+                                            type_parameters: parameters,
+                                        },
                                     })
                                     .unwrap();
+                                ptr = the_enum.load(codegen, ptr, &variant, &field).unwrap();
                             } else {
                                 unreachable!()
                             }
-
-                            let the_enum = reprs
-                                .get_enum(&MonomorphisedType {
-                                    name,
-                                    mono: MonomorphisationParameters {
-                                        type_parameters: parameters,
-                                    },
-                                })
-                                .unwrap();
-                            ptr = the_enum.load(codegen, ptr, &variant, &field).unwrap();
-                        } else {
-                            unreachable!()
                         }
-                    }
-                    PlaceSegment::EnumDiscriminant => {
-                        // rvalue_ty is an enum type.
-                        if let Type::Named { name, parameters } = rvalue_ty {
-                            rvalue_ty = Type::Primitive(PrimitiveType::Int);
-                            let the_enum = reprs
-                                .get_enum(&MonomorphisedType {
-                                    name,
-                                    mono: MonomorphisationParameters {
-                                        type_parameters: parameters,
-                                    },
-                                })
-                                .unwrap();
-                            ptr = the_enum.get_discriminant(codegen, ptr);
-                        } else {
-                            unreachable!()
+                        PlaceSegment::EnumDiscriminant => {
+                            // rvalue_ty is an enum type.
+                            if let Type::Named { name, parameters } = rvalue_ty {
+                                rvalue_ty = Type::Primitive(PrimitiveType::Int);
+                                let the_enum = reprs
+                                    .get_enum(&MonomorphisedType {
+                                        name,
+                                        mono: MonomorphisationParameters {
+                                            type_parameters: parameters,
+                                        },
+                                    })
+                                    .unwrap();
+                                ptr = the_enum.get_discriminant(codegen, ptr);
+                            } else {
+                                unreachable!()
+                            }
                         }
                     }
                 }
-            }
 
-            ptr
+                Some(ptr)
+            } else {
+                None
+            }
         }
         Rvalue::Use(Operand::Constant(constant)) => {
             // Alloca the constant, then make a pointer to it.
@@ -911,7 +912,7 @@ fn get_pointer_to_rvalue<'ctx>(
                             .i64_type()
                             .const_int(unsafe { std::mem::transmute::<i64, u64>(*value) }, true),
                     );
-                    mem
+                    Some(mem)
                 }
             }
         }
@@ -970,12 +971,12 @@ fn monomorphise<'ctx>(
                     StatementKind::Assign { target, .. }
                     | StatementKind::InstanceSymbol { target, .. }
                     | StatementKind::Apply { target, .. }
-                    | StatementKind::InvokeFunction { target, .. }
                     | StatementKind::ConstructFunctionObject { target, .. }
-                    | StatementKind::ApplyFunctionObject { target, .. }
-                    | StatementKind::InvokeFunctionObject { target, .. }
                     | StatementKind::CreateLambda { target, .. }
                     | StatementKind::ConstructData { target, .. } => local_reprs[target].is_some(),
+
+                    StatementKind::InvokeFunction { .. }
+                    | StatementKind::InvokeFunctionObject { .. } => true,
 
                     StatementKind::Drop { variable } | StatementKind::Free { variable } => {
                         local_reprs[variable].is_some()

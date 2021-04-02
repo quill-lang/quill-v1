@@ -55,6 +55,16 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
 
     let build_folder = dir.join("target").join(project_name).join(host_triple);
     let _ = std::fs::create_dir_all(build_folder.join("bin"));
+    let path = Path::new("out.o");
+
+    // Output the MIR.
+    {
+        use std::io::Write;
+        let mir_path = build_folder.join(path.with_extension("mir"));
+        let f = File::create(mir_path).unwrap();
+        let mut f = BufWriter::new(f);
+        writeln!(f, "{}", mir).unwrap();
+    }
 
     let context = Context::create();
     let module = context.create_module(project_name);
@@ -111,7 +121,6 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
 
     Target::initialize_all(&InitializationConfig::default());
 
-    let path = Path::new("out.o");
     let object_path = build_folder.join(path);
     let asm_path = build_folder.join(path.with_extension("asm"));
     let bc_path = build_folder.join(path.with_extension("bc"));

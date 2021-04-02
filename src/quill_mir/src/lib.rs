@@ -30,9 +30,28 @@ pub struct ProjectMIR {
     pub entry_point: QualifiedName,
 }
 
+impl Display for ProjectMIR {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "entry point {}", self.entry_point)?;
+        for (id, mir) in &self.files {
+            writeln!(f, "\n=====\n{}\n{}", id, mir)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct SourceFileMIR {
     pub definitions: HashMap<String, DefinitionM>,
+}
+
+impl Display for SourceFileMIR {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (id, def) in &self.definitions {
+            writeln!(f, "\n---\n{}\n{}", id, def)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
@@ -229,7 +248,6 @@ impl ControlFlowGraph {
                     | StatementKind::Apply { target, .. }
                     | StatementKind::InvokeFunction { target, .. }
                     | StatementKind::ConstructFunctionObject { target, .. }
-                    | StatementKind::ApplyFunctionObject { target, .. }
                     | StatementKind::InvokeFunctionObject { target, .. }
                     | StatementKind::CreateLambda { target, .. }
                     | StatementKind::ConstructData { target, .. } => {
@@ -259,12 +277,6 @@ impl ControlFlowGraph {
                         for arg in curried_arguments {
                             use_rvalue(arg);
                         }
-                    }
-                    StatementKind::ApplyFunctionObject {
-                        argument, function, ..
-                    } => {
-                        use_rvalue(argument);
-                        use_rvalue(function);
                     }
                     StatementKind::InvokeFunctionObject {
                         additional_arguments,
@@ -453,15 +465,6 @@ pub enum StatementKind {
         curry_steps: Vec<u64>,
         curried_arguments: Vec<Rvalue>,
     },
-    /// Adds some new arguments to a function object. In actuality LLVM will reallocate a new function object.
-    /// Even if we apply the last required argument to this function object, it will not pre-emptively execute the function.
-    /// Function execution occurs only with the InvokeFunctionObject statement.
-    /// This is inserted by the "func_objects" pass.
-    ApplyFunctionObject {
-        argument: Rvalue,
-        function: Rvalue,
-        target: LocalVariableName,
-    },
     /// Invokes a function object with the arguments it contains, along with perhaps some additional arguments.
     /// This is inserted by the "func_objects" pass.
     /// The amount of additional_arguments must exactly match the number of arguments remaining in the function object.
@@ -582,11 +585,6 @@ impl Display for StatementKind {
                 }
                 Ok(())
             }
-            StatementKind::ApplyFunctionObject {
-                argument,
-                function,
-                target,
-            } => write!(f, "{} = apply {} to fobj {}", target, argument, function),
             StatementKind::InvokeFunctionObject {
                 func_object,
                 target,
