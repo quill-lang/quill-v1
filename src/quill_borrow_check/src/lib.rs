@@ -204,14 +204,14 @@ fn check_ownership_walk(
                     messages,
                     statuses,
                     stmt.range,
-                    argument.clone(),
+                    *argument.clone(),
                 );
                 make_rvalue_used(
                     source_file,
                     messages,
                     statuses,
                     stmt.range,
-                    function.clone(),
+                    *function.clone(),
                 );
                 make_owned(statuses, stmt.range, *target);
             }

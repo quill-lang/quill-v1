@@ -10,6 +10,4 @@
 //! - `M`: part of the MIR intermediate representation.
 //! - (no suffix): types have been deduced and references have been resolved.
 
-fn main() {
-
-}
+fn main() {}

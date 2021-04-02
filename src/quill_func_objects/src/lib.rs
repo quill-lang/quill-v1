@@ -94,9 +94,9 @@ fn convert_stmt(stmt: Statement, arities: &HashMap<QualifiedName, u64>) -> Vec<S
             vec![Statement {
                 range: stmt.range,
                 kind: StatementKind::InvokeFunctionObject {
-                    func_object: function,
+                    func_object: *function,
                     target,
-                    additional_arguments: vec![argument],
+                    additional_arguments: vec![*argument],
                     return_type,
                     additional_argument_types: vec![argument_type],
                 },

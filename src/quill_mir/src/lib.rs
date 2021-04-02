@@ -434,8 +434,8 @@ pub enum StatementKind {
     /// Applies one argument to a function, and stores the result in a variable.
     /// This statement is removed by the "func_objects" pass, where curried functions are removed.
     Apply {
-        argument: Rvalue,
-        function: Rvalue,
+        argument: Box<Rvalue>,
+        function: Box<Rvalue>,
         target: LocalVariableName,
 
         return_type: Type,
@@ -1740,8 +1740,8 @@ fn generate_expr(
                 .push(Statement {
                     range,
                     kind: StatementKind::Apply {
-                        argument: Rvalue::Use(Operand::Move(Place::new(right.variable))),
-                        function: Rvalue::Use(Operand::Move(Place::new(left.variable))),
+                        argument: Box::new(Rvalue::Use(Operand::Move(Place::new(right.variable)))),
+                        function: Box::new(Rvalue::Use(Operand::Move(Place::new(left.variable)))),
                         target: LocalVariableName::Local(variable),
                         return_type,
                         argument_type,

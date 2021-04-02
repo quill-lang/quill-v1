@@ -420,10 +420,6 @@ impl<'ctx> DataRepresentation<'ctx> {
     pub fn has_field(&self, name: &str) -> bool {
         self.field_indices.contains_key(name)
     }
-
-    pub fn field_ty(&self, name: &str) -> &Type {
-        &self.field_types[name]
-    }
 }
 
 pub struct EnumRepresentation<'ctx> {
@@ -451,24 +447,6 @@ impl<'ctx> EnumRepresentation<'ctx> {
         self.variants
             .get(variant)
             .and_then(|variant| variant.load(codegen, ptr, field))
-    }
-
-    /// Stores a value into the element of this data with the given field, or panics no operation if no such field exists,
-    /// or if there was no representation for the field.
-    /// `ptr` is a pointer to this struct.
-    /// This uses the codegen builder to append instructions if required.
-    pub fn store<V: BasicValue<'ctx>>(
-        &self,
-        codegen: &CodeGenContext<'ctx>,
-        ptr: PointerValue<'ctx>,
-        value: V,
-        variant: &str,
-        field_name: &str,
-    ) {
-        self.variants
-            .get(variant)
-            .unwrap()
-            .store(codegen, ptr, value, field_name);
     }
 
     /// Gets the discriminant of this enum.
