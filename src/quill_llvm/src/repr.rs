@@ -325,6 +325,7 @@ pub enum FieldIndex {
     /// The field is inside the struct at this position.
     Literal(u32),
     /// A pointer to the field is inside the struct at this position.
+    #[allow(dead_code)]
     Heap(u32),
 }
 
@@ -556,7 +557,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         type_ctor: &TypeConstructorI,
         type_params: &[TypeParameter],
         mono: &MonomorphisationParameters,
-        indirected_fields: Vec<String>,
+        _indirected_fields: Vec<String>,
     ) {
         for (field_name, field_ty) in &type_ctor.fields {
             self.add_field(field_name.name.clone(), field_ty.clone(), type_params, mono);
@@ -1102,7 +1103,7 @@ fn fix_cycles(graph: DirectedGraph<MonomorphisedType>) -> Vec<IndirectedMonomorp
 
 /// Add one heap indirection to the given strongly connected graph to try to break a cycle.
 fn add_heap_indirection(
-    graph: DirectedGraph<MonomorphisedType>,
+    _graph: DirectedGraph<MonomorphisedType>,
 ) -> DirectedGraph<MonomorphisedType> {
     unimplemented!()
 }

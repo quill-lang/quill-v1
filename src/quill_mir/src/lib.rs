@@ -1758,11 +1758,7 @@ fn generate_expr(
                     .collect(),
             }
         }
-        ExpressionContentsGeneric::Lambda {
-            params,
-            expr: substituted_expr,
-            ..
-        } => {
+        ExpressionContentsGeneric::Lambda { params, .. } => {
             // Create the given lambda.
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,

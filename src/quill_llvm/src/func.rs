@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    unimplemented,
-};
+use std::collections::{BTreeMap, HashMap};
 
 use inkwell::{
     basic_block::BasicBlock,
@@ -529,8 +526,8 @@ fn create_real_func_body_cfg<'ctx>(
                             .build_call(fptr, &args, &target.to_string());
                     }
                 }
-                StatementKind::Drop { variable } => {}
-                StatementKind::Free { variable } => {}
+                StatementKind::Drop { .. } => {}
+                StatementKind::Free { .. } => {}
                 StatementKind::ConstructData {
                     ty,
                     variant,
