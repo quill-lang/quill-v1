@@ -14,7 +14,7 @@ use inkwell::{
 };
 use quill_common::name::QualifiedName;
 use quill_index::{EnumI, ProjectIndex, TypeConstructorI, TypeDeclarationTypeI, TypeParameter};
-use quill_mir::{ArgumentIndex, LocalVariableName, ProjectMIR, StatementKind};
+use quill_mir::{ArgumentIndex, DefinitionBodyM, LocalVariableName, ProjectMIR, StatementKind};
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
 
@@ -717,7 +717,6 @@ pub struct AnyTypeRepresentation<'ctx> {
 impl<'a, 'ctx> Representations<'a, 'ctx> {
     pub fn new(
         codegen: &'a CodeGenContext<'ctx>,
-        mir: &ProjectMIR,
         index: &ProjectIndex,
         mono_types: HashSet<MonomorphisedType>,
     ) -> Self {
@@ -900,41 +899,43 @@ impl Monomorphisation {
                 self.track_type(ty);
             }
 
-            for block in def.control_flow_graph.basic_blocks.values() {
-                for stmt in &block.statements {
-                    match &stmt.kind {
-                        StatementKind::InvokeFunction {
-                            name,
-                            type_variables,
-                            ..
-                        } => {
-                            self.track_def(
-                                mir,
-                                name.clone(),
-                                MonomorphisationParameters {
-                                    type_parameters: type_variables.clone(),
-                                },
-                                true,
-                                Vec::new(),
-                            );
+            if let DefinitionBodyM::PatternMatch(cfg) = &def.body {
+                for block in cfg.basic_blocks.values() {
+                    for stmt in &block.statements {
+                        match &stmt.kind {
+                            StatementKind::InvokeFunction {
+                                name,
+                                type_variables,
+                                ..
+                            } => {
+                                self.track_def(
+                                    mir,
+                                    name.clone(),
+                                    MonomorphisationParameters {
+                                        type_parameters: type_variables.clone(),
+                                    },
+                                    true,
+                                    Vec::new(),
+                                );
+                            }
+                            StatementKind::ConstructFunctionObject {
+                                name,
+                                type_variables,
+                                curry_steps,
+                                ..
+                            } => {
+                                self.track_def(
+                                    mir,
+                                    name.clone(),
+                                    MonomorphisationParameters {
+                                        type_parameters: type_variables.clone(),
+                                    },
+                                    true,
+                                    curry_steps.clone(),
+                                );
+                            }
+                            _ => {}
                         }
-                        StatementKind::ConstructFunctionObject {
-                            name,
-                            type_variables,
-                            curry_steps,
-                            ..
-                        } => {
-                            self.track_def(
-                                mir,
-                                name.clone(),
-                                MonomorphisationParameters {
-                                    type_parameters: type_variables.clone(),
-                                },
-                                true,
-                                curry_steps.clone(),
-                            );
-                        }
-                        _ => {}
                     }
                 }
             }

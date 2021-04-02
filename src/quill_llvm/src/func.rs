@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    unimplemented,
+};
 
 use inkwell::{
     basic_block::BasicBlock,
@@ -6,16 +9,16 @@ use inkwell::{
     values::{FunctionValue, PointerValue},
     AddressSpace,
 };
-use quill_index::{ProjectIndex, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
 use quill_mir::{
-    ArgumentIndex, DefinitionM, LocalVariableName, Operand, PlaceSegment, ProjectMIR, Rvalue,
-    StatementKind, TerminatorKind,
+    ArgumentIndex, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo,
+    LocalVariableName, Operand, PlaceSegment, ProjectMIR, Rvalue, StatementKind, TerminatorKind,
 };
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
 
 use crate::{
-    codegen::CodeGenContext,
+    codegen::{self, CodeGenContext},
     repr::{MonomorphisationParameters, MonomorphisedFunction, MonomorphisedType, Representations},
 };
 
@@ -56,8 +59,17 @@ pub fn compile_function<'ctx>(
                     locals.insert(LocalVariableName::Argument(ArgumentIndex(arg)), arg_ptr);
                 }
             }
-            let contents_block =
-                create_real_func_body(codegen, reprs, index, func, def, func_value, locals);
+            let contents_block = create_real_func_body(
+                BodyCreationContext {
+                    codegen,
+                    reprs,
+                    index,
+                    func,
+                    func_value,
+                    locals,
+                },
+                def,
+            );
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
@@ -166,8 +178,17 @@ pub fn compile_function<'ctx>(
                 }
             }
 
-            let contents_block =
-                create_real_func_body(codegen, reprs, index, func, def, func_value, locals);
+            let contents_block = create_real_func_body(
+                BodyCreationContext {
+                    codegen,
+                    reprs,
+                    index,
+                    func,
+                    func_value,
+                    locals,
+                },
+                def,
+            );
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
@@ -213,55 +234,84 @@ pub fn compile_function<'ctx>(
     }
 }
 
-fn create_real_func_body<'ctx>(
-    codegen: &CodeGenContext<'ctx>,
-    reprs: &Representations<'_, 'ctx>,
-    index: &ProjectIndex,
+/// Contains all the useful information when generating a function body.
+struct BodyCreationContext<'a, 'ctx> {
+    codegen: &'a CodeGenContext<'ctx>,
+    reprs: &'a Representations<'a, 'ctx>,
+    index: &'a ProjectIndex,
     func: MonomorphisedFunction,
-    def: &DefinitionM,
     func_value: FunctionValue<'ctx>,
-    mut locals: HashMap<LocalVariableName, PointerValue<'ctx>>,
-) -> BasicBlock<'ctx> {
-    let mut def = monomorphise(reprs, &func, def);
+    locals: HashMap<LocalVariableName, PointerValue<'ctx>>,
+}
 
+fn create_real_func_body<'ctx>(
+    context: BodyCreationContext<'_, 'ctx>,
+    def: &DefinitionM,
+) -> BasicBlock<'ctx> {
+    let mut def = monomorphise(context.reprs, &context.func, def);
+
+    match &mut def.body {
+        DefinitionBodyM::PatternMatch(cfg) => {
+            create_real_func_body_cfg(context, cfg, &def.local_variable_names, &def.type_variables)
+        }
+        DefinitionBodyM::CompilerIntrinsic => {
+            create_real_func_body_intrinsic(context, &def.local_variable_names, &def.type_variables)
+        }
+    }
+}
+
+fn create_real_func_body_cfg<'ctx>(
+    mut ctx: BodyCreationContext<'_, 'ctx>,
+    cfg: &mut ControlFlowGraph,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    type_variables: &[TypeParameter],
+) -> BasicBlock<'ctx> {
     // Create new LLVM basic blocks for each MIR basic block.
-    let blocks = def
-        .control_flow_graph
+    let blocks = cfg
         .basic_blocks
         .iter()
         .map(|(id, _)| {
-            let block = codegen
+            let block = ctx
+                .codegen
                 .context
-                .append_basic_block(func_value, &id.to_string());
+                .append_basic_block(ctx.func_value, &id.to_string());
             (*id, block)
         })
         .collect::<HashMap<_, _>>();
 
     // Compile each MIR basic block into LLVM IR.
-    for (id, block) in std::mem::take(&mut def.control_flow_graph.basic_blocks) {
-        codegen.builder.position_at_end(blocks[&id]);
+    for (id, block) in std::mem::take(&mut cfg.basic_blocks) {
+        ctx.codegen.builder.position_at_end(blocks[&id]);
 
         // Handle the statements.
         for stmt in &block.statements {
             match &stmt.kind {
                 StatementKind::Assign { target, source } => {
                     // Create a new local variable in LLVM for this assignment target.
-                    let target_ty = def.local_variable_names[target].ty.clone();
-                    let target_repr = reprs.repr(target_ty.clone()).unwrap();
-                    let target_value = codegen
+                    let target_ty = local_variable_names[target].ty.clone();
+                    let target_repr = ctx.reprs.repr(target_ty.clone()).unwrap();
+                    let target_value = ctx
+                        .codegen
                         .builder
                         .build_alloca(target_repr.llvm_type, &target.to_string());
-                    locals.insert(*target, target_value);
-                    codegen
+                    ctx.locals.insert(*target, target_value);
+                    ctx.codegen
                         .builder
                         .build_memcpy(
                             target_value,
                             target_repr.alignment,
-                            get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, source),
+                            get_pointer_to_rvalue(
+                                ctx.codegen,
+                                ctx.index,
+                                ctx.reprs,
+                                &ctx.locals,
+                                &local_variable_names,
+                                source,
+                            ),
                             target_repr.alignment,
-                            codegen
+                            ctx.codegen
                                 .context
-                                .ptr_sized_int_type(codegen.target_data(), None)
+                                .ptr_sized_int_type(ctx.codegen.target_data(), None)
                                 .const_int(target_repr.size as u64, false),
                         )
                         .unwrap();
@@ -280,32 +330,48 @@ fn create_real_func_body<'ctx>(
                         curry_steps: Vec::new(),
                         direct: true,
                     };
-                    let func = codegen.module.get_function(&mono_func.to_string()).unwrap();
+                    let func = ctx
+                        .codegen
+                        .module
+                        .get_function(&mono_func.to_string())
+                        .unwrap();
                     let args = arguments
                         .iter()
                         .enumerate()
                         .map(|(i, rvalue)| {
-                            let ptr =
-                                get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, rvalue);
-                            codegen.builder.build_load(ptr, &format!("arg{}", i))
+                            let ptr = get_pointer_to_rvalue(
+                                ctx.codegen,
+                                ctx.index,
+                                ctx.reprs,
+                                &ctx.locals,
+                                &local_variable_names,
+                                rvalue,
+                            );
+                            ctx.codegen.builder.build_load(ptr, &format!("arg{}", i))
                         })
                         .collect::<Vec<_>>();
 
-                    let target_ty = def.local_variable_names[target].ty.clone();
-                    if let Some(target_repr) = reprs.repr(target_ty.clone()) {
-                        let target_value = codegen
+                    let target_ty = local_variable_names[target].ty.clone();
+                    if let Some(target_repr) = ctx.reprs.repr(target_ty.clone()) {
+                        let target_value = ctx
+                            .codegen
                             .builder
                             .build_alloca(target_repr.llvm_type, &target.to_string());
-                        locals.insert(*target, target_value);
-                        let call_site_value =
-                            codegen
-                                .builder
-                                .build_call(func, &args, &format!("{}_call", target));
+                        ctx.locals.insert(*target, target_value);
+                        let call_site_value = ctx.codegen.builder.build_call(
+                            func,
+                            &args,
+                            &format!("{}_call", target),
+                        );
                         if let Some(call_site_value) = call_site_value.try_as_basic_value().left() {
-                            codegen.builder.build_store(target_value, call_site_value);
+                            ctx.codegen
+                                .builder
+                                .build_store(target_value, call_site_value);
                         }
                     } else {
-                        codegen.builder.build_call(func, &args, &target.to_string());
+                        ctx.codegen
+                            .builder
+                            .build_call(func, &args, &target.to_string());
                     }
                 }
                 StatementKind::ConstructFunctionObject {
@@ -323,31 +389,47 @@ fn create_real_func_body<'ctx>(
                         curry_steps: curry_steps.clone(),
                         direct: true,
                     };
-                    let func = codegen.module.get_function(&mono_func.to_string()).unwrap();
+                    let func = ctx
+                        .codegen
+                        .module
+                        .get_function(&mono_func.to_string())
+                        .unwrap();
                     let args = curried_arguments
                         .iter()
                         .enumerate()
                         .map(|(i, rvalue)| {
-                            let ptr =
-                                get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, rvalue);
-                            codegen.builder.build_load(ptr, &format!("arg{}", i))
+                            let ptr = get_pointer_to_rvalue(
+                                ctx.codegen,
+                                ctx.index,
+                                ctx.reprs,
+                                &ctx.locals,
+                                &local_variable_names,
+                                rvalue,
+                            );
+                            ctx.codegen.builder.build_load(ptr, &format!("arg{}", i))
                         })
                         .collect::<Vec<_>>();
 
                     if let Some(return_type) = func.get_type().get_return_type() {
-                        let target_value = codegen
+                        let target_value = ctx
+                            .codegen
                             .builder
                             .build_alloca(return_type, &target.to_string());
-                        locals.insert(*target, target_value);
-                        let call_site_value =
-                            codegen
-                                .builder
-                                .build_call(func, &args, &format!("{}_call", target));
+                        ctx.locals.insert(*target, target_value);
+                        let call_site_value = ctx.codegen.builder.build_call(
+                            func,
+                            &args,
+                            &format!("{}_call", target),
+                        );
                         if let Some(call_site_value) = call_site_value.try_as_basic_value().left() {
-                            codegen.builder.build_store(target_value, call_site_value);
+                            ctx.codegen
+                                .builder
+                                .build_store(target_value, call_site_value);
                         }
                     } else {
-                        codegen.builder.build_call(func, &args, &target.to_string());
+                        ctx.codegen
+                            .builder
+                            .build_call(func, &args, &target.to_string());
                     }
                 }
                 StatementKind::ApplyFunctionObject { .. } => {
@@ -361,24 +443,35 @@ fn create_real_func_body<'ctx>(
                     return_type,
                     additional_argument_types,
                 } => {
-                    let func_object_ptr =
-                        get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, func_object);
-                    let func_object_ptr = codegen
+                    let func_object_ptr = get_pointer_to_rvalue(
+                        ctx.codegen,
+                        ctx.index,
+                        ctx.reprs,
+                        &ctx.locals,
+                        &local_variable_names,
+                        func_object,
+                    );
+                    let func_object_ptr = ctx
+                        .codegen
                         .builder
                         .build_load(func_object_ptr, "fobj_loaded")
                         .into_pointer_value();
                     // Get the first element of this function object, which is the function pointer.
-                    let fptr_raw = codegen
+                    let fptr_raw = ctx
+                        .codegen
                         .builder
                         .build_struct_gep(func_object_ptr, 0, "fptr_raw_ptr")
                         .unwrap();
-                    let fptr_raw = codegen.builder.build_load(fptr_raw, "fptr_raw");
-                    let return_ty = reprs.repr(return_type.clone()).map(|repr| repr.llvm_type);
-                    let mut arg_types = vec![reprs.general_func_obj_ty.llvm_type];
+                    let fptr_raw = ctx.codegen.builder.build_load(fptr_raw, "fptr_raw");
+                    let return_ty = ctx
+                        .reprs
+                        .repr(return_type.clone())
+                        .map(|repr| repr.llvm_type);
+                    let mut arg_types = vec![ctx.reprs.general_func_obj_ty.llvm_type];
                     arg_types.extend(
                         additional_argument_types
                             .iter()
-                            .filter_map(|ty| reprs.repr(ty.clone()))
+                            .filter_map(|ty| ctx.reprs.repr(ty.clone()))
                             .map(|repr| repr.llvm_type),
                     );
                     let func_ty = match return_ty {
@@ -388,39 +481,53 @@ fn create_real_func_body<'ctx>(
                         Some(BasicTypeEnum::PointerType(v)) => v.fn_type(&arg_types, false),
                         Some(BasicTypeEnum::StructType(v)) => v.fn_type(&arg_types, false),
                         Some(BasicTypeEnum::VectorType(v)) => v.fn_type(&arg_types, false),
-                        None => codegen.context.void_type().fn_type(&arg_types, false),
+                        None => ctx.codegen.context.void_type().fn_type(&arg_types, false),
                     };
-                    let fptr = codegen
+                    let fptr = ctx
+                        .codegen
                         .builder
                         .build_bitcast(fptr_raw, func_ty.ptr_type(AddressSpace::Generic), "fptr")
                         .into_pointer_value();
 
-                    let mut args = vec![codegen.builder.build_bitcast(
+                    let mut args = vec![ctx.codegen.builder.build_bitcast(
                         func_object_ptr,
-                        reprs.general_func_obj_ty.llvm_type,
+                        ctx.reprs.general_func_obj_ty.llvm_type,
                         "fobj_bitcast",
                     )];
                     for (i, arg) in additional_arguments.iter().enumerate() {
-                        args.push(codegen.builder.build_load(
-                            get_pointer_to_rvalue(codegen, index, reprs, &locals, &def, arg),
+                        args.push(ctx.codegen.builder.build_load(
+                            get_pointer_to_rvalue(
+                                ctx.codegen,
+                                ctx.index,
+                                ctx.reprs,
+                                &ctx.locals,
+                                &local_variable_names,
+                                arg,
+                            ),
                             &format!("arg{}", i),
                         ))
                     }
 
                     if let Some(return_type) = return_ty {
-                        let target_value = codegen
+                        let target_value = ctx
+                            .codegen
                             .builder
                             .build_alloca(return_type, &target.to_string());
-                        locals.insert(*target, target_value);
-                        let call_site_value =
-                            codegen
-                                .builder
-                                .build_call(fptr, &args, &format!("{}_call", target));
+                        ctx.locals.insert(*target, target_value);
+                        let call_site_value = ctx.codegen.builder.build_call(
+                            fptr,
+                            &args,
+                            &format!("{}_call", target),
+                        );
                         if let Some(call_site_value) = call_site_value.try_as_basic_value().left() {
-                            codegen.builder.build_store(target_value, call_site_value);
+                            ctx.codegen
+                                .builder
+                                .build_store(target_value, call_site_value);
                         }
                     } else {
-                        codegen.builder.build_call(fptr, &args, &target.to_string());
+                        ctx.codegen
+                            .builder
+                            .build_call(fptr, &args, &target.to_string());
                     }
                 }
                 StatementKind::Drop { variable } => {}
@@ -431,12 +538,13 @@ fn create_real_func_body<'ctx>(
                     fields,
                     target,
                 } => {
-                    let target_ty = def.local_variable_names[target].ty.clone();
-                    let target_repr = reprs.repr(target_ty.clone()).unwrap();
-                    let target_value = codegen
+                    let target_ty = local_variable_names[target].ty.clone();
+                    let target_repr = ctx.reprs.repr(target_ty.clone()).unwrap();
+                    let target_value = ctx
+                        .codegen
                         .builder
                         .build_alloca(target_repr.llvm_type, &target.to_string());
-                    locals.insert(*target, target_value);
+                    ctx.locals.insert(*target, target_value);
 
                     // Memcpy all the fields into the new struct.
                     let (name, parameters) = if let Type::Named { name, parameters } = ty {
@@ -446,7 +554,8 @@ fn create_real_func_body<'ctx>(
                     };
 
                     if let Some(variant) = variant {
-                        let enum_repr = reprs
+                        let enum_repr = ctx
+                            .reprs
                             .get_enum(&MonomorphisedType {
                                 name,
                                 mono: MonomorphisationParameters {
@@ -455,19 +564,19 @@ fn create_real_func_body<'ctx>(
                             })
                             .unwrap();
                         // Assign the discriminant.
-                        enum_repr.store_discriminant(codegen, target_value, variant);
+                        enum_repr.store_discriminant(ctx.codegen, target_value, variant);
                         let variant_repr = &enum_repr.variants[variant];
                         for (field_name, field_rvalue) in fields {
                             if variant_repr.has_field(field_name) {
                                 variant_repr.store_ptr(
-                                    codegen,
+                                    ctx.codegen,
                                     target_value,
                                     get_pointer_to_rvalue(
-                                        codegen,
-                                        index,
-                                        reprs,
-                                        &locals,
-                                        &def,
+                                        ctx.codegen,
+                                        ctx.index,
+                                        ctx.reprs,
+                                        &ctx.locals,
+                                        &local_variable_names,
                                         field_rvalue,
                                     ),
                                     field_name,
@@ -475,7 +584,8 @@ fn create_real_func_body<'ctx>(
                             }
                         }
                     } else {
-                        let data_repr = reprs
+                        let data_repr = ctx
+                            .reprs
                             .get_data(&MonomorphisedType {
                                 name,
                                 mono: MonomorphisationParameters {
@@ -486,14 +596,14 @@ fn create_real_func_body<'ctx>(
                         for (field_name, field_rvalue) in fields {
                             if data_repr.has_field(field_name) {
                                 data_repr.store(
-                                    codegen,
+                                    ctx.codegen,
                                     target_value,
                                     get_pointer_to_rvalue(
-                                        codegen,
-                                        index,
-                                        reprs,
-                                        &locals,
-                                        &def,
+                                        ctx.codegen,
+                                        ctx.index,
+                                        ctx.reprs,
+                                        &ctx.locals,
+                                        &local_variable_names,
                                         field_rvalue,
                                     ),
                                     field_name,
@@ -509,7 +619,7 @@ fn create_real_func_body<'ctx>(
         // Handle the terminator.
         match &block.terminator.kind {
             TerminatorKind::Goto(other_id) => {
-                codegen
+                ctx.codegen
                     .builder
                     .build_unconditional_branch(blocks[&other_id]);
             }
@@ -520,21 +630,23 @@ fn create_real_func_body<'ctx>(
                 cases,
             } => {
                 let discriminant_ptr = get_pointer_to_rvalue(
-                    codegen,
-                    index,
-                    reprs,
-                    &locals,
-                    &def,
+                    ctx.codegen,
+                    ctx.index,
+                    ctx.reprs,
+                    &ctx.locals,
+                    &local_variable_names,
                     &Rvalue::Use(Operand::Copy(
                         enum_place.clone().then(PlaceSegment::EnumDiscriminant),
                     )),
                 );
-                let discriminant = codegen
+                let discriminant = ctx
+                    .codegen
                     .builder
                     .build_load(discriminant_ptr, "discriminant")
                     .into_int_value();
                 let else_block = blocks[cases.values().next().unwrap()];
-                let enum_repr = reprs
+                let enum_repr = ctx
+                    .reprs
                     .get_enum(&MonomorphisedType {
                         name: enum_name.clone(),
                         mono: MonomorphisationParameters {
@@ -543,8 +655,8 @@ fn create_real_func_body<'ctx>(
                                 .map(|ty| {
                                     replace_type_variables(
                                         ty.clone(),
-                                        &def.type_variables,
-                                        &func.mono.type_parameters,
+                                        &type_variables,
+                                        &ctx.func.mono.type_parameters,
                                     )
                                 })
                                 .collect(),
@@ -557,28 +669,114 @@ fn create_real_func_body<'ctx>(
                         let discriminant = enum_repr.variant_discriminants[name];
                         let block = blocks[block_id];
                         (
-                            codegen.context.i64_type().const_int(discriminant, false),
+                            ctx.codegen
+                                .context
+                                .i64_type()
+                                .const_int(discriminant, false),
                             block,
                         )
                     })
                     .collect::<Vec<_>>();
-                codegen
+                ctx.codegen
                     .builder
                     .build_switch(discriminant, else_block, &cases);
             }
             TerminatorKind::Invalid => unreachable!(),
             TerminatorKind::Return { value } => {
-                if let Some(ptr) = locals.get(value) {
-                    let ret_val = codegen.builder.build_load(*ptr, "result");
-                    codegen.builder.build_return(Some(&ret_val));
+                if let Some(ptr) = ctx.locals.get(value) {
+                    let ret_val = ctx.codegen.builder.build_load(*ptr, "result");
+                    ctx.codegen.builder.build_return(Some(&ret_val));
                 } else {
-                    codegen.builder.build_return(None);
+                    ctx.codegen.builder.build_return(None);
                 }
             }
         }
     }
 
-    blocks[&def.entry_point]
+    blocks[&cfg.entry_point]
+}
+
+/// Generates handwritten LLVM code for intrinsics defined internally.
+fn create_real_func_body_intrinsic<'ctx>(
+    ctx: BodyCreationContext<'_, 'ctx>,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    type_variables: &[TypeParameter],
+) -> BasicBlock<'ctx> {
+    // TODO: add an assertion that the `ctx.func.func.source_file` comes from a specific "intrinsics" module.
+    let block = ctx
+        .codegen
+        .context
+        .append_basic_block(ctx.func_value, "intrinsic");
+    ctx.codegen.builder.position_at_end(block);
+
+    match ctx.func.func.name.as_str() {
+        "print" => {
+            // This is the `print` intrinsic.
+            // print : int -> unit
+            let printf = ctx.codegen.module.add_function(
+                "printf",
+                ctx.codegen.context.i32_type().fn_type(
+                    &[ctx
+                        .codegen
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::Generic)
+                        .into()],
+                    true,
+                ),
+                None,
+            );
+            let format_str = ctx.codegen.module.add_global(
+                ctx.codegen.context.i8_type().array_type(4),
+                Some(AddressSpace::Const),
+                "call_printf_%d",
+            );
+            format_str.set_initializer(&ctx.codegen.context.const_string("%d\n".as_bytes(), true));
+
+            let format_str_gep = unsafe {
+                ctx.codegen.builder.build_in_bounds_gep(
+                    format_str.as_pointer_value(),
+                    &[
+                        ctx.codegen.context.i32_type().const_int(0, false),
+                        ctx.codegen.context.i32_type().const_int(0, false),
+                    ],
+                    "format_str",
+                )
+            };
+
+            println!(
+                "{:#?} => {:#?}",
+                format_str_gep,
+                ctx.codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+            );
+            let format_str_cast = ctx.codegen.builder.build_address_space_cast(
+                format_str_gep,
+                ctx.codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic),
+                "format_str_cast",
+            );
+
+            let arg0 = ctx.codegen.builder.build_load(
+                ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
+                "arg0",
+            );
+
+            let args = &[format_str_cast.into(), arg0];
+
+            ctx.codegen.builder.build_call(printf, args, "call_printf");
+            ctx.codegen.builder.build_return(None);
+        }
+        _ => {
+            panic!("intrinsic {} is not defined by the compiler", ctx.func.func)
+        }
+    }
+
+    block
 }
 
 fn get_pointer_to_rvalue<'ctx>(
@@ -586,13 +784,13 @@ fn get_pointer_to_rvalue<'ctx>(
     index: &ProjectIndex,
     reprs: &Representations<'_, 'ctx>,
     locals: &HashMap<LocalVariableName, PointerValue<'ctx>>,
-    def: &DefinitionM,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     rvalue: &Rvalue,
 ) -> PointerValue<'ctx> {
     match rvalue {
         Rvalue::Use(Operand::Move(place)) | Rvalue::Use(Operand::Copy(place)) => {
             let mut ptr = locals[&place.local];
-            let mut rvalue_ty = def.local_variable_names[&place.local].ty.clone();
+            let mut rvalue_ty = local_variable_names[&place.local].ty.clone();
 
             for segment in place.projection.clone() {
                 match segment {
@@ -735,60 +933,63 @@ fn monomorphise<'ctx>(
     for info in result.local_variable_names.values_mut() {
         mono(&mut info.ty);
     }
-    for block in result.control_flow_graph.basic_blocks.values_mut() {
-        for stmt in &mut block.statements {
-            match &mut stmt.kind {
-                StatementKind::InstanceSymbol { type_variables, .. }
-                | StatementKind::InvokeFunction { type_variables, .. }
-                | StatementKind::ConstructFunctionObject { type_variables, .. } => {
-                    for ty in type_variables {
+
+    if let DefinitionBodyM::PatternMatch(cfg) = &mut result.body {
+        for block in cfg.basic_blocks.values_mut() {
+            for stmt in &mut block.statements {
+                match &mut stmt.kind {
+                    StatementKind::InstanceSymbol { type_variables, .. }
+                    | StatementKind::InvokeFunction { type_variables, .. }
+                    | StatementKind::ConstructFunctionObject { type_variables, .. } => {
+                        for ty in type_variables {
+                            mono(ty);
+                        }
+                    }
+
+                    StatementKind::CreateLambda { ty, .. }
+                    | StatementKind::ConstructData { ty, .. } => {
                         mono(ty);
                     }
-                }
 
-                StatementKind::CreateLambda { ty, .. }
-                | StatementKind::ConstructData { ty, .. } => {
-                    mono(ty);
+                    _ => {}
                 }
-
-                _ => {}
             }
         }
-    }
 
-    // Now erase all loads and stores to/from types without a representation.
-    let local_reprs = result
-        .local_variable_names
-        .iter()
-        .map(|(name, info)| (*name, reprs.repr(info.ty.clone())))
-        .collect::<HashMap<_, _>>();
+        // Now erase all loads and stores to/from types without a representation.
+        let local_reprs = result
+            .local_variable_names
+            .iter()
+            .map(|(name, info)| (*name, reprs.repr(info.ty.clone())))
+            .collect::<HashMap<_, _>>();
 
-    for block in result.control_flow_graph.basic_blocks.values_mut() {
-        let mut stmts = Vec::new();
-        for stmt in std::mem::take(&mut block.statements) {
-            let should_keep = match &stmt.kind {
-                StatementKind::Assign { target, .. }
-                | StatementKind::InstanceSymbol { target, .. }
-                | StatementKind::Apply { target, .. }
-                | StatementKind::InvokeFunction { target, .. }
-                | StatementKind::ConstructFunctionObject { target, .. }
-                | StatementKind::ApplyFunctionObject { target, .. }
-                | StatementKind::InvokeFunctionObject { target, .. }
-                | StatementKind::CreateLambda { target, .. }
-                | StatementKind::ConstructData { target, .. } => local_reprs[target].is_some(),
+        for block in cfg.basic_blocks.values_mut() {
+            let mut stmts = Vec::new();
+            for stmt in std::mem::take(&mut block.statements) {
+                let should_keep = match &stmt.kind {
+                    StatementKind::Assign { target, .. }
+                    | StatementKind::InstanceSymbol { target, .. }
+                    | StatementKind::Apply { target, .. }
+                    | StatementKind::InvokeFunction { target, .. }
+                    | StatementKind::ConstructFunctionObject { target, .. }
+                    | StatementKind::ApplyFunctionObject { target, .. }
+                    | StatementKind::InvokeFunctionObject { target, .. }
+                    | StatementKind::CreateLambda { target, .. }
+                    | StatementKind::ConstructData { target, .. } => local_reprs[target].is_some(),
 
-                StatementKind::Drop { variable } | StatementKind::Free { variable } => {
-                    local_reprs[variable].is_some()
+                    StatementKind::Drop { variable } | StatementKind::Free { variable } => {
+                        local_reprs[variable].is_some()
+                    }
+
+                    _ => true,
+                };
+
+                if should_keep {
+                    stmts.push(stmt);
                 }
-
-                _ => true,
-            };
-
-            if should_keep {
-                stmts.push(stmt);
             }
+            block.statements = stmts;
         }
-        block.statements = stmts;
     }
 
     result

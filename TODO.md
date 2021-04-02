@@ -7,3 +7,4 @@
 - Use `TargetData` to compute size/alignment of data.
 - Use LLVM's malloc instead of libc's.
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
+- Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.

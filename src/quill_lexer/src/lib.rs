@@ -44,6 +44,7 @@ pub enum TokenType {
     Enum,
     Def,
     Let,
+    CompilerIntrinsic,
 
     Identifier(String),
 }
@@ -436,6 +437,7 @@ fn token_type_alphabetic(s: String) -> TokenType {
         "enum" => TokenType::Enum,
         "def" => TokenType::Def,
         "let" => TokenType::Let,
+        "compiler_intrinsic" => TokenType::CompilerIntrinsic,
         _ => TokenType::Identifier(s),
     }
 }

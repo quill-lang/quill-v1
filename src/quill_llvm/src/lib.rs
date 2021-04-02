@@ -62,7 +62,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     let codegen = CodeGenContext::new(&context, module);
 
     let mono = Monomorphisation::new(mir);
-    let mut reprs = Representations::new(&codegen, mir, index, mono.types);
+    let mut reprs = Representations::new(&codegen, index, mono.types);
     // Now that we've computed data type representations we can actually compile the functions.
     // First, declare them all.
     for func in &mono.functions {

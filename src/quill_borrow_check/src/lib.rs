@@ -5,8 +5,8 @@ use quill_common::{
     location::{Range, SourceFileIdentifier},
 };
 use quill_mir::{
-    ArgumentIndex, BasicBlockId, DefinitionM, LocalVariableName, Operand, Rvalue, SourceFileMIR,
-    Statement, StatementKind, TerminatorKind,
+    ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableName,
+    Operand, Rvalue, SourceFileMIR, Statement, StatementKind, TerminatorKind,
 };
 
 /// Checks to make sure that borrows of data do not outlive the data they borrow,
@@ -90,9 +90,7 @@ fn check_ownership(
     messages: &mut Vec<ErrorMessage>,
 ) {
     // println!("{}", def);
-    let range = def.control_flow_graph.basic_blocks[&def.entry_point]
-        .terminator
-        .range;
+    let range = def.range;
 
     let mut statuses = OwnershipStatuses {
         locals: def
@@ -116,38 +114,38 @@ fn check_ownership(
             .collect(),
     };
 
-    check_ownership_walk(source_file, def, messages, &mut statuses, def.entry_point);
-    // println!("{}", def);
+    if let DefinitionBodyM::PatternMatch(cfg) = &mut def.body {
+        check_ownership_walk(source_file, cfg, messages, &mut statuses, cfg.entry_point);
 
-    // Now, check to make sure all variables are successfully moved out or dropped.
-    // Otherwise, there is something dangling.
-    for (name, stat) in statuses.locals {
-        match stat {
-            OwnershipStatus::Owned { assignment } => messages.push(ErrorMessage::new(
-                format!(
-                    "local variable `{}` was not moved or dropped (this is a compiler bug)",
-                    name
-                ),
-                Severity::Error,
-                Diagnostic::at(source_file, &assignment),
-            )),
-            OwnershipStatus::Moved { .. } => {}
-            OwnershipStatus::Dropped { .. } => {}
-            OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new(
-                format!(
+        // Now, check to make sure all variables are successfully moved out or dropped.
+        // Otherwise, there is something dangling.
+        for (name, stat) in statuses.locals {
+            match stat {
+                OwnershipStatus::Owned { assignment } => messages.push(ErrorMessage::new(
+                    format!(
+                        "local variable `{}` was not moved or dropped (this is a compiler bug)",
+                        name
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &assignment),
+                )),
+                OwnershipStatus::Moved { .. } => {}
+                OwnershipStatus::Dropped { .. } => {}
+                OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new(
+                    format!(
                     "local variable `{}` was destructured but not freed (this is a compiler bug)",
                     name
                 ),
-                Severity::Error,
-                Diagnostic::at(source_file, &destructured),
-            )),
-            OwnershipStatus::Conditional {
-                moved_into_blocks,
-                destructured_in_blocks,
-                not_moved_blocks,
-            } => {
-                if !not_moved_blocks.is_empty() {
-                    messages.push(ErrorMessage::new(
+                    Severity::Error,
+                    Diagnostic::at(source_file, &destructured),
+                )),
+                OwnershipStatus::Conditional {
+                    moved_into_blocks,
+                    destructured_in_blocks,
+                    not_moved_blocks,
+                } => {
+                    if !not_moved_blocks.is_empty() {
+                        messages.push(ErrorMessage::new(
                         format!(
                             "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}; {:#?}",
                             name, moved_into_blocks, destructured_in_blocks, not_moved_blocks,
@@ -155,10 +153,11 @@ fn check_ownership(
                         Severity::Error,
                         Diagnostic::at(source_file, &range),
                     ));
+                    }
                 }
-            }
-            OwnershipStatus::NotInitialised { .. } => {
-                // The local variable is hidden from this scope, so it must have already been dropped or moved.
+                OwnershipStatus::NotInitialised { .. } => {
+                    // The local variable is hidden from this scope, so it must have already been dropped or moved.
+                }
             }
         }
     }
@@ -170,16 +169,12 @@ fn check_ownership(
 #[allow(clippy::needless_collect)]
 fn check_ownership_walk(
     source_file: &SourceFileIdentifier,
-    def: &mut DefinitionM,
+    cfg: &mut ControlFlowGraph,
     messages: &mut Vec<ErrorMessage>,
     statuses: &mut OwnershipStatuses,
     block_id: BasicBlockId,
 ) {
-    let block = def
-        .control_flow_graph
-        .basic_blocks
-        .get_mut(&block_id)
-        .unwrap();
+    let block = cfg.basic_blocks.get_mut(&block_id).unwrap();
 
     // Iterate over each statement to check if that statement's action is ok to perform, given the current ownership of variables at this point.
     // If the statement is a drop (for example), we might need to add or remove statements, so it's not just a normal "for" loop.
@@ -259,7 +254,7 @@ fn check_ownership_walk(
     match &mut block.terminator.kind {
         TerminatorKind::Goto(target) => {
             let target = *target;
-            check_ownership_walk(source_file, def, messages, statuses, target)
+            check_ownership_walk(source_file, cfg, messages, statuses, target)
         }
         TerminatorKind::SwitchDiscriminant {
             enum_place, cases, ..
@@ -283,7 +278,7 @@ fn check_ownership_walk(
                     let mut inner_statuses = statuses.clone();
                     check_ownership_walk(
                         source_file,
-                        def,
+                        cfg,
                         messages,
                         &mut inner_statuses,
                         target_block,

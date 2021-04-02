@@ -11,7 +11,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
-use quill_parser::{DefinitionCaseP, ExprPatP, FileP, NameP};
+use quill_parser::{DefinitionBodyP, DefinitionCaseP, ExprPatP, FileP, NameP};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
@@ -67,7 +67,13 @@ pub struct Definition {
     pub type_variables: Vec<TypeParameter>,
     pub arg_types: Vec<Type>,
     pub return_type: Type,
-    pub cases: Vec<DefinitionCase>,
+    pub body: DefinitionBody,
+}
+
+#[derive(Debug)]
+pub enum DefinitionBody {
+    PatternMatch(Vec<DefinitionCase>),
+    CompilerIntrinsic,
 }
 
 impl Ranged for Definition {
@@ -837,71 +843,102 @@ impl<'a> TypeChecker<'a> {
         let mut definitions = HashMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
-            let cases = definition.cases;
             let def_name = definition.name;
             let type_parameters = definition.type_parameters;
 
-            // Let's type check the function signature.
             let symbol = &self.project_index[self.source_file].definitions[&def_name.name];
             let symbol_type = &symbol.symbol_type;
 
-            // We need to check pattern exhaustiveness in the definition's cases.
-            // Let's resolve each case's patterns and expressions.
-            let cases = cases
-                .into_iter()
-                .map(|case| self.resolve_case(project_index, &def_name.name, case))
-                .collect::<DiagnosticResult<_>>();
+            match definition.body {
+                DefinitionBodyP::PatternMatch(cases) => {
+                    // We need to check pattern exhaustiveness in the definition's cases.
+                    // Let's resolve each case's patterns and expressions.
+                    let cases = cases
+                        .into_iter()
+                        .map(|case| self.resolve_case(project_index, &def_name.name, case))
+                        .collect::<DiagnosticResult<_>>();
 
-            // Now we can check whether the patterns are valid.
-            let cases_validated = cases.bind(|cases| {
-                cases
-                    .into_iter()
-                    .map(|(range, args, replacement)| {
-                        self.validate_case(&symbol_type, range, args, replacement, def_name.range)
-                    })
-                    .collect::<DiagnosticResult<_>>()
-            });
-            // Check that the patterns we have generated are exhaustive.
-            let validated = cases_validated.deny().bind(|cases_validated| {
-                let arity = cases_validated[0].1.len();
-                self.check_cases_exhaustive(
-                    &symbol_type,
-                    cases_validated
-                        .iter()
-                        .map(|(range, pat, _)| (*range, pat))
-                        .collect(),
-                    &def_name,
-                )
-                .map(|_| (cases_validated, arity))
-            });
+                    // Now we can check whether the patterns are valid.
+                    let cases_validated = cases.bind(|cases| {
+                        cases
+                            .into_iter()
+                            .map(|(range, args, replacement)| {
+                                self.validate_case(
+                                    &symbol_type,
+                                    range,
+                                    args,
+                                    replacement,
+                                    def_name.range,
+                                )
+                            })
+                            .collect::<DiagnosticResult<_>>()
+                    });
+                    // Check that the patterns we have generated are exhaustive.
+                    let validated = cases_validated.deny().bind(|cases_validated| {
+                        let arity = cases_validated[0].1.len();
+                        self.check_cases_exhaustive(
+                            &symbol_type,
+                            cases_validated
+                                .iter()
+                                .map(|(range, pat, _)| (*range, pat))
+                                .collect(),
+                            &def_name,
+                        )
+                        .map(|_| (cases_validated, arity))
+                    });
 
-            let (definition_parsed, mut inner_messages) = validated.destructure();
-            self.messages.append(&mut inner_messages);
-            if let Some((cases, arity)) = definition_parsed {
-                let (arg_types, return_type) = get_args_of_type_arity(symbol_type, arity);
-                definitions.insert(
-                    def_name.name,
-                    Definition {
-                        range: def_name.range,
-                        type_variables: type_parameters
-                            .into_iter()
-                            .map(|id| TypeParameter {
-                                name: id.name.name,
-                                parameters: id.parameters,
-                            })
-                            .collect(),
-                        arg_types,
-                        return_type,
-                        cases: cases
-                            .into_iter()
-                            .map(|(range, arg_patterns, replacement)| DefinitionCase {
-                                range,
-                                arg_patterns,
-                                replacement,
-                            })
-                            .collect(),
-                    },
-                );
+                    let (definition_parsed, mut inner_messages) = validated.destructure();
+                    self.messages.append(&mut inner_messages);
+                    if let Some((cases, arity)) = definition_parsed {
+                        let (arg_types, return_type) = get_args_of_type_arity(symbol_type, arity);
+                        definitions.insert(
+                            def_name.name,
+                            Definition {
+                                range: def_name.range,
+                                type_variables: type_parameters
+                                    .into_iter()
+                                    .map(|id| TypeParameter {
+                                        name: id.name.name,
+                                        parameters: id.parameters,
+                                    })
+                                    .collect(),
+                                arg_types,
+                                return_type,
+                                body: DefinitionBody::PatternMatch(
+                                    cases
+                                        .into_iter()
+                                        .map(|(range, arg_patterns, replacement)| DefinitionCase {
+                                            range,
+                                            arg_patterns,
+                                            replacement,
+                                        })
+                                        .collect(),
+                                ),
+                            },
+                        );
+                    }
+                }
+                DefinitionBodyP::CompilerIntrinsic => {
+                    // There's no type checking to be done for a compiler intrinsic.
+                    // All compiler intrinsics have the maximal possible arity.
+                    let (arg_types, return_type) = get_args_of_type(symbol_type);
+                    definitions.insert(
+                        def_name.name,
+                        Definition {
+                            range: def_name.range,
+                            type_variables: type_parameters
+                                .into_iter()
+                                .map(|id| TypeParameter {
+                                    name: id.name.name,
+                                    parameters: id.parameters,
+                                })
+                                .collect(),
+                            arg_types,
+                            return_type,
+                            body: DefinitionBody::CompilerIntrinsic,
+                        },
+                    );
+                }
             }
         }
 

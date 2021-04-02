@@ -327,7 +327,16 @@ pub struct DefinitionP {
     /// This definition might be defined with certain quantified type variables, e.g. foo[A, B].
     pub type_parameters: Vec<TypeParameterP>,
     pub definition_type: TypeP,
-    pub cases: Vec<DefinitionCaseP>,
+    pub body: DefinitionBodyP,
+}
+
+#[derive(Debug)]
+pub enum DefinitionBodyP {
+    /// The body is defined as a series of cases to be pattern matched against.
+    PatternMatch(Vec<DefinitionCaseP>),
+    /// The body of the function is not written in Quill, it is an intrinsic and will be replaced
+    /// by hand-written LLVM IR code.
+    CompilerIntrinsic,
 }
 
 #[derive(Debug, Clone)]
@@ -359,14 +368,14 @@ impl<'input> Parser<'input> {
                     .bind(|_| {
                         self.parse_type().bind(|definition_type| {
                             if let Some(tree) = self.parse_tree(BracketType::Brace) {
-                                let cases =
+                                let body =
                                     self.parse_in_tree(tree, |parser| parser.parse_def_body());
-                                cases.map(|cases| DefinitionP {
+                                body.map(|body| DefinitionP {
                                     vis,
                                     name,
                                     type_parameters: quantifiers,
                                     definition_type,
-                                    cases,
+                                    body,
                                 })
                             } else {
                                 DiagnosticResult::fail(ErrorMessage::new(
@@ -381,18 +390,32 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// `def_body ::= def_case (',' def_body?)?`
-    fn parse_def_body(&mut self) -> DiagnosticResult<Vec<DefinitionCaseP>> {
+    /// `def_body ::= 'compiler_intrinsic' | def_body_pattern_matched`
+    fn parse_def_body(&mut self) -> DiagnosticResult<DefinitionBodyP> {
+        if self
+            .parse_token_maybe(|ty| matches!(ty, TokenType::CompilerIntrinsic))
+            .is_some()
+        {
+            DiagnosticResult::ok(DefinitionBodyP::CompilerIntrinsic)
+        } else {
+            self.parse_def_body_pattern_matched()
+                .map(DefinitionBodyP::PatternMatch)
+        }
+    }
+
+    /// `def_body_pattern_matched ::= def_case (',' def_body?)?`
+    fn parse_def_body_pattern_matched(&mut self) -> DiagnosticResult<Vec<DefinitionCaseP>> {
         self.parse_def_case().bind(|first_case| {
             if self
                 .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
                 .is_some()
             {
                 if self.tokens.peek().is_some() {
-                    self.parse_def_body().map(|mut remaining_body| {
-                        remaining_body.insert(0, first_case);
-                        remaining_body
-                    })
+                    self.parse_def_body_pattern_matched()
+                        .map(|mut remaining_body| {
+                            remaining_body.insert(0, first_case);
+                            remaining_body
+                        })
                 } else {
                     DiagnosticResult::ok(vec![first_case])
                 }

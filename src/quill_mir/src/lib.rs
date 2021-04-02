@@ -17,7 +17,8 @@ use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{
     replace_type_variables,
     type_check::{
-        Definition, Expression, ExpressionContentsGeneric, ImmediateValue, Pattern, SourceFileHIR,
+        Definition, DefinitionBody, DefinitionCase, Expression, ExpressionContentsGeneric,
+        ImmediateValue, Pattern, SourceFileHIR,
     },
     TypeConstructorInvocation,
 };
@@ -80,9 +81,7 @@ pub struct DefinitionM {
     /// Contains argument types as well as local variable types.
     pub local_variable_names: BTreeMap<LocalVariableName, LocalVariableInfo>,
     pub return_type: Type,
-    pub control_flow_graph: ControlFlowGraph,
-    /// Which basic block should be entered to invoke the function?
-    pub entry_point: BasicBlockId,
+    pub body: DefinitionBodyM,
 }
 
 impl Ranged for DefinitionM {
@@ -94,20 +93,29 @@ impl Ranged for DefinitionM {
 impl Display for DefinitionM {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "arity: {}", self.arity)?;
-        writeln!(f, "entry point: {}", self.entry_point)?;
-
         for (var, info) in &self.local_variable_names {
             writeln!(f, "    {} >> let {}: {}", info.range, var, info)?;
         }
-        for (block_id, block) in &self.control_flow_graph.basic_blocks {
-            writeln!(f, "{}:", block_id)?;
-            for stmt in &block.statements {
-                writeln!(f, "    {}", stmt)?;
-            }
-            writeln!(f, "    {}", block.terminator)?;
-        }
+        writeln!(f, "{}", self.body)
+    }
+}
 
-        Ok(())
+#[derive(Debug, Clone)]
+pub enum DefinitionBodyM {
+    PatternMatch(ControlFlowGraph),
+    CompilerIntrinsic,
+}
+
+impl Display for DefinitionBodyM {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DefinitionBodyM::PatternMatch(cfg) => {
+                writeln!(f, "{}", cfg)
+            }
+            DefinitionBodyM::CompilerIntrinsic => {
+                writeln!(f, "compiler intrinsic")
+            }
+        }
     }
 }
 
@@ -162,6 +170,24 @@ pub struct ControlFlowGraph {
     /// Every basic block has a unique index, which is its index inside this basic blocks map.
     /// When jumping between basic blocks, we must provide the index of the target block.
     pub basic_blocks: BTreeMap<BasicBlockId, BasicBlock>,
+    /// Which basic block should be entered to invoke the function?
+    pub entry_point: BasicBlockId,
+}
+
+impl Display for ControlFlowGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "entry point: {}", self.entry_point)?;
+
+        for (block_id, block) in &self.basic_blocks {
+            writeln!(f, "{}:", block_id)?;
+            for stmt in &block.statements {
+                writeln!(f, "    {}", stmt)?;
+            }
+            writeln!(f, "    {}", block.terminator)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl ControlFlowGraph {
@@ -175,7 +201,7 @@ impl ControlFlowGraph {
 
     /// Assigns new basic block IDs to ensure we're in SSA form, only using variables and blocks after they're defined.
     /// Returns the new entry point.
-    fn reorder(&mut self, entry_point: BasicBlockId) -> BasicBlockId {
+    fn reorder(&mut self) {
         // We use a topological sort (Kahn's algorithm) to reorder basic blocks.
 
         // Cache some things about each block.
@@ -307,7 +333,7 @@ impl ControlFlowGraph {
         // Now run Kahn's algorithm.
         // The set of start nodes is exactly the entry point of the function.
         let mut l = Vec::new();
-        let mut s = vec![entry_point];
+        let mut s = vec![self.entry_point];
         while let Some(node) = s.pop() {
             l.push(node);
             // Look for each node that follows from this block.
@@ -353,7 +379,8 @@ impl ControlFlowGraph {
                 TerminatorKind::Return { .. } => {}
             }
         }
-        block_id_map[&entry_point]
+
+        self.entry_point = block_id_map[&self.entry_point];
     }
 }
 
@@ -784,23 +811,15 @@ impl DefinitionTranslationContext {
 }
 
 fn to_mir_def(project_index: &ProjectIndex, def: Definition) -> DiagnosticResult<DefinitionM> {
-    let mut ctx = DefinitionTranslationContext {
-        next_local_variable_id: LocalVariableId(0),
-        local_variable_names: BTreeMap::new(),
-        local_name_map: HashMap::new(),
-        control_flow_graph: ControlFlowGraph {
-            next_block_id: BasicBlockId(0),
-            basic_blocks: BTreeMap::new(),
-        },
-    };
-
     let range = def.range();
     let type_variables = def.type_variables.clone();
     let arity = def.arg_types.len() as u64;
     let return_type = def.return_type.clone();
 
+    let mut local_variable_names = BTreeMap::new();
+
     for (i, ty) in def.arg_types.iter().enumerate() {
-        ctx.local_variable_names.insert(
+        local_variable_names.insert(
             LocalVariableName::Argument(ArgumentIndex(i as u64)),
             LocalVariableInfo {
                 range,
@@ -810,22 +829,50 @@ fn to_mir_def(project_index: &ProjectIndex, def: Definition) -> DiagnosticResult
         );
     }
 
-    // This function will create the rest of the control flow graph
-    // for sub-expressions.
-    let entry_point = create_cfg(project_index, &mut ctx, def);
+    match def.body {
+        DefinitionBody::PatternMatch(cases) => {
+            let mut ctx = DefinitionTranslationContext {
+                next_local_variable_id: LocalVariableId(0),
+                local_variable_names,
+                local_name_map: HashMap::new(),
+                control_flow_graph: ControlFlowGraph {
+                    next_block_id: BasicBlockId(0),
+                    entry_point: BasicBlockId(0),
+                    basic_blocks: BTreeMap::new(),
+                },
+            };
 
-    let mut def = DefinitionM {
-        range,
-        type_variables,
-        arity,
-        local_variable_names: ctx.local_variable_names,
-        return_type,
-        control_flow_graph: ctx.control_flow_graph,
-        entry_point,
-    };
-    def.entry_point = def.control_flow_graph.reorder(def.entry_point);
+            // This function will create the rest of the control flow graph
+            // for sub-expressions.
+            ctx.control_flow_graph.entry_point =
+                create_cfg(project_index, &mut ctx, cases, def.arg_types, range);
+            ctx.control_flow_graph.reorder();
 
-    DiagnosticResult::ok(def)
+            let def = DefinitionM {
+                range,
+                type_variables,
+                arity,
+                local_variable_names: ctx.local_variable_names,
+                return_type,
+                body: DefinitionBodyM::PatternMatch(ctx.control_flow_graph),
+            };
+
+            DiagnosticResult::ok(def)
+        }
+
+        DefinitionBody::CompilerIntrinsic => {
+            let def = DefinitionM {
+                range,
+                type_variables,
+                arity,
+                local_variable_names,
+                return_type,
+                body: DefinitionBodyM::CompilerIntrinsic,
+            };
+
+            DiagnosticResult::ok(def)
+        }
+    }
 }
 
 /// Creates a control flow graph for a function definition.
@@ -833,14 +880,12 @@ fn to_mir_def(project_index: &ProjectIndex, def: Definition) -> DiagnosticResult
 fn create_cfg(
     project_index: &ProjectIndex,
     ctx: &mut DefinitionTranslationContext,
-    def: Definition,
+    cases: Vec<DefinitionCase>,
+    arg_types: Vec<Type>,
+    range: Range,
 ) -> BasicBlockId {
-    let range = def.range();
-    let arg_types = def.arg_types;
-
     // Begin by creating the CFG for each case in the definition.
-    let cases = def
-        .cases
+    let cases = cases
         .into_iter()
         .map(|case| {
             // Create a local variable for each bound variable in the pattern.

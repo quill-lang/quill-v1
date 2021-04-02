@@ -35,6 +35,7 @@ def main: unit {
         create_either 104;
         drop make_unit;
         drop Some { value = 100 };
+        print 1492
     )
 }
 
@@ -45,3 +46,5 @@ def make_unit: unit {
 def drop[T]: T -> unit {
     drop _ = unit
 }
+
+def print: int -> unit { compiler_intrinsic }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use quill_common::name::QualifiedName;
-use quill_mir::{DefinitionM, ProjectMIR, Statement, StatementKind};
+use quill_mir::{DefinitionBodyM, DefinitionM, ProjectMIR, Statement, StatementKind};
 
 /// Converts curried functions and partial application of functions into more LLVM-friendly representations.
 pub fn convert_func_objects(project: &mut ProjectMIR) {
@@ -29,13 +29,15 @@ pub fn convert_func_objects(project: &mut ProjectMIR) {
 }
 
 fn convert_def(def: &mut DefinitionM, arities: &HashMap<QualifiedName, u64>) {
-    for block in def.control_flow_graph.basic_blocks.values_mut() {
-        block.statements = block
-            .statements
-            .drain(..)
-            .map(|stmt| convert_stmt(stmt, arities))
-            .flatten()
-            .collect();
+    if let DefinitionBodyM::PatternMatch(cfg) = &mut def.body {
+        for block in cfg.basic_blocks.values_mut() {
+            block.statements = block
+                .statements
+                .drain(..)
+                .map(|stmt| convert_stmt(stmt, arities))
+                .flatten()
+                .collect();
+        }
     }
 }
 
