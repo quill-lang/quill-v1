@@ -14,8 +14,7 @@ pub fn link(deps: &Path, build_info: BuildInfo) {
         }
         TargetOS::Windows => {
             // Run `lld-link`.
-            let path = lld_link(deps);
-            let mut linker = Command::new(path);
+            let mut linker = lld_link(deps);
 
             linker.arg(format!(
                 "/OUT:{}",
@@ -39,13 +38,15 @@ pub fn link(deps: &Path, build_info: BuildInfo) {
 }
 
 #[cfg(target_family = "windows")]
-fn lld_link(deps: &Path) -> PathBuf {
-    deps.join("dev-win").join("lld-link.exe")
+fn lld_link(deps: &Path) -> Command {
+    Command::new(deps.join("dev-win").join("lld-link.exe"))
 }
 
 #[cfg(target_family = "unix")]
-fn lld_link(deps: &Path) -> PathBuf {
-    deps.join("dev-ubuntu-16.04").join("lld-link")
+fn lld_link(deps: &Path) -> Command {
+    let mut command = Command::new(deps.join("dev-ubuntu-16.04").join("lld"));
+    command.arg("-flavor").arg("link");
+    command
 }
 
 fn dep_win(deps: &Path, dep: &str) -> PathBuf {
