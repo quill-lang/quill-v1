@@ -1,6 +1,9 @@
 use std::{collections::HashMap, path::Path};
 
 use quill_common::{location::Location, name::QualifiedName};
+use quill_llvm::{
+    BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
+};
 use quill_mir::ProjectMIR;
 
 #[tokio::test]
@@ -63,6 +66,26 @@ async fn test_llvm() {
 
         convert_func_objects(&mut proj);
 
-        quill_llvm::build(Path::new("../../test_output"), fname, &proj, &index);
+        let target_triple = TargetTriple {
+            arch: TargetArchitecture::X86_64,
+            vendor: TargetVendor::Pc,
+            os: TargetOS::Windows,
+            env: Some(TargetEnvironment::Msvc),
+        };
+
+        let build_folder = Path::new("../../test_output/target")
+            .join(fname)
+            .join(target_triple.to_string());
+
+        std::fs::create_dir_all(&build_folder).unwrap();
+        let build_folder = build_folder.canonicalize().unwrap();
+
+        let build_info = BuildInfo {
+            target_triple,
+            build_folder,
+        };
+
+        quill_llvm::build(fname, &proj, &index, build_info.clone());
+        quill_link::link(&Path::new("../../compiler-deps").canonicalize().unwrap(), build_info);
     }
 }

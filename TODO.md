@@ -5,8 +5,8 @@
 - When destructuring an object, drop all fields that we don't care about.
 - Make data structures use heap allocation when Tarjan's algorithm finds a cycle.
 - Use `TargetData` to compute size/alignment of data.
-- Use LLVM's malloc instead of libc's.
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
 - Implement heap allocation in `quill_llvm/repr.rs`.
 - Implement drop and free in LLVM IR.
+- Make a golang-style automatic semicolon rule in the lexer.

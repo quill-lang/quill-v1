@@ -35,7 +35,8 @@ def main: unit {
         create_either 104;
         drop make_unit;
         drop Some { value = 100 };
-        print 1492
+        putchar 72;
+        putchar (unwrap_or 65 Some { value = 66 })
     )
 }
 
@@ -47,4 +48,4 @@ def drop[T]: T -> unit {
     drop _ = unit
 }
 
-def print: int -> unit { compiler_intrinsic }
+def putchar: int -> unit { compiler_intrinsic }

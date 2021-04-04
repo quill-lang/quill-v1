@@ -1,0 +1,8 @@
+[package]
+name = "quill_link"
+version = "0.1.0"
+authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+quill_llvm = { path = "../quill_llvm" }

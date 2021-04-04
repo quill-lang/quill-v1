@@ -2,9 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use inkwell::{
     basic_block::BasicBlock,
-    module::Linkage,
     types::BasicTypeEnum,
-    values::{FunctionValue, PointerValue, UnnamedAddress},
+    values::{FunctionValue, PointerValue},
     AddressSpace,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
@@ -709,60 +708,35 @@ fn create_real_func_body_intrinsic<'ctx>(
     ctx.codegen.builder.position_at_end(block);
 
     match ctx.func.func.name.as_str() {
-        "print" => {
-            // This is the `print` intrinsic.
-            // print : int -> unit
-            let printf = ctx.codegen.module.add_function(
-                "printf",
-                ctx.codegen.context.i32_type().fn_type(
-                    &[ctx
-                        .codegen
-                        .context
-                        .i8_type()
-                        .ptr_type(AddressSpace::Generic)
-                        .into()],
-                    true,
-                ),
-                None,
-            );
-            let format_str = ctx.codegen.module.add_global(
-                ctx.codegen.context.i8_type().array_type(4),
-                Some(AddressSpace::Const),
-                "call_printf_%d",
-            );
-            format_str.set_initializer(&ctx.codegen.context.const_string("%d\n".as_bytes(), true));
-            format_str.set_unnamed_address(UnnamedAddress::Global);
-            format_str.set_linkage(Linkage::Private);
-            format_str.set_constant(true);
-
-            let format_str_gep = unsafe {
-                ctx.codegen.builder.build_in_bounds_gep(
-                    format_str.as_pointer_value(),
-                    &[
-                        ctx.codegen.context.i32_type().const_int(0, false),
-                        ctx.codegen.context.i32_type().const_int(0, false),
-                    ],
-                    "format_str",
-                )
-            };
-
-            let format_str_cast = ctx.codegen.builder.build_address_space_cast(
-                format_str_gep,
+        "putchar" => {
+            // This is the `putchar` intrinsic.
+            // putchar : int -> unit
+            let putchar = ctx.codegen.module.add_function(
+                "putchar",
                 ctx.codegen
                     .context
-                    .i8_type()
-                    .ptr_type(AddressSpace::Generic),
-                "format_str_cast",
+                    .i32_type()
+                    .fn_type(&[ctx.codegen.context.i32_type().into()], false),
+                None,
             );
 
-            let arg0 = ctx.codegen.builder.build_load(
-                ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
-                "arg0",
+            let arg0 = ctx
+                .codegen
+                .builder
+                .build_load(
+                    ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
+                    "arg0",
+                )
+                .into_int_value();
+            let arg0_i32 = ctx.codegen.builder.build_int_cast(
+                arg0,
+                ctx.codegen.context.i32_type(),
+                "arg0_i32",
             );
 
-            let args = &[format_str_cast.into(), arg0];
-
-            ctx.codegen.builder.build_call(printf, args, "call_printf");
+            ctx.codegen
+                .builder
+                .build_call(putchar, &[arg0_i32.into()], "call_putchar");
             ctx.codegen.builder.build_return(None);
         }
         _ => {

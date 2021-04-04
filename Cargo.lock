@@ -315,6 +315,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill_link"
+version = "0.1.0"
+dependencies = [
+ "quill_llvm",
+]
+
+[[package]]
 name = "quill_llvm"
 version = "0.1.0"
 dependencies = [
@@ -325,6 +332,7 @@ dependencies = [
  "quill_func_objects",
  "quill_index",
  "quill_lexer",
+ "quill_link",
  "quill_mir",
  "quill_parser",
  "quill_source_file",

@@ -5,7 +5,7 @@ use inkwell::{context::Context, targets::FileType};
 use inkwell::{module::Module, OptimizationLevel};
 use inkwell::{
     passes::PassManager,
-    targets::{CodeModel, RelocMode, TargetTriple},
+    targets::{CodeModel, RelocMode},
 };
 use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
@@ -47,20 +47,127 @@ impl Display for ExecutionError {
     }
 }
 
-/// Builds an LLVM module for the given input source file.
-pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIndex) {
-    // println!("Building module...");
+#[derive(Clone, Copy)]
+pub struct TargetTriple {
+    pub arch: TargetArchitecture,
+    pub vendor: TargetVendor,
+    pub os: TargetOS,
+    pub env: Option<TargetEnvironment>,
+}
 
-    let host_triple = guess_host_triple::guess_host_triple().unwrap();
+impl Display for TargetTriple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(env) = &self.env {
+            write!(f, "{}-{}-{}-{}", self.arch, self.vendor, self.os, env)
+        } else {
+            write!(f, "{}-{}-{}", self.arch, self.vendor, self.os)
+        }
+    }
+}
 
-    let build_folder = dir.join("target").join(project_name).join(host_triple);
-    let _ = std::fs::create_dir_all(build_folder.join("bin"));
+impl Debug for TargetTriple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self, f)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TargetArchitecture {
+    X86_64,
+}
+
+impl Display for TargetArchitecture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TargetArchitecture::X86_64 => "x86_64",
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TargetVendor {
+    Unknown,
+    Pc,
+}
+
+impl Display for TargetVendor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TargetVendor::Unknown => "unknown",
+                TargetVendor::Pc => "pc",
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TargetOS {
+    Linux,
+    Windows,
+}
+
+impl Display for TargetOS {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TargetOS::Linux => "linux",
+                TargetOS::Windows => "windows",
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TargetEnvironment {
+    Gnu,
+    Msvc,
+}
+
+impl Display for TargetEnvironment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TargetEnvironment::Gnu => "gnu",
+                TargetEnvironment::Msvc => "msvc",
+            }
+        )
+    }
+}
+
+impl From<TargetTriple> for inkwell::targets::TargetTriple {
+    fn from(triple: TargetTriple) -> Self {
+        Self::create(&triple.to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BuildInfo {
+    pub target_triple: TargetTriple,
+    pub build_folder: PathBuf,
+}
+
+/// Builds an LLVM module for the given input source file, outputting it in the given directory.
+pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_info: BuildInfo) {
+    let target_triple = build_info.target_triple.into();
+
+    let _ = std::fs::create_dir_all(&build_info.build_folder);
     let path = Path::new("out.o");
 
     // Output the MIR.
     {
         use std::io::Write;
-        let mir_path = build_folder.join(path.with_extension("mir"));
+        let mir_path = build_info.build_folder.join(path.with_extension("mir"));
         let f = File::create(mir_path).unwrap();
         let mut f = BufWriter::new(f);
         writeln!(f, "{}", mir).unwrap();
@@ -68,7 +175,7 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
 
     let context = Context::create();
     let module = context.create_module(project_name);
-    module.set_triple(&TargetTriple::create(host_triple));
+    module.set_triple(&target_triple);
     let codegen = CodeGenContext::new(&context, module);
 
     let mono = Monomorphisation::new(mir);
@@ -121,15 +228,15 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
 
     Target::initialize_all(&InitializationConfig::default());
 
-    let object_path = build_folder.join(path);
-    let asm_path = build_folder.join(path.with_extension("asm"));
-    let bc_path = build_folder.join(path.with_extension("bc"));
-    let bc_opt_path = build_folder.join(path.with_extension("opt.bc"));
+    let object_path = build_info.build_folder.join(path);
+    let asm_path = build_info.build_folder.join(path.with_extension("asm"));
+    let bc_path = build_info.build_folder.join(path.with_extension("bc"));
+    let bc_opt_path = build_info.build_folder.join(path.with_extension("opt.bc"));
 
     let target = Target::from_name("x86-64").unwrap();
     let target_machine = target
         .create_target_machine(
-            &TargetTriple::create(host_triple),
+            &target_triple,
             "x86-64",
             "+avx2",
             OptimizationLevel::None,
@@ -163,76 +270,4 @@ pub fn build(dir: &Path, project_name: &str, mir: &ProjectMIR, index: &ProjectIn
     assert!(target_machine
         .write_to_file(&codegen.module, FileType::Object, &object_path)
         .is_ok());
-
-    // Create a "glue" file to force CMake to use the C linker and actually link libc, instead of whatever it normally does.
-    File::create(build_folder.join("glue.c")).unwrap();
-
-    println!("Configuring CMake...");
-
-    {
-        use std::io::Write;
-        // Output the CMakeLists.txt file.
-        let mut cmakelists =
-            BufWriter::new(std::fs::File::create(build_folder.join("CMakeLists.txt")).unwrap());
-        writeln!(cmakelists, "cmake_minimum_required (VERSION 3.10)").unwrap();
-        writeln!(cmakelists, "project (TEST)").unwrap();
-        writeln!(cmakelists, "add_executable (test out.o glue.c)").unwrap();
-    }
-
-    let cmake_configure = Command::new("cmake")
-        .arg("..")
-        .current_dir(build_folder.join("bin"))
-        .output()
-        .unwrap();
-    if !cmake_configure.status.success() {
-        panic!(
-            "Errored: {}",
-            ExecutionError {
-                program: "cmake configure".to_owned(),
-                output: cmake_configure,
-            }
-        );
-    }
-
-    println!("Linking...");
-
-    let cmake_build = Command::new("cmake")
-        .arg("--build")
-        .arg(".")
-        .current_dir(build_folder.join("bin"))
-        .output()
-        .unwrap();
-    if !cmake_build.status.success() {
-        panic!(
-            "Errored: {}",
-            ExecutionError {
-                program: "cmake build".to_owned(),
-                output: cmake_build,
-            }
-        );
-    }
-
-    println!("Running executable...");
-    assert!(run_executable(build_folder.join("bin"))
-        .status()
-        .unwrap()
-        .success());
-    println!("Done!");
-}
-
-fn run_executable(dir: PathBuf) -> Command {
-    let file = {
-        #[cfg(windows)]
-        {
-            std::fs::canonicalize(dir.join("Debug").join("test.exe")).unwrap()
-        }
-        #[cfg(unix)]
-        {
-            std::fs::canonicalize(dir.join("test")).unwrap()
-        }
-    };
-
-    let mut command = Command::new(file);
-    command.current_dir(dir);
-    command
 }
