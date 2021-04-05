@@ -68,9 +68,9 @@ async fn test_llvm() {
 
         let target_triple = TargetTriple {
             arch: TargetArchitecture::X86_64,
-            vendor: TargetVendor::Pc,
-            os: TargetOS::Windows,
-            env: Some(TargetEnvironment::Msvc),
+            vendor: TargetVendor::Unknown,
+            os: TargetOS::Linux,
+            env: Some(TargetEnvironment::Gnu),
         };
 
         let build_folder = Path::new("../../test_output/target")
@@ -86,6 +86,9 @@ async fn test_llvm() {
         };
 
         quill_llvm::build(fname, &proj, &index, build_info.clone());
-        quill_link::link(&Path::new("../../compiler-deps").canonicalize().unwrap(), build_info);
+        quill_link::link(
+            &Path::new("../../compiler-deps").canonicalize().unwrap(),
+            build_info,
+        );
     }
 }

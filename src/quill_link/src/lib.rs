@@ -11,6 +11,45 @@ pub fn link(deps: &Path, build_info: BuildInfo) {
     match build_info.target_triple.os {
         TargetOS::Linux => {
             // Run `ld.lld`.
+            let mut linker = ld_lld(deps);
+
+            linker.arg("-dynamic-linker");
+            linker.arg("/lib64/ld-linux-x86-64.so.2");
+            linker.arg("-pie");
+            linker.arg("-o");
+            linker.arg(build_info.build_folder.join("out").to_str().unwrap());
+            linker.arg(&format!("-L{}", dep_unix(deps, "").to_str().unwrap()));
+
+            linker.arg(dep_unix(deps, "Scrt1.o").to_str().unwrap());
+            linker.arg(dep_unix(deps, "crti.o").to_str().unwrap());
+            linker.arg(dep_unix(deps, "crtbeginS.o").to_str().unwrap());
+            linker.arg(build_info.build_folder.join("out.o"));
+
+            linker.arg("-lgcc");
+            linker.arg("--push-state");
+            linker.arg("--as-needed");
+            linker.arg("-lgcc_s");
+            linker.arg("--pop-state");
+
+            linker.arg("-lc");
+            linker.arg("-lc_nonshared");
+
+            linker.arg("-lgcc");
+            linker.arg("--push-state");
+            linker.arg("--as-needed");
+            linker.arg("-lgcc_s");
+            linker.arg("--pop-state");
+
+            linker.arg(dep_unix(deps, "crtendS.o").to_str().unwrap());
+            linker.arg(dep_unix(deps, "crtn.o").to_str().unwrap());
+
+            let result = linker.output().unwrap();
+            if !result.status.success() {
+                panic!(
+                    "Linker failed:\n{}",
+                    std::str::from_utf8(&result.stderr).unwrap()
+                );
+            }
         }
         TargetOS::Windows => {
             // Run `lld-link`.
@@ -38,15 +77,35 @@ pub fn link(deps: &Path, build_info: BuildInfo) {
 }
 
 #[cfg(target_family = "windows")]
+fn ld_lld(deps: &Path) -> Command {
+    let mut command = Command::new(deps.join("dev-win").join("lld.exe"));
+    command.arg("-flavor").arg("ld");
+    command
+}
+
+#[cfg(target_family = "unix")]
+fn ld_lld(deps: &Path) -> Command {
+    let mut command = Command::new(deps.join("dev-unix").join("lld"));
+    command.arg("-flavor").arg("ld");
+    command
+}
+
+#[cfg(target_family = "windows")]
 fn lld_link(deps: &Path) -> Command {
-    Command::new(deps.join("dev-win").join("lld-link.exe"))
+    let mut command = Command::new(deps.join("dev-win").join("lld.exe"));
+    command.arg("-flavor").arg("link");
+    command
 }
 
 #[cfg(target_family = "unix")]
 fn lld_link(deps: &Path) -> Command {
-    let mut command = Command::new(deps.join("dev-ubuntu-16.04").join("lld"));
+    let mut command = Command::new(deps.join("dev-unix").join("lld"));
     command.arg("-flavor").arg("link");
     command
+}
+
+fn dep_unix(deps: &Path, dep: &str) -> PathBuf {
+    deps.join("target-unix").join(dep)
 }
 
 fn dep_win(deps: &Path, dep: &str) -> PathBuf {
