@@ -60,6 +60,15 @@ impl CompilerLocation {
             std::process::exit(1);
         }
     }
+
+    /// Where is the `compiler-deps` folder for this compiler stored?
+    fn deps_directory(&self) -> PathBuf {
+        match self {
+            CompilerLocation::Cargo { source } => {
+                source.join("compiler-deps").canonicalize().unwrap()
+            }
+        }
+    }
 }
 
 struct ProjectConfig {
@@ -101,8 +110,14 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
     }
 
     // TODO change this so that `quill` uses its own `quillc` rather than relying on being inside a source tree.
+
+    // Find where the root directory of the `quill` source code is.
+    let mut compiler_location_path: PathBuf = Path::new(".").into();
+    while compiler_location_path.is_dir() && !compiler_location_path.join("Cargo.lock").is_file() {
+        compiler_location_path = compiler_location_path.join("..");
+    }
     let compiler_location = CompilerLocation::Cargo {
-        source: Path::new(".").into(),
+        source: compiler_location_path,
     };
 
     CliConfig {
@@ -221,9 +236,13 @@ fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &A
 }
 
 fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: BuildInfo) {
-    cli_config
-        .compiler_location
-        .invoke_quillc(cli_config.verbose, &QuillcInvocation { build_info });
+    cli_config.compiler_location.invoke_quillc(
+        cli_config.verbose,
+        &QuillcInvocation {
+            build_info,
+            deps_directory: cli_config.compiler_location.deps_directory(),
+        },
+    );
 }
 
 fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {

@@ -19,5 +19,7 @@ quill_llvm = { path = "../quill_llvm" }
 quill_link = { path = "../quill_link" }
 
 quillc_api = { path = "../quillc_api" }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.5"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
