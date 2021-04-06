@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use quill_common::{
-    diagnostic::{Diagnostic, ErrorMessage, Severity},
     location::{Location, SourceFileIdentifier},
     name::QualifiedName,
 };
@@ -9,12 +8,6 @@ use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
 use quill_source_file::{ErrorEmitter, PackageFileSystem};
 use quillc_api::{ProjectInfo, QuillcInvocation};
-
-async fn exit(mut emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
-    emitter.process(vec![error_message]);
-    emitter.emit_all().await;
-    std::process::exit(1)
-}
 
 /// The `quillc` compiler is not intended to be used as a CLI.
 /// Rather, the `quill` driver program should supply correct arguments to `quillc` in the form of JSON.
@@ -26,74 +19,15 @@ async fn main() {
     let fs = PackageFileSystem::new(invocation.build_info.code_folder.clone());
     let mut error_emitter = ErrorEmitter::new(&fs);
 
-    let project_config = if let Ok(project_config_str) =
-        std::fs::read(invocation.build_info.code_folder.join("quill.toml"))
-    {
-        match std::str::from_utf8(&project_config_str) {
-            Ok(project_config_str) => match toml::from_str::<ProjectInfo>(project_config_str) {
-                Ok(toml) => toml,
-                Err(err) => {
-                    let (line, col) = err.line_col().unwrap_or((0, 0));
-                    exit(
-                        error_emitter,
-                        ErrorMessage::new(
-                            format!("'quill.toml' contained an error: {}", err),
-                            Severity::Error,
-                            Diagnostic::at_location(
-                                &SourceFileIdentifier {
-                                    module: vec![].into(),
-                                    file: "quill.toml".into(),
-                                },
-                                Location {
-                                    line: line as u32,
-                                    col: col as u32,
-                                },
-                            ),
-                        ),
-                    )
-                    .await
-                }
-            },
-            Err(err) => {
-                let (valid, after_valid) = project_config_str.split_at(err.valid_up_to());
-                let safe_str = unsafe { std::str::from_utf8_unchecked(valid) };
-                let safe_str_chars = safe_str.chars().collect::<Vec<_>>();
-                let safe_str_slice: String = safe_str_chars
-                    [std::cmp::max(20, safe_str_chars.len()) - 20..]
-                    .iter()
-                    .collect();
-                exit(
-                    error_emitter,
-                    ErrorMessage::new(
-                        format!(
-                        "'quill.toml' contained invalid UTF-8 after '...{}', bytes were {:02X?}",
-                        safe_str_slice,
-                        &after_valid[..std::cmp::min(10, after_valid.len())]
-                    ),
-                        Severity::Error,
-                        Diagnostic::in_file(&SourceFileIdentifier {
-                            module: vec![].into(),
-                            file: "quill.toml".into(),
-                        }),
-                    ),
-                )
-                .await
-            }
-        }
-    } else {
-        exit(
-            error_emitter,
-            ErrorMessage::new(
-                "'quill.toml' file could not be found".to_string(),
-                Severity::Error,
-                Diagnostic::in_file(&SourceFileIdentifier {
-                    module: vec![].into(),
-                    file: "quill.toml".into(),
-                }),
-            ),
+    // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
+    // (This is excluding the annoying case where the file changes after being parsed by `quill`, and before this program is executed.)
+    let project_config = toml::from_str::<ProjectInfo>(
+        std::str::from_utf8(
+            &std::fs::read(invocation.build_info.code_folder.join("quill.toml")).unwrap(),
         )
-        .await
-    };
+        .unwrap(),
+    )
+    .unwrap();
 
     let file_ident = SourceFileIdentifier {
         module: vec![].into(),
