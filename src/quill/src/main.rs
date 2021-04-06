@@ -17,10 +17,15 @@ use std::{
 };
 
 use clap::ArgMatches;
+use quill_common::{
+    diagnostic::{Diagnostic, ErrorMessage, Severity},
+    location::{Location, SourceFileIdentifier},
+};
+use quill_source_file::{ErrorEmitter, PackageFileSystem};
 use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
-use quillc_api::QuillcInvocation;
+use quillc_api::{ProjectInfo, QuillcInvocation};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -74,6 +79,8 @@ impl CompilerLocation {
 struct ProjectConfig {
     code_folder: PathBuf,
     build_folder: PathBuf,
+    fs: PackageFileSystem,
+    project_info: ProjectInfo,
 }
 
 fn error<S: Display>(message: S) -> ! {
@@ -81,7 +88,14 @@ fn error<S: Display>(message: S) -> ! {
     std::process::exit(1);
 }
 
-fn main() {
+async fn exit(mut emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
+    emitter.process(vec![error_message]);
+    emitter.emit_all().await;
+    std::process::exit(1)
+}
+
+#[tokio::main]
+async fn main() {
     let yaml = clap::load_yaml!("cli.yml");
     let args = clap::App::from_yaml(yaml).get_matches();
 
@@ -89,9 +103,11 @@ fn main() {
 
     match args.subcommand() {
         ("build", Some(sub_args)) => {
-            process_build(&cli_config, &gen_project_config(&args), sub_args)
+            process_build(&cli_config, &gen_project_config(&args).await, sub_args)
         }
-        ("run", Some(sub_args)) => process_run(&cli_config, &gen_project_config(&args), sub_args),
+        ("run", Some(sub_args)) => {
+            process_run(&cli_config, &gen_project_config(&args).await, sub_args)
+        }
         ("", _) => {
             clap::App::from_yaml(yaml).print_help().unwrap();
         }
@@ -126,7 +142,7 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
     }
 }
 
-fn gen_project_config(args: &ArgMatches) -> ProjectConfig {
+async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     let provided_code_folder = args
         .value_of_os("project")
         .map_or_else(|| Path::new("."), Path::new);
@@ -143,12 +159,76 @@ fn gen_project_config(args: &ArgMatches) -> ProjectConfig {
 
     // Check that the code folder contains a `quill.toml` file.
     // TODO check parent directories to see if we're in a subfolder of a Quill project.
-    if !code_folder.join("quill.toml").is_file() {
-        error(format!(
-            "project folder '{}' did not contain a 'quill.toml' file",
-            code_folder.to_string_lossy()
-        ))
-    }
+
+    let fs = PackageFileSystem::new(code_folder.clone());
+
+    let project_info = if let Ok(project_config_str) = std::fs::read(code_folder.join("quill.toml"))
+    {
+        match std::str::from_utf8(&project_config_str) {
+            Ok(project_config_str) => match toml::from_str::<ProjectInfo>(project_config_str) {
+                Ok(toml) => toml,
+                Err(err) => {
+                    let (line, col) = err.line_col().unwrap_or((0, 0));
+                    exit(
+                        ErrorEmitter::new(&fs),
+                        ErrorMessage::new(
+                            format!("'quill.toml' contained an error: {}", err),
+                            Severity::Error,
+                            Diagnostic::at_location(
+                                &SourceFileIdentifier {
+                                    module: vec![].into(),
+                                    file: "quill.toml".into(),
+                                },
+                                Location {
+                                    line: line as u32,
+                                    col: col as u32,
+                                },
+                            ),
+                        ),
+                    )
+                    .await
+                }
+            },
+            Err(err) => {
+                let (valid, after_valid) = project_config_str.split_at(err.valid_up_to());
+                let safe_str = unsafe { std::str::from_utf8_unchecked(valid) };
+                let safe_str_chars = safe_str.chars().collect::<Vec<_>>();
+                let safe_str_slice: String = safe_str_chars
+                    [std::cmp::max(20, safe_str_chars.len()) - 20..]
+                    .iter()
+                    .collect();
+                exit(
+                    ErrorEmitter::new(&fs),
+                    ErrorMessage::new(
+                        format!(
+                        "'quill.toml' contained invalid UTF-8 after '...{}', bytes were {:02X?}",
+                        safe_str_slice,
+                        &after_valid[..std::cmp::min(10, after_valid.len())]
+                    ),
+                        Severity::Error,
+                        Diagnostic::in_file(&SourceFileIdentifier {
+                            module: vec![].into(),
+                            file: "quill.toml".into(),
+                        }),
+                    ),
+                )
+                .await
+            }
+        }
+    } else {
+        exit(
+            ErrorEmitter::new(&fs),
+            ErrorMessage::new(
+                "'quill.toml' file could not be found".to_string(),
+                Severity::Error,
+                Diagnostic::in_file(&SourceFileIdentifier {
+                    module: vec![].into(),
+                    file: "quill.toml".into(),
+                }),
+            ),
+        )
+        .await
+    };
 
     std::fs::create_dir_all(code_folder.join("build")).unwrap();
     let build_folder = code_folder.join("build").canonicalize().unwrap();
@@ -156,6 +236,8 @@ fn gen_project_config(args: &ArgMatches) -> ProjectConfig {
     ProjectConfig {
         code_folder,
         build_folder,
+        fs,
+        project_info,
     }
 }
 
@@ -247,7 +329,7 @@ fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: Bu
 
 fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
     build(cli_config, project_config, build_info.clone());
-    let mut command = Command::new(build_info.executable());
+    let mut command = Command::new(build_info.executable(&project_config.project_info.name));
     command.current_dir(build_info.code_folder);
     let status = command.status().unwrap();
     if !status.success() {

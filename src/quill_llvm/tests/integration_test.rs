@@ -89,6 +89,7 @@ async fn test_llvm() {
 
         quill_llvm::build(fname, &proj, &index, build_info.clone());
         quill_link::link(
+            "out",
             &Path::new("../../compiler-deps").canonicalize().unwrap(),
             build_info,
         );

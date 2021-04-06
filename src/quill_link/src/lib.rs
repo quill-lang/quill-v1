@@ -6,7 +6,7 @@ use std::{
 use quill_target::{BuildInfo, TargetOS};
 
 /// The `deps` path is a path to the folder containing files such as `ld.lld` and `msvcrt.lib`.
-pub fn link(deps: &Path, build_info: BuildInfo) {
+pub fn link(project_name: &str, deps: &Path, build_info: BuildInfo) {
     // Invoke `lld_link` to link for windows, and `ld.lld` to link for linux.
     match build_info.target_triple.os {
         TargetOS::Linux => {
@@ -17,7 +17,7 @@ pub fn link(deps: &Path, build_info: BuildInfo) {
             linker.arg("/lib64/ld-linux-x86-64.so.2");
             linker.arg("-pie");
             linker.arg("-o");
-            linker.arg(build_info.build_folder.join("out").to_str().unwrap());
+            linker.arg(build_info.build_folder.join(project_name).to_str().unwrap());
             linker.arg(&format!("-L{}", dep_unix(deps, "").to_str().unwrap()));
 
             linker.arg(dep_unix(deps, "Scrt1.o").to_str().unwrap());
@@ -57,7 +57,11 @@ pub fn link(deps: &Path, build_info: BuildInfo) {
 
             linker.arg(format!(
                 "/OUT:{}",
-                build_info.build_folder.join("out.exe").to_str().unwrap()
+                build_info
+                    .build_folder
+                    .join(format!("{}.exe", project_name))
+                    .to_str()
+                    .unwrap()
             ));
             linker.arg(build_info.build_folder.join("out.o"));
             linker.arg(dep_win(deps, "msvcrt.lib"));

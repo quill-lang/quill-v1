@@ -18,6 +18,8 @@ subcommands:
         - target:
             short: t
             multiple: true
+            takes_value: true
+            value_name: TARGET
             help: Specifies a target to compile code for, if none are provided it compiles for the host system
   - run:
       about: Runs the Quill code in a given folder

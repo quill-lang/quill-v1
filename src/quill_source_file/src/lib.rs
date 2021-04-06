@@ -113,12 +113,19 @@ impl PackageFileSystem {
         identifier: SourceFileIdentifier,
     ) -> Result<SourceFile, SourceFileLoadError> {
         use tokio::io::AsyncReadExt;
-        let file = File::open(
+        // Try the file with a `.quill` extension, then again without the extension if it failed.
+        let file = if let Ok(file) = File::open(
             self.directory
-                .join(PathBuf::from(identifier).with_extension("quill")),
+                .join(PathBuf::from(identifier.clone()).with_extension("quill")),
         )
         .await
-        .map_err(SourceFileLoadError::Io)?;
+        {
+            file
+        } else {
+            File::open(self.directory.join(PathBuf::from(identifier)))
+                .await
+                .map_err(SourceFileLoadError::Io)?
+        };
         let metadata = file.metadata().await.map_err(SourceFileLoadError::Io)?;
         let modified_time = metadata.modified().map_err(SourceFileLoadError::Io)?;
         let mut contents = Default::default();

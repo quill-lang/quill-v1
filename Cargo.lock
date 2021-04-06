@@ -412,9 +412,14 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "console",
+ "quill_common",
+ "quill_source_file",
  "quill_target",
  "quillc_api",
+ "serde",
  "serde_json",
+ "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]
