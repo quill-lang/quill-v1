@@ -9,13 +9,14 @@ use inkwell::{
 };
 use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
+use quill_target::{BuildInfo, TargetTriple};
 use repr::{Monomorphisation, MonomorphisationParameters, MonomorphisedFunction, Representations};
 use std::{
     error::Error,
     fmt::{Debug, Display},
     fs::File,
     io::BufWriter,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Output},
 };
 
@@ -47,119 +48,13 @@ impl Display for ExecutionError {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct TargetTriple {
-    pub arch: TargetArchitecture,
-    pub vendor: TargetVendor,
-    pub os: TargetOS,
-    pub env: Option<TargetEnvironment>,
-}
-
-impl Display for TargetTriple {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(env) = &self.env {
-            write!(f, "{}-{}-{}-{}", self.arch, self.vendor, self.os, env)
-        } else {
-            write!(f, "{}-{}-{}", self.arch, self.vendor, self.os)
-        }
-    }
-}
-
-impl Debug for TargetTriple {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&self, f)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum TargetArchitecture {
-    X86_64,
-}
-
-impl Display for TargetArchitecture {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                TargetArchitecture::X86_64 => "x86_64",
-            }
-        )
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum TargetVendor {
-    Unknown,
-    Pc,
-}
-
-impl Display for TargetVendor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                TargetVendor::Unknown => "unknown",
-                TargetVendor::Pc => "pc",
-            }
-        )
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum TargetOS {
-    Linux,
-    Windows,
-}
-
-impl Display for TargetOS {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                TargetOS::Linux => "linux",
-                TargetOS::Windows => "windows",
-            }
-        )
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum TargetEnvironment {
-    Gnu,
-    Msvc,
-}
-
-impl Display for TargetEnvironment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                TargetEnvironment::Gnu => "gnu",
-                TargetEnvironment::Msvc => "msvc",
-            }
-        )
-    }
-}
-
-impl From<TargetTriple> for inkwell::targets::TargetTriple {
-    fn from(triple: TargetTriple) -> Self {
-        Self::create(&triple.to_string())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BuildInfo {
-    pub target_triple: TargetTriple,
-    pub build_folder: PathBuf,
+fn convert_triple(triple: TargetTriple) -> inkwell::targets::TargetTriple {
+    inkwell::targets::TargetTriple::create(&triple.to_string())
 }
 
 /// Builds an LLVM module for the given input source file, outputting it in the given directory.
 pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_info: BuildInfo) {
-    let target_triple = build_info.target_triple.into();
+    let target_triple = convert_triple(build_info.target_triple);
 
     let _ = std::fs::create_dir_all(&build_info.build_folder);
     let path = Path::new("out.o");

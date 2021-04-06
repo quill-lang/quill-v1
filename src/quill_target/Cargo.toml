@@ -1,9 +1,8 @@
 [package]
-name = "quill_link"
+name = "quill_target"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
 edition = "2018"
+description = "Definitions of build targets"
 
 [dependencies]
-quill_llvm = { path = "../quill_llvm" }
-quill_target = { path = "../quill_target" }

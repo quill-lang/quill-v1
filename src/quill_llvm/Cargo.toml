@@ -12,6 +12,7 @@ quill_index = { path = "../quill_index" }
 quill_type = { path = "../quill_type" }
 quill_type_deduce = { path = "../quill_type_deduce" }
 quill_mir = { path = "../quill_mir" }
+quill_target = { path = "../quill_target" }
 
 [dev-dependencies]
 quill_parser = { path = "../quill_parser" }

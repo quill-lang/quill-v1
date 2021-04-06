@@ -5,11 +5,8 @@ authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-quill_lexer = { path = "../quill_lexer" }
-quill_parser = { path = "../quill_parser" }
-quill_index = { path = "../quill_index" }
-quill_type_deduce = { path = "../quill_type_deduce" }
-quill_mir = { path = "../quill_mir" }
-quill_borrow_check = { path = "../quill_borrow_check" }
-quill_func_objects = { path = "../quill_func_objects" }
-quill_llvm = { path = "../quill_llvm" }
+clap = { version = "~2.33.3", features = ["yaml"] }
+quill_target = { path = "../quill_target" }
+console = "^0.14"
+tracing = "^0.1.25"
+tracing-subscriber = "^0.2.16"

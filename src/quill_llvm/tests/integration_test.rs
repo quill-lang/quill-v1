@@ -1,10 +1,10 @@
 use std::{collections::HashMap, path::Path};
 
 use quill_common::{location::Location, name::QualifiedName};
-use quill_llvm::{
+use quill_mir::ProjectMIR;
+use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
-use quill_mir::ProjectMIR;
 
 #[tokio::test]
 async fn test_llvm() {
@@ -73,6 +73,7 @@ async fn test_llvm() {
             env: Some(TargetEnvironment::Gnu),
         };
 
+        let code_folder = Path::new("../../test_output/target").into();
         let build_folder = Path::new("../../test_output/target")
             .join(fname)
             .join(target_triple.to_string());
@@ -82,6 +83,7 @@ async fn test_llvm() {
 
         let build_info = BuildInfo {
             target_triple,
+            code_folder,
             build_folder,
         };
 

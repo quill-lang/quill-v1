@@ -1,4 +1,6 @@
 [workspace]
 members = [
-    "src/quill"
+    "src/quill",
+    "src/quillc",
+    "src/quill_lsp"
 ]

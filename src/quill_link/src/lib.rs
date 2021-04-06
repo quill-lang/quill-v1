@@ -3,7 +3,7 @@ use std::{
     process::Command,
 };
 
-use quill_llvm::{BuildInfo, TargetOS};
+use quill_target::{BuildInfo, TargetOS};
 
 /// The `deps` path is a path to the folder containing files such as `ld.lld` and `msvcrt.lib`.
 pub fn link(deps: &Path, build_info: BuildInfo) {

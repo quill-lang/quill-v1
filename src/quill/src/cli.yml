@@ -1,0 +1,23 @@
+name: quill
+version: "0.1"
+author: thirdsgames <thirdsgames2018@gmail.com>
+about: Compiler for the Quill language
+args:
+  - project:
+      short: p
+      help: The directory that contains the Quill project
+      takes_value: true
+      value_name: DIR
+  - verbose:
+      short: v
+      help: Makes the compiler emit verbose output
+subcommands:
+  - build:
+      about: Builds the Quill code in a given folder into an executable file
+      args:
+        - target:
+            short: t
+            multiple: true
+            help: Specifies a target to compile code for, if none are provided it compiles for the host system
+  - run:
+      about: Runs the Quill code in a given folder
