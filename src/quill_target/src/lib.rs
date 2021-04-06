@@ -1,9 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     path::PathBuf,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct TargetTriple {
     pub arch: TargetArchitecture,
     pub vendor: TargetVendor,
@@ -27,7 +28,7 @@ impl Debug for TargetTriple {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum TargetArchitecture {
     X86_64,
 }
@@ -44,7 +45,7 @@ impl Display for TargetArchitecture {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum TargetVendor {
     Unknown,
     Pc,
@@ -63,7 +64,7 @@ impl Display for TargetVendor {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum TargetOS {
     Linux,
     Windows,
@@ -82,7 +83,7 @@ impl Display for TargetOS {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum TargetEnvironment {
     Gnu,
     Msvc,
@@ -101,7 +102,7 @@ impl Display for TargetEnvironment {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildInfo {
     pub target_triple: TargetTriple,
     pub code_folder: PathBuf,

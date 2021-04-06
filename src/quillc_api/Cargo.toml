@@ -1,9 +1,10 @@
 [package]
-name = "quill_target"
+name = "quillc_api"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
 edition = "2018"
-description = "Definitions of build targets"
+description = "API for invoking quillc"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+quill_target = { path = "../quill_target" }

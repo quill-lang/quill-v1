@@ -6,6 +6,8 @@ edition = "2018"
 description = "Compiles projects written in the Quill language"
 
 [dependencies]
+quill_common = { path = "../quill_common" }
+quill_source_file = { path = "../quill_source_file" }
 quill_lexer = { path = "../quill_lexer" }
 quill_parser = { path = "../quill_parser" }
 quill_index = { path = "../quill_index" }
@@ -14,3 +16,8 @@ quill_mir = { path = "../quill_mir" }
 quill_borrow_check = { path = "../quill_borrow_check" }
 quill_func_objects = { path = "../quill_func_objects" }
 quill_llvm = { path = "../quill_llvm" }
+quill_link = { path = "../quill_link" }
+
+quillc_api = { path = "../quillc_api" }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }

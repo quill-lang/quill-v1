@@ -336,6 +336,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_cpus"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05499f3756671c15885fee9034446956fff3f243d6077b91e5767df161f766b3"
+dependencies = [
+ "hermit-abi",
+ "libc",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -403,6 +413,8 @@ dependencies = [
  "clap",
  "console",
  "quill_target",
+ "quillc_api",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]
@@ -542,6 +554,9 @@ dependencies = [
 [[package]]
 name = "quill_target"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "quill_type"
@@ -568,13 +583,27 @@ name = "quillc"
 version = "0.1.0"
 dependencies = [
  "quill_borrow_check",
+ "quill_common",
  "quill_func_objects",
  "quill_index",
  "quill_lexer",
+ "quill_link",
  "quill_llvm",
  "quill_mir",
  "quill_parser",
+ "quill_source_file",
  "quill_type_deduce",
+ "quillc_api",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "quillc_api"
+version = "0.1.0"
+dependencies = [
+ "quill_target",
+ "serde",
 ]
 
 [[package]]
@@ -778,6 +807,7 @@ dependencies = [
  "autocfg",
  "bytes",
  "memchr",
+ "num_cpus",
  "pin-project-lite",
  "tokio-macros",
 ]

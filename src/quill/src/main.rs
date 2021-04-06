@@ -13,16 +13,51 @@
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use clap::ArgMatches;
 use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
+use quillc_api::QuillcInvocation;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-struct CliConfig {}
+struct CliConfig {
+    compiler_location: CompilerLocation,
+}
+
+/// Where is the Quill compiler stored?
+/// By default, `quillc` and related tools are installed by the `quill` program, so it knows where to find them.
+/// If we're running `quill` directly from `cargo`, we might instead want to use `cargo` to run `quillc`.
+enum CompilerLocation {
+    /// Runs the `quillc` whose source is in the given folder, by using `cargo`.
+    Cargo { source: PathBuf },
+}
+
+impl CompilerLocation {
+    fn invoke_quillc(&self, invocation: &QuillcInvocation) {
+        let json = serde_json::to_string(invocation).unwrap();
+        let mut command = match self {
+            CompilerLocation::Cargo { source } => {
+                let mut command = Command::new("cargo");
+                command.current_dir(source);
+                command.arg("run");
+                command.arg("--bin");
+                command.arg("quillc");
+                // command.arg("-q");
+                command.arg("--");
+                command
+            }
+        };
+        command.arg(json);
+        let status = command.status().unwrap();
+        if !status.success() {
+            std::process::exit(1);
+        }
+    }
+}
 
 struct ProjectConfig {
     code_folder: PathBuf,
@@ -62,7 +97,12 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
         info!("initialised logging with verbosity level {}", log_level);
     }
 
-    CliConfig {}
+    // TODO change this so that `quill` uses its own `quillc` rather than relying on being inside a source tree.
+    let compiler_location = CompilerLocation::Cargo {
+        source: Path::new(".").into(),
+    };
+
+    CliConfig { compiler_location }
 }
 
 fn gen_project_config(args: &ArgMatches) -> ProjectConfig {
@@ -81,6 +121,7 @@ fn gen_project_config(args: &ArgMatches) -> ProjectConfig {
     };
 
     // Check that the code folder contains a `quill.toml` file.
+    // TODO check parent directories to see if we're in a subfolder of a Quill project.
     if !code_folder.join("quill.toml").is_file() {
         error(format!(
             "project folder '{}' did not contain a 'quill.toml' file",
@@ -155,12 +196,12 @@ fn process_build(cli_config: &CliConfig, project_config: &ProjectConfig, args: &
         .unwrap_or_else(|| vec![default_target()]);
 
     for target_triple in targets {
-        let info = BuildInfo {
+        let build_info = BuildInfo {
             target_triple,
             code_folder: project_config.code_folder.clone(),
             build_folder: project_config.build_folder.clone(),
         };
-        build(cli_config, project_config, info);
+        build(cli_config, project_config, build_info);
     }
 }
 
@@ -173,6 +214,12 @@ fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &A
     run(cli_config, project_config, info);
 }
 
-fn build(cli_config: &CliConfig, project_config: &ProjectConfig, info: BuildInfo) {}
+fn build(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
+    cli_config
+        .compiler_location
+        .invoke_quillc(&QuillcInvocation { build_info });
+}
 
-fn run(cli_config: &CliConfig, project_config: &ProjectConfig, info: BuildInfo) {}
+fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
+    build(cli_config, project_config, build_info.clone());
+}
