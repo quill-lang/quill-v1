@@ -25,6 +25,7 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 struct CliConfig {
+    verbose: bool,
     compiler_location: CompilerLocation,
 }
 
@@ -37,7 +38,7 @@ enum CompilerLocation {
 }
 
 impl CompilerLocation {
-    fn invoke_quillc(&self, invocation: &QuillcInvocation) {
+    fn invoke_quillc(&self, verbose: bool, invocation: &QuillcInvocation) {
         let json = serde_json::to_string(invocation).unwrap();
         let mut command = match self {
             CompilerLocation::Cargo { source } => {
@@ -46,7 +47,9 @@ impl CompilerLocation {
                 command.arg("run");
                 command.arg("--bin");
                 command.arg("quillc");
-                // command.arg("-q");
+                if !verbose {
+                    command.arg("-q");
+                }
                 command.arg("--");
                 command
             }
@@ -102,7 +105,10 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
         source: Path::new(".").into(),
     };
 
-    CliConfig { compiler_location }
+    CliConfig {
+        verbose,
+        compiler_location,
+    }
 }
 
 fn gen_project_config(args: &ArgMatches) -> ProjectConfig {
@@ -214,12 +220,22 @@ fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &A
     run(cli_config, project_config, info);
 }
 
-fn build(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
+fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: BuildInfo) {
     cli_config
         .compiler_location
-        .invoke_quillc(&QuillcInvocation { build_info });
+        .invoke_quillc(cli_config.verbose, &QuillcInvocation { build_info });
 }
 
 fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
     build(cli_config, project_config, build_info.clone());
+    let mut command = Command::new(build_info.executable());
+    command.current_dir(build_info.code_folder);
+    let status = command.status().unwrap();
+    if !status.success() {
+        if let Some(code) = status.code() {
+            error(format!("program terminated with error code {}", code))
+        } else {
+            error("program terminated with error")
+        }
+    }
 }
