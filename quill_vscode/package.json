@@ -17,7 +17,7 @@
         "vscode": "^1.43.0"
     },
     "activationEvents": [
-        "onLanguage:plaintext"
+        "onLanguage:quill"
     ],
     "main": "./client/out/extension",
     "contributes": {
@@ -43,7 +43,27 @@
                     "description": "Traces the communication between VS Code and the language server."
                 }
             }
-        }
+        },
+        "languages": [
+            {
+                "id": "quill",
+                "extensions": [
+                    ".quill"
+                ],
+                "aliases": [
+                    "Quill",
+                    "quill"
+                ],
+                "configuration": "./quill-language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "quill",
+                "scopeName": "source.quill",
+                "path": "./quill.tmLanguage.json"
+            }
+        ]
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",

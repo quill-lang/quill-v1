@@ -1,4 +1,3 @@
-import { debug } from 'node:console';
 import * as path from 'path';
 import { workspace, ExtensionContext } from 'vscode';
 
@@ -27,8 +26,8 @@ export function activate(context: ExtensionContext) {
 
     // Options to control the language client
     let clientOptions: LanguageClientOptions = {
-        // Register the server for plain text documents
-        documentSelector: [{ scheme: 'file', language: 'plaintext' }],
+        // Register the server for Quill documents
+        documentSelector: [{ scheme: 'file', language: 'quill' }],
         synchronize: {
             // Notify the server about file changes to '.clientrc files contained in the workspace
             fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
@@ -45,6 +44,8 @@ export function activate(context: ExtensionContext) {
 
     // Start the client. This will also launch the server
     client.start();
+
+    client.trace
 }
 
 export function deactivate(): Thenable<void> | undefined {

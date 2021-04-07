@@ -1,0 +1,52 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "scopeName": "source.quill",
+    "patterns": [
+        {
+            "include": "#constants"
+        },
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#types"
+        }
+    ],
+    "repository": {
+        "constants": {
+            "comment": "decimal integers",
+            "name": "constant.numeric.decimal.rust",
+            "match": "\\b\\d[\\d_]*\\b"
+        },
+        "comments": {
+            "patterns": [
+                {
+                    "comment": "line comments",
+                    "name": "comment.line.double-slash.quill",
+                    "match": "\\s*//.*"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "comment": "basic item-level keywords",
+                    "name": "keyword.other.quill",
+                    "match": "\\b(pub|def|data|enum)\\b"
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "comment": "primitive types",
+                    "name": "entity.name.type.primitive.quill",
+                    "match": "\\b(int|unit)\\b"
+                }
+            ]
+        }
+    }
+}
