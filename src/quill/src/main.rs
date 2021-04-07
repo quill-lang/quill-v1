@@ -79,7 +79,6 @@ impl CompilerLocation {
 struct ProjectConfig {
     code_folder: PathBuf,
     build_folder: PathBuf,
-    fs: PackageFileSystem,
     project_info: ProjectInfo,
 }
 
@@ -236,7 +235,6 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     ProjectConfig {
         code_folder,
         build_folder,
-        fs,
         project_info,
     }
 }
