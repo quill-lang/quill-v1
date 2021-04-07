@@ -15,7 +15,7 @@ jobs:
       - name: Install LLVM
         run: |
           curl -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-11.1.0/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10.tar.xz
-          tar -xzvf clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10.tar.xz -C ~/llvm
+          tar -xvf clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10.tar.xz -C ~/llvm
           rm clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10.tar.xz
 
       - name: Install latest nightly rust
