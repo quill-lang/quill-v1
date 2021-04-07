@@ -18,7 +18,7 @@ jobs:
           curl -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-11.1.0/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz
           tar -xvf clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz -C ~/llvm
           rm clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz
-          ~/llvm/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04/llvm-config
+          ~/llvm/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04/bin/llvm-config
 
       - name: Install latest nightly rust
         uses: actions-rs/toolchain@v1
