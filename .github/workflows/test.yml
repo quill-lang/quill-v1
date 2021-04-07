@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      LLVM_SYS_110_PREFIX: /home/runner/llvm/11.0.0
+      LLVM_SYS_110_PREFIX: /home/runner/llvm/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10
 
     steps:
       - name: Checkout
@@ -14,10 +14,10 @@ jobs:
 
       - name: Install LLVM
         run: |
-          curl -LJO https://github.com/thirdsgames/llvm-binaries/releases/download/11.0.0/llvm-11.0.0.zip
-          mkdir ~/llvm_110
-          unzip llvm-11.0.0.zip -d ~/llvm
-          find ~/llvm/11.0.0/bin -type f -exec chmod +x {} \;
+          cd ~/llvm
+          curl -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-11.1.0/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10.tar.xz
+          tar -xzvf clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10.tar.xz
+          rm clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-20.10.tar.xz
 
       - name: Install latest nightly rust
         uses: actions-rs/toolchain@v1
@@ -26,19 +26,19 @@ jobs:
           toolchain: nightly
           override: true
           components: rustfmt, clippy
-          
+
       - name: Check formatting
         uses: actions-rs/cargo@v1
         with:
           command: fmt
           args: -- --check
-      
+
       - name: Check warnings
         uses: actions-rs/cargo@v1
         with:
           command: clippy
           args: -- -Dwarnings
-      
+
       - name: Run test suite
         uses: actions-rs/cargo@v1
         with:
