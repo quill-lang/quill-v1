@@ -11,7 +11,7 @@ pub enum Option[T] = Some { value: T } | None {}
 
 pub def unwrap_or[T]: T -> Option[T] -> T {
     unwrap_or _ Some { value } = value,
-    unwrap_or t None {} = something
+    unwrap_or t None {} = t
 }
 
 pub def block: Option[Option[Unit]] {

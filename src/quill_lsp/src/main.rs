@@ -7,11 +7,19 @@ use std::{
 use lspower::jsonrpc;
 use lspower::lsp::*;
 use lspower::{Client, LanguageServer, LspService, Server};
-use quill_common::diagnostic::{ErrorMessage, Severity};
+use multimap::MultiMap;
+use quill_common::{
+    diagnostic::{ErrorMessage, Severity},
+    location::SourceFileIdentifier,
+};
 use quill_source_file::PackageFileSystem;
 use quillc_api::ProjectInfo;
 use tokio::sync::RwLock;
 use tracing::{info, trace, Level};
+
+fn file_to_url(project_root: &Path, file: SourceFileIdentifier) -> Url {
+    Url::from_file_path(project_root.join(PathBuf::from(file))).unwrap()
+}
 
 fn into_diagnostic(project_root: &Path, message: ErrorMessage) -> Diagnostic {
     let related_information = if message.help.is_empty() {
@@ -23,10 +31,7 @@ fn into_diagnostic(project_root: &Path, message: ErrorMessage) -> Diagnostic {
                 .into_iter()
                 .map(|help| DiagnosticRelatedInformation {
                     location: Location {
-                        uri: Url::from_file_path(
-                            project_root.join(PathBuf::from(help.diagnostic.source_file)),
-                        )
-                        .unwrap(),
+                        uri: file_to_url(project_root, help.diagnostic.source_file),
                         range: help.diagnostic.range.map_or(
                             Range {
                                 start: Position {
@@ -225,7 +230,7 @@ impl LanguageServer for Backend {
             // Parse the file and emit diagnostics.
             let lexed = quill_lexer::lex(fs, &identifier).await;
             let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &identifier));
-            let (result, messages) = parsed.destructure();
+            let (_, messages) = parsed.destructure();
 
             let diags = messages
                 .into_iter()
@@ -251,8 +256,51 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn did_save(&self, _params: DidSaveTextDocumentParams) {
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
         info!("saved file");
+
+        if let Some((file_ident, project_root)) =
+            self.get_project_root(params.text_document.uri).await
+        {
+            // Create more detailed diagnostics by running the full Quill compiler
+            // (at least, up to the MIR step) on this file's project root.
+            let guard = self.root_file_systems.read().await;
+            let fs = &guard.file_systems[&project_root];
+            let lexed = quill_lexer::lex(&fs, &file_ident).await;
+            let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &file_ident));
+            let mir = parsed
+                .bind(|parsed| {
+                    quill_index::index_single_file(&file_ident, &parsed).bind(|index| {
+                        let mut project_index = quill_index::ProjectIndex::new();
+                        project_index.insert(file_ident.clone(), index);
+                        quill_type_deduce::check(&file_ident, &project_index, parsed)
+                            .deny()
+                            .bind(|typeck| quill_mir::to_mir(&project_index, typeck))
+                            .deny()
+                            .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
+                            .map(|result| (result, project_index))
+                    })
+                })
+                .deny();
+
+            let (_, messages) = mir.destructure();
+
+            let diagnostics_by_file = messages
+                .into_iter()
+                .map(|message| (message.diagnostic.source_file.clone(), message))
+                .collect::<MultiMap<_, _>>();
+
+            for (file, diagnostics) in diagnostics_by_file {
+                let diags = diagnostics
+                    .into_iter()
+                    .map(|message| into_diagnostic(&project_root, message))
+                    .collect();
+
+                self.client
+                    .publish_diagnostics(file_to_url(&project_root, file), diags, None)
+                    .await;
+            }
+        }
     }
 
     async fn shutdown(&self) -> jsonrpc::Result<()> {
