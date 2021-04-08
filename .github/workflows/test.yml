@@ -5,20 +5,16 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      LLVM_SYS_110_PREFIX: /home/runner/llvm/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04
 
     steps:
       - name: Checkout
         uses: actions/checkout@v1
 
       - name: Install LLVM
-        run: |
-          mkdir ~/llvm
-          curl -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-11.1.0/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz
-          tar -xvf clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz -C ~/llvm
-          rm clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz
-          ~/llvm/clang+llvm-11.1.0-x86_64-linux-gnu-ubuntu-16.04/bin/llvm-config --version
+        uses: thirdsgames/install-llvm-action
+        with:
+          llvm-version: 11.1.0
+          env-var: LLVM_SYS_110_PREFIX
 
       - name: Install latest nightly rust
         uses: actions-rs/toolchain@v1
