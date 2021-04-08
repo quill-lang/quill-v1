@@ -12,6 +12,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v1
+        with:
+          lfs: true
+          submodules: true
 
       - name: Install LLVM
         uses: thirdsgames/install-llvm-action@v1
