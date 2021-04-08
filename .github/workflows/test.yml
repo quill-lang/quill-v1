@@ -1,10 +1,13 @@
-name: Check and Test
+name: Run tests
 
 on: [push]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -13,7 +16,7 @@ jobs:
       - name: Install LLVM
         uses: thirdsgames/install-llvm-action@v1
         with:
-          llvm-version: 11.1.0
+          llvm-version: 11
           env-var: LLVM_SYS_110_PREFIX
 
       - name: Install latest nightly rust
@@ -22,13 +25,7 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
-          components: rustfmt, clippy
-
-      - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: -- --check
+          components: clippy
 
       - name: Check warnings
         uses: actions-rs/cargo@v1
@@ -39,4 +36,5 @@ jobs:
       - name: Run test suite
         uses: actions-rs/cargo@v1
         with:
-          command: test --no-fail-fast
+          command: test
+          args: --no-fail-fast
