@@ -18,7 +18,7 @@
     "repository": {
         "constants": {
             "comment": "decimal integers",
-            "name": "constant.numeric.decimal.rust",
+            "name": "constant.numeric.decimal.quill",
             "match": "\\b\\d[\\d_]*\\b"
         },
         "comments": {

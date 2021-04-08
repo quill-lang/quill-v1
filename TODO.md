@@ -10,3 +10,4 @@
 - Implement heap allocation in `quill_llvm/repr.rs`.
 - Implement drop and free in LLVM IR.
 - Make a golang-style automatic semicolon rule in the lexer.
+- Decide what terms to use for high level constructs: project, package, module, crate, binary...?
