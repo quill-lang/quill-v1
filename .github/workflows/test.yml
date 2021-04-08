@@ -16,6 +16,10 @@ jobs:
           lfs: true
           submodules: true
 
+      - name: Make dependency files executable
+        if: matrix.os == "ubuntu-latest"
+        run: chmod +x ${GITHUB_WORKSPACE}/compiler-deps/dev-unix/lld
+
       - name: Install LLVM
         uses: thirdsgames/install-llvm-action@v1
         with:
