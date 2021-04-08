@@ -260,7 +260,7 @@ async fn tokenise(
     .await
 }
 
-/// Returns the leading whitespace and then the list of tokens on this line.
+/// Removes the leading whitespace, and then returns the list of tokens on this line.
 fn tokenise_line(
     source_file: &SourceFileIdentifier,
     line_number: u32,
@@ -404,18 +404,20 @@ fn parse_token(
             )
         }
         _ => {
+            chars.next();
             if ch == '/' && matches!(chars.peek(), Some((_, '/'))) {
                 // This is a comment line.
                 return DiagnosticResult::ok(ParseTokenResult::CommentLine);
             }
 
             if ch.is_alphanumeric() {
-                let (identifier, range) =
-                    consume_predicate_one(line, chars, |c| c.is_alphanumeric() || c == '_');
+                let (identifier, range) = consume_predicate_one(line, col, ch, chars, |c| {
+                    c.is_alphanumeric() || c == '_'
+                });
                 let token_type = token_type_alphabetic(identifier);
                 DiagnosticResult::ok(Token { token_type, range }.into())
             } else {
-                let (identifier, range) = consume_predicate_one(line, chars, |c| {
+                let (identifier, range) = consume_predicate_one(line, col, ch, chars, |c| {
                     !c.is_alphanumeric()
                         && !c.is_whitespace()
                         && !vec!['(', ')', '{', '}', '[', ']'].contains(&c)
@@ -490,15 +492,20 @@ where
     (s, Range { start, end })
 }
 
-/// Consumes one character, and then all characters conforming to a given predicate.
+/// Consumes all characters conforming to a given predicate, adding on the given initial character.
 /// Returns the range of characters that the string contains.
 /// If no characters were consumed, the range might be meaningless.
-fn consume_predicate_one<I, P>(line: u32, chars: &mut Peekable<I>, predicate: P) -> (String, Range)
+fn consume_predicate_one<I, P>(
+    line: u32,
+    start_col: u32,
+    ch: char,
+    chars: &mut Peekable<I>,
+    predicate: P,
+) -> (String, Range)
 where
     I: Iterator<Item = (u32, char)>,
     P: Fn(char) -> bool,
 {
-    let (start_col, ch) = chars.next().unwrap();
     let (mut s, mut range) = consume_predicate(line, chars, predicate);
     if s.is_empty() {
         range.end.col = start_col + 1;
