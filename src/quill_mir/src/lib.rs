@@ -351,12 +351,7 @@ impl ControlFlowGraph {
             // Look for each node that follows from this block.
             for following in edges.remove(&node).into_iter().flatten() {
                 // Check to see if there are any other incoming edges into this following node.
-                if edges
-                    .values()
-                    .flatten()
-                    .find(|id| **id == following)
-                    .is_none()
-                {
+                if !edges.values().flatten().any(|id| *id == following) {
                     s.push(following);
                 }
             }
