@@ -115,7 +115,7 @@ impl PackageFileSystem {
 
     /// Removes the cached entry of this source file from memory.
     /// Next time we need this file, it will be reloaded from disk.
-    pub async fn remove_cache(&self, identifier: SourceFileIdentifier) {
+    pub async fn remove_cache(&self, identifier: &SourceFileIdentifier) {
         let module_identifier = &identifier.module;
         let file_identifier = &identifier.file.0;
         self.with_module(module_identifier, |module| {

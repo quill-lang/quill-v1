@@ -1,12 +1,97 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use lspower::jsonrpc;
 use lspower::lsp::*;
 use lspower::{Client, LanguageServer, LspService, Server};
+use quill_common::diagnostic::{ErrorMessage, Severity};
 use quill_source_file::PackageFileSystem;
 use quillc_api::ProjectInfo;
 use tokio::sync::RwLock;
 use tracing::{info, trace, Level};
+
+fn into_diagnostic(project_root: &Path, message: ErrorMessage) -> Diagnostic {
+    let related_information = if message.help.is_empty() {
+        None
+    } else {
+        Some(
+            message
+                .help
+                .into_iter()
+                .map(|help| DiagnosticRelatedInformation {
+                    location: Location {
+                        uri: Url::from_file_path(
+                            project_root.join(PathBuf::from(help.diagnostic.source_file)),
+                        )
+                        .unwrap(),
+                        range: help.diagnostic.range.map_or(
+                            Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 0,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 0,
+                                },
+                            },
+                            |range| Range {
+                                start: Position {
+                                    line: range.start.line,
+                                    character: range.start.col,
+                                },
+                                end: Position {
+                                    line: range.end.line,
+                                    character: range.end.col,
+                                },
+                            },
+                        ),
+                    },
+                    message: help.message,
+                })
+                .collect(),
+        )
+    };
+
+    Diagnostic {
+        range: message.diagnostic.range.map_or(
+            Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+            |range| Range {
+                start: Position {
+                    line: range.start.line,
+                    character: range.start.col,
+                },
+                end: Position {
+                    line: range.end.line,
+                    character: range.end.col,
+                },
+            },
+        ),
+        severity: Some(match message.severity {
+            Severity::Error => DiagnosticSeverity::Error,
+            Severity::Warning => DiagnosticSeverity::Warning,
+        }),
+        code: None,
+        code_description: None,
+        source: Some("quill_lsp".to_string()),
+        message: message.message,
+        related_information,
+        tags: None,
+        data: None,
+    }
+}
 
 struct Backend {
     client: Client,
@@ -123,8 +208,9 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         // Since we're using full text document synchronisation, we can just get the first change and that will be the whole document.
-        if let Some((identifier, project_root)) =
-            self.get_project_root(params.text_document.uri).await
+        if let Some((identifier, project_root)) = self
+            .get_project_root(params.text_document.uri.clone())
+            .await
         {
             trace!(
                 "file {} in {} changed",
@@ -132,8 +218,22 @@ impl LanguageServer for Backend {
                 project_root.to_string_lossy(),
             );
             let contents = params.content_changes[0].text.clone();
-            self.root_file_systems.read().await.file_systems[&project_root]
-                .overwrite_source_file(identifier, contents)
+            let guard = self.root_file_systems.read().await;
+            let fs = &guard.file_systems[&project_root];
+            fs.overwrite_source_file(identifier.clone(), contents).await;
+
+            // Parse the file and emit diagnostics.
+            let lexed = quill_lexer::lex(fs, &identifier).await;
+            let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &identifier));
+            let (result, messages) = parsed.destructure();
+
+            let diags = messages
+                .into_iter()
+                .map(|message| into_diagnostic(&project_root, message))
+                .collect();
+
+            self.client
+                .publish_diagnostics(params.text_document.uri, diags, None)
                 .await;
         }
     }
@@ -146,7 +246,7 @@ impl LanguageServer for Backend {
             self.get_project_root(params.text_document.uri).await
         {
             self.root_file_systems.read().await.file_systems[&project_root]
-                .remove_cache(identifier)
+                .remove_cache(&identifier)
                 .await;
         }
     }
