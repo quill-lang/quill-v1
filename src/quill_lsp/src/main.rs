@@ -6,7 +6,7 @@ use lspower::{Client, LanguageServer, LspService, Server};
 use quill_source_file::PackageFileSystem;
 use quillc_api::ProjectInfo;
 use tokio::sync::RwLock;
-use tracing::{info, Level};
+use tracing::{info, trace, Level};
 
 struct Backend {
     client: Client,
@@ -24,46 +24,51 @@ impl Backend {
 
     /// Check whether the given URI is inside a Quill project.
     /// This function returns the project root folder, which can be used as a key
-    /// in RootFileSystems.
+    /// in RootFileSystems, along with the identifier of the source file relative to
+    /// the project root.
     ///
     /// In particular, this checks parent URIs until a `quill.toml` file is found.
     /// If one is found, then that directory is added to `RootFileSystems` as a file
     /// system root.
-    pub async fn get_project_root(&self, url: Url) -> Option<PathBuf> {
+    pub async fn get_project_root(
+        &self,
+        url: Url,
+    ) -> Option<(quill_common::location::SourceFileIdentifier, PathBuf)> {
         assert!(url.scheme() == "file");
-        let mut path = url.to_file_path().unwrap();
+        let path = url.to_file_path().unwrap();
 
         // First, check if we've already loaded this project folder.
         {
             let read = self.root_file_systems.read().await;
             for k in read.file_systems.keys() {
-                if path.starts_with(k) {
-                    return Some(k.clone());
+                if let Ok(relative) = path.strip_prefix(k) {
+                    return Some((relative.into(), k.clone()));
                 }
             }
         }
 
+        let mut new_path = path.clone();
         loop {
-            if let Ok(file_bytes) = tokio::fs::read(path.join("quill.toml")).await {
+            if let Ok(file_bytes) = tokio::fs::read(new_path.join("quill.toml")).await {
                 if let Ok(file_str) = std::str::from_utf8(&file_bytes) {
                     if let Ok(file_toml) = toml::from_str::<ProjectInfo>(file_str) {
-                        let fs = PackageFileSystem::new(path.clone());
+                        let fs = PackageFileSystem::new(new_path.clone());
                         info!(
                             "found quill project '{}' at {}",
                             file_toml.name,
-                            path.to_str().unwrap()
+                            new_path.to_str().unwrap()
                         );
                         self.root_file_systems
                             .write()
                             .await
                             .file_systems
-                            .insert(path.clone(), fs);
-                        return Some(path);
+                            .insert(new_path.clone(), fs);
+                        return Some((path.strip_prefix(&new_path).unwrap().into(), new_path));
                     }
                 }
             }
 
-            if !path.pop() {
+            if !new_path.pop() {
                 return None;
             }
         }
@@ -100,21 +105,50 @@ impl LanguageServer for Backend {
         info!("server initialized!");
     }
 
-    async fn did_open(&self, _params: DidOpenTextDocumentParams) {
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
         info!("opened file");
+        self.did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: params.text_document.uri,
+                version: params.text_document.version,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                text: params.text_document.text,
+                range: None,
+                range_length: None,
+            }],
+        })
+        .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         // Since we're using full text document synchronisation, we can just get the first change and that will be the whole document.
-        info!("file {} changed", params.text_document.uri);
-        if let Some(project_root) = self.get_project_root(params.text_document.uri).await {
-            info!("file was in root {}", project_root.to_str().unwrap());
+        if let Some((identifier, project_root)) =
+            self.get_project_root(params.text_document.uri).await
+        {
+            trace!(
+                "file {} in {} changed",
+                identifier,
+                project_root.to_string_lossy(),
+            );
+            let contents = params.content_changes[0].text.clone();
+            self.root_file_systems.read().await.file_systems[&project_root]
+                .overwrite_source_file(identifier, contents)
+                .await;
         }
-        let content = params.content_changes[0].text.clone();
     }
 
-    async fn did_close(&self, _params: DidCloseTextDocumentParams) {
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
         info!("closed file");
+        // Remove the cached entry from the file system so that it reads the truth
+        // of the file from disk when it next needs to.
+        if let Some((identifier, project_root)) =
+            self.get_project_root(params.text_document.uri).await
+        {
+            self.root_file_systems.read().await.file_systems[&project_root]
+                .remove_cache(identifier)
+                .await;
+        }
     }
 
     async fn did_save(&self, _params: DidSaveTextDocumentParams) {

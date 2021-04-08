@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt::Debug, path::PathBuf, time::SystemTime};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    fmt::Debug,
+    path::PathBuf,
+    time::SystemTime,
+};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpType, Severity},
@@ -106,6 +111,40 @@ impl PackageFileSystem {
                 .await
             }
         }
+    }
+
+    /// Removes the cached entry of this source file from memory.
+    /// Next time we need this file, it will be reloaded from disk.
+    pub async fn remove_cache(&self, identifier: SourceFileIdentifier) {
+        let module_identifier = &identifier.module;
+        let file_identifier = &identifier.file.0;
+        self.with_module(module_identifier, |module| {
+            module.source_files.remove(file_identifier)
+        })
+        .await;
+    }
+
+    /// Overwrites the truth of this source file with new contents.
+    pub async fn overwrite_source_file(&self, identifier: SourceFileIdentifier, contents: String) {
+        let module_identifier = &identifier.module;
+        let file_identifier = identifier.file.0;
+        self.with_module(module_identifier, |module| {
+            match module.source_files.entry(file_identifier) {
+                Entry::Occupied(mut occupied) => {
+                    *occupied.get_mut() = Ok(SourceFile {
+                        contents,
+                        modified_time: SystemTime::now(),
+                    });
+                }
+                Entry::Vacant(vacant) => {
+                    vacant.insert(Ok(SourceFile {
+                        contents,
+                        modified_time: SystemTime::now(),
+                    }));
+                }
+            }
+        })
+        .await;
     }
 
     async fn load_source_file(

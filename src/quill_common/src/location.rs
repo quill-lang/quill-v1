@@ -1,6 +1,6 @@
 use std::{
     fmt::{Debug, Display},
-    path::PathBuf,
+    path::{Component, Path, PathBuf},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -163,5 +163,28 @@ impl Display for SourceFileIdentifier {
 impl From<SourceFileIdentifier> for PathBuf {
     fn from(identifier: SourceFileIdentifier) -> Self {
         PathBuf::from(identifier.module).join(identifier.file.0)
+    }
+}
+
+impl<P: AsRef<Path>> From<P> for SourceFileIdentifier {
+    fn from(path: P) -> Self {
+        let path = path.as_ref();
+        let mut components = path
+            .components()
+            .filter_map(|component| match component {
+                Component::CurDir => None,
+                Component::Normal(segment) => Some(SourceFileIdentifierSegment(
+                    segment.to_string_lossy().into(),
+                )),
+                _ => unimplemented!(),
+            })
+            .collect::<Vec<_>>();
+        let last = components.pop().unwrap();
+        SourceFileIdentifier {
+            module: ModuleIdentifier {
+                segments: components,
+            },
+            file: last,
+        }
     }
 }

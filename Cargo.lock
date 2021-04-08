@@ -728,6 +728,7 @@ version = "0.1.0"
 dependencies = [
  "lspower",
  "quill_borrow_check",
+ "quill_common",
  "quill_index",
  "quill_lexer",
  "quill_mir",

@@ -6,6 +6,7 @@ edition = "2018"
 description = "A language server protocol implementation for Quill"
 
 [dependencies]
+quill_common = { path = "../quill_common" }
 quill_source_file = { path = "../quill_source_file" }
 quill_lexer = { path = "../quill_lexer" }
 quill_parser = { path = "../quill_parser" }
