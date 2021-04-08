@@ -12,7 +12,7 @@ async fn test_index() {
     let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
     let file_ident = SourceFileIdentifier {
         module: vec![].into(),
-        file: "normal_types".into(),
+        file: "main".into(),
     };
 
     let lexed = lex(&fs, &file_ident).await;

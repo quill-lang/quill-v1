@@ -12,7 +12,7 @@ async fn test_lexer() {
         &fs,
         &SourceFileIdentifier {
             module: vec![].into(),
-            file: "normal_types".into(),
+            file: "main".into(),
         },
     )
     .await;

@@ -19,7 +19,7 @@ async fn test_convert_func_objects() {
     use std::path::PathBuf;
 
     let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
-    for &fname in &["normal_types", "higher_kinded_types", "primitive_types"] {
+    for &fname in &["main", "higher_kinded_types", "primitive_types"] {
         let file_ident = SourceFileIdentifier {
             module: vec![].into(),
             file: fname.into(),
