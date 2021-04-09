@@ -118,10 +118,10 @@ pub fn compile_function<'ctx>(
         }
     } else {
         // An indirect function contains the real function body if there is only one step of curring left.
+        let block = codegen.context.append_basic_block(func_value, "entry");
+        codegen.builder.position_at_end(block);
         if func.curry_steps.len() == 1 {
             // We need to create the real function body.
-            let block = codegen.context.append_basic_block(func_value, "entry");
-            codegen.builder.position_at_end(block);
             let mut locals = HashMap::new();
 
             // Store the arguments given in the function pointer.
@@ -190,9 +190,6 @@ pub fn compile_function<'ctx>(
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
             // We need to update this function object to point to the next curry step.
-            let block = codegen.context.append_basic_block(func_value, "entry");
-            codegen.builder.position_at_end(block);
-
             let fobj = func_value.get_nth_param(0).unwrap();
             let fobj_repr = reprs.get_fobj(&func.function_object_descriptor()).unwrap();
 
