@@ -29,13 +29,14 @@ pub fn compile_function<'ctx>(
     let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
 
+    let block = codegen.context.append_basic_block(func_value, "entry");
+    codegen.builder.position_at_end(block);
+
     // Check what kind of function this is.
     if func.direct {
         // A direct function contains the real function body if there are no arguments left to curry.
         if func.curry_steps.is_empty() {
             // We need to now create the real function body.
-            let block = codegen.context.append_basic_block(func_value, "entry");
-            codegen.builder.position_at_end(block);
             let mut locals = HashMap::new();
             for arg in 0..def.arity {
                 if reprs
@@ -71,9 +72,6 @@ pub fn compile_function<'ctx>(
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
             // We need to create a function object pointing to the indirect version of this function.
-            let block = codegen.context.append_basic_block(func_value, "entry");
-            codegen.builder.position_at_end(block);
-
             let fobj_repr = reprs.get_fobj(&func.function_object_descriptor()).unwrap();
             let mem = codegen
                 .builder
@@ -118,8 +116,6 @@ pub fn compile_function<'ctx>(
         }
     } else {
         // An indirect function contains the real function body if there is only one step of curring left.
-        let block = codegen.context.append_basic_block(func_value, "entry");
-        codegen.builder.position_at_end(block);
         if func.curry_steps.len() == 1 {
             // We need to create the real function body.
             let mut locals = HashMap::new();
