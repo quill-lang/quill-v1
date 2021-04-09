@@ -1,3 +1,0 @@
-[submodule "compiler-deps"]
-	path = compiler-deps
-	url = https://github.com/quill-lang/compiler-deps/

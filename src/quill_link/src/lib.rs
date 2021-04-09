@@ -18,11 +18,11 @@ pub fn link(project_name: &str, deps: &Path, build_info: BuildInfo) {
             linker.arg("-pie");
             linker.arg("-o");
             linker.arg(build_info.build_folder.join(project_name).to_str().unwrap());
-            linker.arg(&format!("-L{}", dep_unix(deps, "").to_str().unwrap()));
+            linker.arg(&format!("-L{}", dep_linux(deps, "").to_str().unwrap()));
 
-            linker.arg(dep_unix(deps, "Scrt1.o").to_str().unwrap());
-            linker.arg(dep_unix(deps, "crti.o").to_str().unwrap());
-            linker.arg(dep_unix(deps, "crtbeginS.o").to_str().unwrap());
+            linker.arg(dep_linux(deps, "Scrt1.o").to_str().unwrap());
+            linker.arg(dep_linux(deps, "crti.o").to_str().unwrap());
+            linker.arg(dep_linux(deps, "crtbeginS.o").to_str().unwrap());
             linker.arg(build_info.build_folder.join("out.o"));
 
             linker.arg("-lgcc");
@@ -40,8 +40,8 @@ pub fn link(project_name: &str, deps: &Path, build_info: BuildInfo) {
             linker.arg("-lgcc_s");
             linker.arg("--pop-state");
 
-            linker.arg(dep_unix(deps, "crtendS.o").to_str().unwrap());
-            linker.arg(dep_unix(deps, "crtn.o").to_str().unwrap());
+            linker.arg(dep_linux(deps, "crtendS.o").to_str().unwrap());
+            linker.arg(dep_linux(deps, "crtn.o").to_str().unwrap());
 
             let result = linker.output().unwrap();
             if !result.status.success() {
@@ -89,7 +89,7 @@ fn ld_lld(deps: &Path) -> Command {
 
 #[cfg(target_family = "unix")]
 fn ld_lld(deps: &Path) -> Command {
-    let mut command = Command::new(deps.join("dev-unix").join("lld"));
+    let mut command = Command::new(deps.join("dev-linux").join("lld"));
     command.arg("-flavor").arg("ld");
     command
 }
@@ -103,13 +103,13 @@ fn lld_link(deps: &Path) -> Command {
 
 #[cfg(target_family = "unix")]
 fn lld_link(deps: &Path) -> Command {
-    let mut command = Command::new(deps.join("dev-unix").join("lld"));
+    let mut command = Command::new(deps.join("dev-linux").join("lld"));
     command.arg("-flavor").arg("link");
     command
 }
 
-fn dep_unix(deps: &Path, dep: &str) -> PathBuf {
-    deps.join("target-unix").join(dep)
+fn dep_linux(deps: &Path, dep: &str) -> PathBuf {
+    deps.join("target-linux").join(dep)
 }
 
 fn dep_win(deps: &Path, dep: &str) -> PathBuf {
