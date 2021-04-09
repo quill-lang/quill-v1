@@ -10,7 +10,7 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 #[tokio::main]
 async fn main() {
-    std::fs::remove_dir_all(Path::new("../../compiler-deps")).unwrap();
+    let _ = std::fs::remove_dir_all(Path::new("../../compiler-deps"));
     std::fs::create_dir_all(Path::new("../../compiler-deps")).unwrap();
 
     for asset in &["dev-linux", "dev-win", "target-linux", "target-win"] {
