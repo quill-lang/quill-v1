@@ -222,124 +222,36 @@ impl ControlFlowGraph {
     /// Returns the new entry point.
     fn reorder(&mut self) {
         // We use a topological sort (Kahn's algorithm) to reorder basic blocks.
+        // println!("Reordering: {}", self);
 
         // Cache some things about each block.
-        // In particular, we need to know which blocks define and use which local variables, and
-        // which other blocks a block can end up jumping to.
-        let mut values_defined = HashMap::new();
-        let mut values_used = HashMap::new();
+        // In particular, we need to know which other blocks a block can end up jumping to.
         let mut target_blocks = HashMap::new();
         for (&node, block) in &self.basic_blocks {
-            let mut block_values_defined = HashSet::new();
-            let mut block_values_used = HashSet::new();
-            let mut more_block_values_used = HashSet::new();
-
-            let mut use_rvalue = |rvalue: &Rvalue| match rvalue {
-                Rvalue::Use(Operand::Copy(place)) | Rvalue::Use(Operand::Move(place)) => {
-                    block_values_used.insert(place.local);
-                }
-                _ => {}
-            };
-
-            for stmt in &block.statements {
-                match &stmt.kind {
-                    StatementKind::Assign { target, .. }
-                    | StatementKind::InstanceSymbol { target, .. }
-                    | StatementKind::Apply { target, .. }
-                    | StatementKind::InvokeFunction { target, .. }
-                    | StatementKind::ConstructFunctionObject { target, .. }
-                    | StatementKind::InvokeFunctionObject { target, .. }
-                    | StatementKind::CreateLambda { target, .. }
-                    | StatementKind::ConstructData { target, .. } => {
-                        block_values_defined.insert(*target);
-                    }
-                    _ => {}
-                }
-
-                match &stmt.kind {
-                    StatementKind::Assign { source, .. } => {
-                        use_rvalue(source);
-                    }
-                    StatementKind::Apply {
-                        argument, function, ..
-                    } => {
-                        use_rvalue(argument);
-                        use_rvalue(function);
-                    }
-                    StatementKind::InvokeFunction { arguments, .. } => {
-                        for arg in arguments {
-                            use_rvalue(arg);
-                        }
-                    }
-                    StatementKind::ConstructFunctionObject {
-                        curried_arguments, ..
-                    } => {
-                        for arg in curried_arguments {
-                            use_rvalue(arg);
-                        }
-                    }
-                    StatementKind::InvokeFunctionObject {
-                        additional_arguments,
-                        ..
-                    } => {
-                        for arg in additional_arguments {
-                            use_rvalue(arg);
-                        }
-                    }
-                    StatementKind::ConstructData { fields, .. } => {
-                        for field in fields.values() {
-                            use_rvalue(field);
-                        }
-                    }
-                    StatementKind::DropIfAlive { variable } => {
-                        more_block_values_used.insert(*variable);
-                    }
-                    _ => {}
-                }
-            }
-
             let mut block_target_blocks = HashSet::new();
             // First, check possible places we'll jump to in the terminator.
-            match &self.basic_blocks[&node].terminator.kind {
+            match &block.terminator.kind {
                 TerminatorKind::Goto(target) => {
                     block_target_blocks.insert(*target);
                 }
-                TerminatorKind::SwitchDiscriminant {
-                    enum_place, cases, ..
-                } => {
-                    block_values_used.insert(enum_place.local);
+                TerminatorKind::SwitchDiscriminant { cases, .. } => {
                     for target in cases.values() {
                         block_target_blocks.insert(*target);
                     }
                 }
                 TerminatorKind::Invalid => unreachable!(),
-                TerminatorKind::Return { value } => {
-                    block_values_used.insert(*value);
-                }
+                TerminatorKind::Return { .. } => {}
             }
-
-            values_defined.insert(node, block_values_defined);
-            block_values_used.extend(more_block_values_used);
-            values_used.insert(node, block_values_used);
             target_blocks.insert(node, block_target_blocks);
         }
 
         // Now that we have all this information, we can make a set of all the edges in this directed graph.
         let mut edges = HashMap::new();
         for &node in self.basic_blocks.keys() {
-            let mut this_edges = HashSet::new();
-
-            for var in values_defined[&node].iter().copied() {
-                for &other_node in self.basic_blocks.keys() {
-                    if values_used[&other_node].contains(&var) {
-                        this_edges.insert(other_node);
-                    }
-                }
-            }
-
-            this_edges.extend(target_blocks[&node].iter().copied());
-
-            edges.insert(node, this_edges);
+            edges.insert(
+                node,
+                target_blocks[&node].iter().copied().collect::<Vec<_>>(),
+            );
         }
 
         // Now run Kahn's algorithm.
@@ -887,7 +799,7 @@ fn create_cfg(
                 .iter()
                 .zip(&arg_types)
                 .enumerate()
-                .filter_map(|(i, (arg_pattern, arg_type))| {
+                .map(|(i, (arg_pattern, arg_type))| {
                     bind_pattern_variables(
                         ctx,
                         project_index,
@@ -896,9 +808,16 @@ fn create_cfg(
                         arg_type.clone(),
                     )
                 })
+                .flatten()
                 .collect::<Vec<_>>();
 
-            let unwrap_patterns_block = chain(ctx, unwrap_patterns_blocks, range);
+            let unwrap_patterns_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: unwrap_patterns_blocks,
+                terminator: Terminator {
+                    range,
+                    kind: TerminatorKind::Invalid,
+                },
+            });
 
             // Now let's build the end of the function, specifically the code to return a value.
             let return_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -1413,39 +1332,6 @@ fn perform_match_function(
     }
 }
 
-/// Chains a series of basic blocks together, assuming that they do not have terminators.
-/// Returns a single basic block that has an invalid terminator.
-fn chain(
-    ctx: &mut DefinitionTranslationContext,
-    blocks: Vec<BasicBlockId>,
-    range: Range,
-) -> BasicBlockId {
-    let blocks = blocks
-        .into_iter()
-        .map(|block_id| {
-            ctx.control_flow_graph
-                .basic_blocks
-                .remove(&block_id)
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-
-    ctx.control_flow_graph.new_basic_block(BasicBlock {
-        statements: blocks
-            .into_iter()
-            .map(|block| {
-                assert!(matches!(block.terminator.kind, TerminatorKind::Invalid));
-                block.statements
-            })
-            .flatten()
-            .collect(),
-        terminator: Terminator {
-            range,
-            kind: TerminatorKind::Invalid,
-        },
-    })
-}
-
 struct ChainGeneratedM {
     /// The basic block that will, once called, compute the values in this chain, and store it in the given local variables.
     block: BasicBlockId,
@@ -1498,7 +1384,7 @@ fn generate_chain_with_terminator(
 
 /// Creates a local variable for each bound variable in a pattern, assuming that the given value
 /// has the given pattern, and the given type.
-/// Returns a basic block that initialises these variables, and that terminates with the given terminator.
+/// Returns statements that will initialise these variables.
 /// If no variables need to be initialised, returns None.
 fn bind_pattern_variables(
     ctx: &mut DefinitionTranslationContext,
@@ -1506,7 +1392,7 @@ fn bind_pattern_variables(
     value: Place,
     pat: &Pattern,
     ty: Type,
-) -> Option<BasicBlockId> {
+) -> Vec<Statement> {
     match pat {
         Pattern::Named(name) => {
             let var = ctx.new_local_variable(LocalVariableInfo {
@@ -1524,13 +1410,7 @@ fn bind_pattern_variables(
                 },
             };
 
-            Some(ctx.control_flow_graph.new_basic_block(BasicBlock {
-                statements: vec![assign],
-                terminator: Terminator {
-                    range: name.range,
-                    kind: TerminatorKind::Invalid,
-                },
-            }))
+            vec![assign]
         }
         Pattern::TypeConstructor { type_ctor, fields } => {
             // Bind each field individually, then chain all the blocks together.
@@ -1546,9 +1426,9 @@ fn bind_pattern_variables(
                 unreachable!()
             };
 
-            let blocks = fields
+            fields
                 .iter()
-                .filter_map(|(field_name, ty, pat)| {
+                .map(|(field_name, ty, pat)| {
                     bind_pattern_variables(
                         ctx,
                         index,
@@ -1572,17 +1452,35 @@ fn bind_pattern_variables(
                         ),
                     )
                 })
-                .collect::<Vec<_>>();
-            if blocks.is_empty() {
-                None
-            } else {
-                Some(chain(ctx, blocks, type_ctor.range))
-            }
+                .flatten()
+                .collect()
         }
         Pattern::Function { .. } => {
             unreachable!("functions are forbidden in arg patterns")
         }
-        Pattern::Unknown(_) => None,
+        Pattern::Unknown(range) => {
+            // Drop this variable.
+            let range = *range;
+            let local = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty,
+                name: None,
+            });
+            let move_stmt = Statement {
+                range,
+                kind: StatementKind::Assign {
+                    target: LocalVariableName::Local(local),
+                    source: Rvalue::Use(Operand::Move(value)),
+                },
+            };
+            let drop_stmt = Statement {
+                range,
+                kind: StatementKind::DropIfAlive {
+                    variable: LocalVariableName::Local(local),
+                },
+            };
+            vec![move_stmt, drop_stmt]
+        }
     }
 }
 

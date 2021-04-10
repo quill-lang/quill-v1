@@ -470,16 +470,25 @@ fn make_used(
             },
         )),
         OwnershipStatus::Dropped { .. } => unreachable!(),
-        OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new_with(
-            "this variable has already been destructured, so it cannot be used here".to_string(),
-            Severity::Error,
-            Diagnostic::at(source_file, &range),
-            HelpMessage {
-                message: "previously destructured here".to_string(),
-                help_type: HelpType::Note,
-                diagnostic: Diagnostic::at(source_file, destructured),
-            },
-        )),
+        OwnershipStatus::Destructured { destructured } => {
+            // It's syntactically impossible to destructure a variable *and* keep its value,
+            // since the only way to destructure something is to pattern match it.
+            // So it's safe to destructure a variable multiple times - MIR uses this semantic
+            // to express destructuring multiple fields of an object.
+            if !matches!(use_type, UseType::Destructure) {
+                messages.push(ErrorMessage::new_with(
+                    "this variable has already been destructured, so it cannot be used here"
+                        .to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &range),
+                    HelpMessage {
+                        message: "previously destructured here".to_string(),
+                        help_type: HelpType::Note,
+                        diagnostic: Diagnostic::at(source_file, destructured),
+                    },
+                ))
+            }
+        }
         OwnershipStatus::Conditional {
             moved_into_blocks,
             destructured_in_blocks,

@@ -1026,6 +1026,7 @@ fn sort_types(
 /// no cycles occur. Then output the sorted list of types. This uses Kahn's topological sorting algorithm.
 fn fix_cycles(graph: DirectedGraph<MonomorphisedType>) -> Vec<IndirectedMonomorphisedType> {
     let components = graph.strongly_connected_components();
+    println!("Components: {:#?}", components);
 
     // Fix the cycles in each child component by adding one heap allocation if a cycle was detected.
     let mut components = DirectedGraph {
@@ -1033,7 +1034,7 @@ fn fix_cycles(graph: DirectedGraph<MonomorphisedType>) -> Vec<IndirectedMonomorp
             .vertices
             .into_iter()
             .map(|mut component| {
-                if component.vertices.len() > 1 {
+                if component.edges.keys().next().is_some() {
                     // There was a cycle. So add one heap indirection, and then try again.
                     fix_cycles(add_heap_indirection(component))
                 } else {
@@ -1151,11 +1152,23 @@ impl<V> DirectedGraph<V> {
                 let target_component = *vertex_index_to_component_number.get(target).unwrap();
                 if source_component == target_component {
                     // Insert the edge inside the component's graph.
-                    output.vertices[source_component]
+                    // The indices need to be the indices of the vertices inside that graph.
+                    let inner_graph = &mut output.vertices[source_component];
+                    let source_idx = inner_graph
+                        .vertices
+                        .iter()
+                        .position(|item| item == source)
+                        .unwrap();
+                    let target_idx = inner_graph
+                        .vertices
+                        .iter()
+                        .position(|item| item == target)
+                        .unwrap();
+                    inner_graph
                         .edges
-                        .entry(*source)
+                        .entry(source_idx)
                         .or_default()
-                        .insert(*target);
+                        .insert(target_idx);
                 } else {
                     // Insert the edge between the two component graphs.
                     output
@@ -1178,34 +1191,13 @@ impl<V> DirectedGraph<V> {
             vertices: output
                 .vertices
                 .into_iter()
-                .map(|strongly_connected_component| {
-                    // We'll need to re-number the edges because currently they're written in terms of the original vertex indices.
-                    let local_indices = strongly_connected_component
+                .map(|strongly_connected_component| DirectedGraph {
+                    vertices: strongly_connected_component
                         .vertices
-                        .iter()
-                        .copied()
-                        .enumerate()
-                        .collect::<HashMap<_, _>>();
-                    DirectedGraph {
-                        vertices: strongly_connected_component
-                            .vertices
-                            .into_iter()
-                            .map(|index| vertices.remove(&index).unwrap())
-                            .collect(),
-                        edges: strongly_connected_component
-                            .edges
-                            .into_iter()
-                            .map(|(source, targets)| {
-                                (
-                                    *local_indices.get(&source).unwrap(),
-                                    targets
-                                        .into_iter()
-                                        .map(|target| *local_indices.get(&target).unwrap())
-                                        .collect::<HashSet<_>>(),
-                                )
-                            })
-                            .collect(),
-                    }
+                        .into_iter()
+                        .map(|index| vertices.remove(&index).unwrap())
+                        .collect(),
+                    edges: strongly_connected_component.edges,
                 })
                 .collect(),
             edges: output.edges,
