@@ -566,19 +566,6 @@ fn create_real_func_body_cfg<'ctx>(
                             variant.malloc_fields(ctx.codegen, ctx.reprs, target_value);
                         }
                     }
-                    // let mem = codegen
-                    //     .builder
-                    //     .build_call(
-                    //         codegen.libc("malloc"),
-                    //         &[codegen
-                    //             .context
-                    //             .i64_type()
-                    //             .const_int(fobj_repr.llvm_repr.as_ref().unwrap().size as u64, false)
-                    //             .into()],
-                    //         "malloc_invocation",
-                    //     )
-                    //     .try_as_basic_value()
-                    //     .unwrap_left();
 
                     // Memcpy all the fields into the new struct.
                     let (name, parameters) = if let Type::Named { name, parameters } = ty {

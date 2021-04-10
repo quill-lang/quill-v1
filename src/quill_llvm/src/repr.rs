@@ -365,21 +365,6 @@ impl<'ctx> DataRepresentation<'ctx> {
                 .build_struct_gep(ptr, *index, &self.name)
                 .unwrap(),
             FieldIndex::Heap(index) => {
-                println!(
-                    "Loading {} from heap at {:#?}, index {}",
-                    field_name, ptr, index
-                );
-                println!(
-                    "struct was {:#?}",
-                    ptr.get_type().get_element_type().into_struct_type()
-                );
-                println!(
-                    "fields were {:#?}",
-                    ptr.get_type()
-                        .get_element_type()
-                        .into_struct_type()
-                        .get_field_types()
-                );
                 let ptr = codegen
                     .builder
                     .build_struct_gep(ptr, *index, &self.name)
@@ -447,7 +432,12 @@ impl<'ctx> DataRepresentation<'ctx> {
                 codegen
                     .context
                     .ptr_sized_int_type(codegen.target_data(), None)
-                    .const_int(self.field_sizes[field_name], false),
+                    .const_int(
+                        codegen
+                            .target_data()
+                            .get_store_size(&dest.get_type().get_element_type()),
+                        false,
+                    ),
             )
             .unwrap();
     }
@@ -468,10 +458,36 @@ impl<'ctx> DataRepresentation<'ctx> {
             if let FieldIndex::Heap(index) = index {
                 // Malloc this field.
                 let ty = reprs.repr(self.field_types[field_name].clone()).unwrap();
+                // let malloc = codegen
+                //     .builder
+                //     .build_malloc(ty.llvm_type, field_name)
+                //     .unwrap();
+                let llvm_type_ptr = match ty.llvm_type {
+                    BasicTypeEnum::ArrayType(ty) => ty.ptr_type(AddressSpace::Generic),
+                    BasicTypeEnum::FloatType(ty) => ty.ptr_type(AddressSpace::Generic),
+                    BasicTypeEnum::IntType(ty) => ty.ptr_type(AddressSpace::Generic),
+                    BasicTypeEnum::PointerType(ty) => ty.ptr_type(AddressSpace::Generic),
+                    BasicTypeEnum::StructType(ty) => ty.ptr_type(AddressSpace::Generic),
+                    BasicTypeEnum::VectorType(ty) => ty.ptr_type(AddressSpace::Generic),
+                };
                 let malloc = codegen
                     .builder
-                    .build_malloc(ty.llvm_type, field_name)
-                    .unwrap();
+                    .build_call(
+                        codegen.module.get_function("malloc").unwrap(),
+                        &[codegen
+                            .context
+                            .i64_type()
+                            .const_int(codegen.target_data().get_store_size(&ty.llvm_type), false)
+                            .into()],
+                        "malloc_invocation",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left();
+                let malloc = codegen.builder.build_bitcast(
+                    malloc,
+                    llvm_type_ptr,
+                    "malloc_invocation_bitcast",
+                );
                 let field = codegen
                     .builder
                     .build_struct_gep(ptr, *index, field_name)
@@ -480,22 +496,10 @@ impl<'ctx> DataRepresentation<'ctx> {
                     .builder
                     .build_bitcast(
                         field,
-                        match ty.llvm_type {
-                            BasicTypeEnum::ArrayType(ty) => ty.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::FloatType(ty) => ty.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::IntType(ty) => ty.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::PointerType(ty) => ty.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::StructType(ty) => ty.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::VectorType(ty) => ty.ptr_type(AddressSpace::Generic),
-                        }
-                        .ptr_type(AddressSpace::Generic),
+                        llvm_type_ptr.ptr_type(AddressSpace::Generic),
                         field_name,
                     )
                     .into_pointer_value();
-                println!(
-                    "Storing ty {:#?} at {:#?} in {:#?}",
-                    ty.llvm_type, malloc, field_bitcast
-                );
                 codegen.builder.build_store(field_bitcast, malloc);
             }
         }
@@ -525,7 +529,7 @@ impl<'ctx> EnumRepresentation<'ctx> {
         variant: &str,
         field: &str,
     ) -> Option<PointerValue<'ctx>> {
-        println!("Loading {} from {}", field, variant);
+        // println!("Loading {} from {}", field, variant);
         self.variants.get(variant).and_then(|variant| {
             // Bitcast the pointer to a pointer to the correct enum variant.
             let ptr_bitcast = codegen
@@ -693,10 +697,6 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         mono: &MonomorphisationParameters,
         indirected_types: Vec<MonomorphisedType>,
     ) {
-        println!(
-            "Adding {:#?} indirected with {:#?}",
-            type_ctor.fields, indirected_types
-        );
         for (field_name, field_ty) in &type_ctor.fields {
             let field_ty =
                 replace_type_variables(field_ty.clone(), type_params, &mono.type_parameters);
@@ -1177,7 +1177,7 @@ fn fix_cycles(
     graph: DirectedGraph<IndirectedMonomorphisedType>,
 ) -> Vec<IndirectedMonomorphisedType> {
     let components = graph.strongly_connected_components();
-    println!("Components: {:#?}", components);
+    // println!("Components: {:#?}", components);
 
     // Fix the cycles in each child component by adding one heap allocation if a cycle was detected.
     let mut components = DirectedGraph {
@@ -1253,7 +1253,7 @@ fn fix_cycles(
 
 /// Add one heap indirection to the given strongly connected graph to try to break a cycle.
 fn add_heap_indirection(graph: &mut DirectedGraph<IndirectedMonomorphisedType>) {
-    println!("Indirecting {:#?}", graph);
+    // println!("Indirecting {:#?}", graph);
     // Choose an edge.
     let (a, b) = graph
         .edges

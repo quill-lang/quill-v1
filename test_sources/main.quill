@@ -31,16 +31,16 @@ pub def block: Option[Option[Unit]] {
 
 def main: unit {
     main = (
-        unwrap_or Some { value = Unit {} } block;
-        create_either 104;
-        drop make_unit;
-        drop Some { value = 100 };
+        // unwrap_or Some { value = Unit {} } block;
+        // create_either 104;
+        // drop make_unit;
+        // drop Some { value = 100 };
         // putchar 72;
         // putchar (unwrap_or 65 Some { value = 66 });
 
-        // "Hello, world!" is
+        // "Hello, world!" in Unicode code points is
         // 72 101 108 108 111 44 32 119 111 114 108 100 33
-        print_list Cons { value = 72, list = Cons { value = 101, list = Cons { value = 108, list = Cons { value = 108, list = Cons { value = 111, list = Empty {} } } } } }
+        print_list Cons { value = 72, list = Cons { value = 101, list = Cons { value = 108, list = Cons { value = 108, list = Cons { value = 111, list = Cons { value = 44, list = Cons { value = 32, list = Cons { value = 119, list = Cons { value = 111, list = Cons { value = 114, list = Cons { value = 108, list = Cons { value = 100, list = Cons { value = 33, list = Empty {} } } } } } } } } } } } } }
     )
 }
 
