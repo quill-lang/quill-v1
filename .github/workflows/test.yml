@@ -27,6 +27,12 @@ jobs:
           override: true
           components: clippy
 
+      - name: Cache compiler artifacts
+        uses: actions/cache@v2
+        with:
+          path: /target
+          key: ${{ matrix.os }}-target
+
       - name: Check warnings
         uses: actions-rs/cargo@v1
         with:
