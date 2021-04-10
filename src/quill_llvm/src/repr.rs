@@ -456,6 +456,50 @@ impl<'ctx> DataRepresentation<'ctx> {
     pub fn has_field(&self, name: &str) -> bool {
         self.field_indices.contains_key(name)
     }
+
+    /// Allocate space for indirect fields of this struct.
+    pub fn malloc_fields(
+        &self,
+        codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
+        ptr: PointerValue<'ctx>,
+    ) {
+        for (field_name, index) in &self.field_indices {
+            if let FieldIndex::Heap(index) = index {
+                // Malloc this field.
+                let ty = reprs.repr(self.field_types[field_name].clone()).unwrap();
+                let malloc = codegen
+                    .builder
+                    .build_malloc(ty.llvm_type, field_name)
+                    .unwrap();
+                let field = codegen
+                    .builder
+                    .build_struct_gep(ptr, *index, field_name)
+                    .unwrap();
+                let field_bitcast = codegen
+                    .builder
+                    .build_bitcast(
+                        field,
+                        match ty.llvm_type {
+                            BasicTypeEnum::ArrayType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::FloatType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::IntType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::PointerType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::StructType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::VectorType(ty) => ty.ptr_type(AddressSpace::Generic),
+                        }
+                        .ptr_type(AddressSpace::Generic),
+                        field_name,
+                    )
+                    .into_pointer_value();
+                println!(
+                    "Storing ty {:#?} at {:#?} in {:#?}",
+                    ty.llvm_type, malloc, field_bitcast
+                );
+                codegen.builder.build_store(field_bitcast, malloc);
+            }
+        }
+    }
 }
 
 pub struct EnumRepresentation<'ctx> {

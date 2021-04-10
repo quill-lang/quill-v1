@@ -529,11 +529,56 @@ fn create_real_func_body_cfg<'ctx>(
                 } => {
                     let target_ty = local_variable_names[target].ty.clone();
                     let target_repr = ctx.reprs.repr(target_ty.clone()).unwrap();
-                    let target_value = ctx
+                    let mut target_value = ctx
                         .codegen
                         .builder
                         .build_alloca(target_repr.llvm_type, &target.to_string());
                     ctx.locals.insert(*target, target_value);
+
+                    // If any elements of this type are indirect, `malloc` some space for the fields.
+                    if let Type::Named { name, parameters } = target_ty.clone() {
+                        let mono_ty = MonomorphisedType {
+                            name,
+                            mono: MonomorphisationParameters {
+                                type_parameters: parameters,
+                            },
+                        };
+                        if let Some(repr) = ctx.reprs.get_data(&mono_ty) {
+                            repr.malloc_fields(ctx.codegen, ctx.reprs, target_value);
+                        } else if let Some(repr) = ctx.reprs.get_enum(&mono_ty) {
+                            let variant = &repr.variants[variant.as_ref().unwrap()];
+
+                            target_value = ctx
+                                .codegen
+                                .builder
+                                .build_bitcast(
+                                    target_value,
+                                    variant
+                                        .llvm_repr
+                                        .as_ref()
+                                        .unwrap()
+                                        .ty
+                                        .ptr_type(AddressSpace::Generic),
+                                    "variant_bitcast",
+                                )
+                                .into_pointer_value();
+
+                            variant.malloc_fields(ctx.codegen, ctx.reprs, target_value);
+                        }
+                    }
+                    // let mem = codegen
+                    //     .builder
+                    //     .build_call(
+                    //         codegen.libc("malloc"),
+                    //         &[codegen
+                    //             .context
+                    //             .i64_type()
+                    //             .const_int(fobj_repr.llvm_repr.as_ref().unwrap().size as u64, false)
+                    //             .into()],
+                    //         "malloc_invocation",
+                    //     )
+                    //     .try_as_basic_value()
+                    //     .unwrap_left();
 
                     // Memcpy all the fields into the new struct.
                     let (name, parameters) = if let Type::Named { name, parameters } = ty {
@@ -553,20 +598,6 @@ fn create_real_func_body_cfg<'ctx>(
                             })
                             .unwrap();
                         // Assign the discriminant.
-                        let target_value = ctx
-                            .codegen
-                            .builder
-                            .build_bitcast(
-                                target_value,
-                                enum_repr.variants[variant]
-                                    .llvm_repr
-                                    .as_ref()
-                                    .unwrap()
-                                    .ty
-                                    .ptr_type(AddressSpace::Generic),
-                                "variant_bitcast",
-                            )
-                            .into_pointer_value();
                         enum_repr.store_discriminant(ctx.codegen, ctx.reprs, target_value, variant);
                         let variant_repr = &enum_repr.variants[variant];
                         for (field_name, field_rvalue) in fields {
