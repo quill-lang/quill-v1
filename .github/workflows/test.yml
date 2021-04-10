@@ -30,7 +30,7 @@ jobs:
       - name: Cache compiler artifacts
         uses: actions/cache@v2
         with:
-          path: /target
+          path: target
           key: ${{ matrix.os }}-target
 
       - name: Check warnings
