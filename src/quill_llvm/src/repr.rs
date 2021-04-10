@@ -4,7 +4,6 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
-    unimplemented,
 };
 
 use inkwell::{
@@ -49,9 +48,8 @@ impl Display for MonomorphisedType {
 #[derive(Debug)]
 struct IndirectedMonomorphisedType {
     ty: MonomorphisedType,
-    /// The list of fields that require a level of heap indirection.
-    /// If `ty` is an enum type, the first element of this tuple is the variant that the field belongs to.
-    indirected: Vec<(Option<String>, String)>,
+    /// The list of types that, when included as a field inside this type, require a level of heap indirection.
+    indirected: Vec<MonomorphisedType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -187,22 +185,11 @@ impl MonomorphisedFunction {
         } else {
             let mut builder = DataRepresentationBuilder::new(reprs);
             // Add the function pointer as the first field.
-            builder.add_field_raw(
-                ".fptr".to_string(),
-                AnyTypeRepresentation {
-                    llvm_type: codegen
-                        .context
-                        .i8_type()
-                        .ptr_type(AddressSpace::Generic)
-                        .into(),
-                    size: 8,
-                    alignment: 8,
-                },
-            );
+            builder.add_field_raw(".fptr".to_string(), None);
             // Add only the arguments not pertaining to the last currying step.
             for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
                 if let Some(repr) = arg_repr_indices[i as usize].map(|i| args_with_reprs[i]) {
-                    builder.add_field_raw(format!("field_{}", i), repr);
+                    builder.add_field_raw(format!("field_{}", i), Some(repr));
                 }
             }
 
@@ -357,15 +344,44 @@ impl<'ctx> DataRepresentation<'ctx> {
     pub fn load(
         &self,
         codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
         ptr: PointerValue<'ctx>,
-        field: &str,
+        field_name: &str,
     ) -> Option<PointerValue<'ctx>> {
-        self.field_indices.get(field).map(|field| match field {
+        self.field_indices.get(field_name).map(|field| match field {
             FieldIndex::Literal(index) => codegen
                 .builder
                 .build_struct_gep(ptr, *index, &self.name)
                 .unwrap(),
-            FieldIndex::Heap(_) => unimplemented!(),
+            FieldIndex::Heap(index) => {
+                let ptr = codegen
+                    .builder
+                    .build_struct_gep(ptr, *index, &self.name)
+                    .unwrap();
+                let ptr = codegen
+                    .builder
+                    .build_load(ptr, "indirect")
+                    .into_pointer_value();
+                // Bitcast into the correct pointer type.
+                let repr = reprs
+                    .repr(self.field_types.get(field_name).unwrap().clone())
+                    .unwrap();
+                codegen
+                    .builder
+                    .build_bitcast(
+                        ptr,
+                        match repr.llvm_type {
+                            BasicTypeEnum::ArrayType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::FloatType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::IntType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::PointerType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::StructType(ty) => ty.ptr_type(AddressSpace::Generic),
+                            BasicTypeEnum::VectorType(ty) => ty.ptr_type(AddressSpace::Generic),
+                        },
+                        "indirect_bitcast",
+                    )
+                    .into_pointer_value()
+            }
         })
     }
 
@@ -376,32 +392,25 @@ impl<'ctx> DataRepresentation<'ctx> {
     pub fn store<V: BasicValue<'ctx>>(
         &self,
         codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
         ptr: PointerValue<'ctx>,
         value: V,
         field_name: &str,
     ) {
-        let field = self.field_indices.get(field_name).unwrap();
-        match field {
-            FieldIndex::Literal(index) => {
-                let ptr = codegen
-                    .builder
-                    .build_struct_gep(ptr, *index, field_name)
-                    .unwrap();
-                codegen.builder.build_store(ptr, value);
-            }
-            FieldIndex::Heap(_) => unimplemented!(),
-        }
+        let dest = self.load(codegen, reprs, ptr, field_name).unwrap();
+        codegen.builder.build_store(dest, value);
     }
 
     /// Stores the value behind the given pointer inside this struct.
     pub fn store_ptr(
         &self,
         codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
         ptr: PointerValue<'ctx>,
         src: PointerValue<'ctx>,
         field_name: &str,
     ) {
-        let dest = self.load(codegen, ptr, field_name).unwrap();
+        let dest = self.load(codegen, reprs, ptr, field_name).unwrap();
         codegen
             .builder
             .build_memcpy(
@@ -441,13 +450,14 @@ impl<'ctx> EnumRepresentation<'ctx> {
     pub fn load(
         &self,
         codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
         ptr: PointerValue<'ctx>,
         variant: &str,
         field: &str,
     ) -> Option<PointerValue<'ctx>> {
         self.variants
             .get(variant)
-            .and_then(|variant| variant.load(codegen, ptr, field))
+            .and_then(|variant| variant.load(codegen, reprs, ptr, field))
     }
 
     /// Gets the discriminant of this enum.
@@ -466,12 +476,14 @@ impl<'ctx> EnumRepresentation<'ctx> {
     pub fn store_discriminant(
         &self,
         codegen: &CodeGenContext<'ctx>,
+        reprs: &Representations<'_, 'ctx>,
         ptr: PointerValue<'ctx>,
         variant: &str,
     ) {
         if let Some(discriminant) = self.variant_discriminants.get(variant) {
             self.variants[variant].store(
                 codegen,
+                reprs,
                 ptr,
                 codegen.context.i64_type().const_int(*discriminant, false),
                 ".discriminant",
@@ -489,6 +501,9 @@ struct DataRepresentationBuilder<'a, 'ctx> {
     field_sizes: HashMap<String, u64>,
     field_alignments: HashMap<String, u64>,
 
+    /// If a field's name is in this set, it can be accessed only behind a heap pointer.
+    indirect_fields: HashSet<String>,
+
     size: u32,
     alignment: u32,
 }
@@ -502,6 +517,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
             field_types: HashMap::new(),
             field_sizes: HashMap::new(),
             field_alignments: HashMap::new(),
+            indirect_fields: HashSet::new(),
             size: 0,
             alignment: 1,
         }
@@ -513,42 +529,75 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         field_type: Type,
         type_params: &[TypeParameter],
         mono: &MonomorphisationParameters,
+        indirect: bool,
     ) {
         self.field_types
             .insert(field_name.clone(), field_type.clone());
-        if let Some(repr) = self.reprs.repr(replace_type_variables(
+        if indirect {
+            self.indirect_fields.insert(field_name.clone());
+            self.add_field_raw(field_name, None);
+        } else if let Some(repr) = self.reprs.repr(replace_type_variables(
             field_type,
             &type_params,
             &mono.type_parameters,
         )) {
-            self.add_field_raw(field_name, repr);
+            self.add_field_raw(field_name, Some(repr));
         } else {
             // This field had no representation.
         }
     }
 
     /// Does not cache a MIR type, only stores the LLVM type.
-    fn add_field_raw(&mut self, field_name: String, repr: AnyTypeRepresentation<'ctx>) {
-        self.field_sizes
-            .insert(field_name.clone(), repr.size as u64);
-        self.field_alignments
-            .insert(field_name.clone(), repr.alignment as u64);
-        self.field_indices.insert(
-            field_name,
-            FieldIndex::Literal(self.llvm_field_types.len() as u32),
-        );
-        self.llvm_field_types.push(repr.llvm_type);
+    /// If `repr` is None, this field is considered to be an "indirect" field, and a i8* is stored instead of the type itself.
+    fn add_field_raw(&mut self, field_name: String, repr: Option<AnyTypeRepresentation<'ctx>>) {
+        if let Some(repr) = repr {
+            self.field_sizes
+                .insert(field_name.clone(), repr.size as u64);
+            self.field_alignments
+                .insert(field_name.clone(), repr.alignment as u64);
+            self.field_indices.insert(
+                field_name,
+                FieldIndex::Literal(self.llvm_field_types.len() as u32),
+            );
+            self.llvm_field_types.push(repr.llvm_type);
 
-        // Update size and alignment.
-        self.alignment = std::cmp::max(self.alignment, repr.alignment);
-        // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
-        let padding_to_add = repr.alignment - self.size % repr.alignment;
-        self.size += if padding_to_add == repr.alignment {
-            0
+            // Update size and alignment.
+            self.alignment = std::cmp::max(self.alignment, repr.alignment);
+            // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
+            let padding_to_add = repr.alignment - self.size % repr.alignment;
+            self.size += if padding_to_add == repr.alignment {
+                0
+            } else {
+                padding_to_add
+            };
+            self.size += repr.size;
         } else {
-            padding_to_add
-        };
-        self.size += repr.size;
+            self.field_sizes.insert(field_name.clone(), 8);
+            self.field_alignments.insert(field_name.clone(), 8);
+            self.field_indices.insert(
+                field_name,
+                FieldIndex::Heap(self.llvm_field_types.len() as u32),
+            );
+            self.llvm_field_types.push(
+                self.reprs
+                    .codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+            );
+
+            // Update size and alignment.
+            self.alignment = std::cmp::max(self.alignment, 8);
+            // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
+            let padding_to_add = 8 - self.size % 8;
+            self.size += if padding_to_add == 8 {
+                0
+            } else {
+                padding_to_add
+            };
+            self.size += 8;
+        }
     }
 
     /// Add the fields from a type constructor to this data type.
@@ -557,10 +606,33 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         type_ctor: &TypeConstructorI,
         type_params: &[TypeParameter],
         mono: &MonomorphisationParameters,
-        _indirected_fields: Vec<String>,
+        indirected_types: Vec<MonomorphisedType>,
     ) {
+        println!(
+            "Adding {:#?} indirected with {:#?}",
+            type_ctor.fields, indirected_types
+        );
         for (field_name, field_ty) in &type_ctor.fields {
-            self.add_field(field_name.name.clone(), field_ty.clone(), type_params, mono);
+            let field_ty =
+                replace_type_variables(field_ty.clone(), type_params, &mono.type_parameters);
+            let indirect = if let Type::Named { name, parameters } = &field_ty {
+                indirected_types.contains(&MonomorphisedType {
+                    name: name.clone(),
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters.clone(),
+                    },
+                })
+            } else {
+                false
+            };
+
+            self.add_field(
+                field_name.name.clone(),
+                field_ty,
+                type_params,
+                mono,
+                indirect,
+            );
         }
     }
 
@@ -601,7 +673,7 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
         codegen: &CodeGenContext<'ctx>,
         ty: &EnumI,
         mono: &MonomorphisedType,
-        indirected_fields: Vec<(String, String)>,
+        indirected_types: Vec<MonomorphisedType>,
     ) -> Self {
         // Construct each enum variant as a data type with an extra integer discriminant field at the start.
         let variants = ty
@@ -614,21 +686,13 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
                     Type::Primitive(PrimitiveType::Int),
                     &ty.type_params,
                     &mono.mono,
+                    false,
                 );
                 builder.add_fields(
                     &variant.type_ctor,
                     &ty.type_params,
                     &mono.mono,
-                    indirected_fields
-                        .iter()
-                        .filter_map(|(variant_name, field_name)| {
-                            if *variant_name == variant.name.name {
-                                Some(field_name.clone())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
+                    indirected_types.clone(),
                 );
 
                 (
@@ -734,14 +798,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                         &datai.type_ctor,
                         &datai.type_params,
                         &mono_ty.ty.mono,
-                        mono_ty
-                            .indirected
-                            .into_iter()
-                            .map(|(opt, field)| {
-                                assert!(opt.is_none());
-                                field
-                            })
-                            .collect(),
+                        mono_ty.indirected,
                     );
                     let repr = builder.build(mono_ty.ty.to_string());
                     reprs.datas.insert(mono_ty.ty, repr);
@@ -752,11 +809,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                         codegen,
                         enumi,
                         &mono_ty.ty,
-                        mono_ty
-                            .indirected
-                            .into_iter()
-                            .map(|(opt, field)| (opt.unwrap(), field))
-                            .collect(),
+                        mono_ty.indirected,
                     );
                     reprs.enums.insert(mono_ty.ty, repr);
                 }
@@ -1019,12 +1072,25 @@ fn sort_types(
     }
 
     // Now that we have the graph, let's run Tarjan's algorithm on it to find any cycles.
+    let graph = DirectedGraph {
+        vertices: graph
+            .vertices
+            .into_iter()
+            .map(|ty| IndirectedMonomorphisedType {
+                ty,
+                indirected: Vec::new(),
+            })
+            .collect(),
+        edges: graph.edges,
+    };
     fix_cycles(graph)
 }
 
 /// Given a graph of types (ordered by a "used-in" relation), fix the types so that
 /// no cycles occur. Then output the sorted list of types. This uses Kahn's topological sorting algorithm.
-fn fix_cycles(graph: DirectedGraph<MonomorphisedType>) -> Vec<IndirectedMonomorphisedType> {
+fn fix_cycles(
+    graph: DirectedGraph<IndirectedMonomorphisedType>,
+) -> Vec<IndirectedMonomorphisedType> {
     let components = graph.strongly_connected_components();
     println!("Components: {:#?}", components);
 
@@ -1036,12 +1102,10 @@ fn fix_cycles(graph: DirectedGraph<MonomorphisedType>) -> Vec<IndirectedMonomorp
             .map(|mut component| {
                 if component.edges.keys().next().is_some() {
                     // There was a cycle. So add one heap indirection, and then try again.
-                    fix_cycles(add_heap_indirection(component))
+                    add_heap_indirection(&mut component);
+                    fix_cycles(component)
                 } else {
-                    vec![IndirectedMonomorphisedType {
-                        ty: component.vertices.pop().unwrap(),
-                        indirected: Vec::new(),
-                    }]
+                    vec![component.vertices.pop().unwrap()]
                 }
             })
             .collect(),
@@ -1103,10 +1167,25 @@ fn fix_cycles(graph: DirectedGraph<MonomorphisedType>) -> Vec<IndirectedMonomorp
 }
 
 /// Add one heap indirection to the given strongly connected graph to try to break a cycle.
-fn add_heap_indirection(
-    _graph: DirectedGraph<MonomorphisedType>,
-) -> DirectedGraph<MonomorphisedType> {
-    unimplemented!()
+fn add_heap_indirection(graph: &mut DirectedGraph<IndirectedMonomorphisedType>) {
+    println!("Indirecting {:#?}", graph);
+    // Choose an edge.
+    let (a, b) = graph
+        .edges
+        .iter()
+        .next()
+        .map(|(k, v)| (*k, *v.iter().next().unwrap()))
+        .unwrap();
+    // Remove this edge from the graph.
+    let set = graph.edges.get_mut(&a).unwrap();
+    set.remove(&b);
+    if set.is_empty() {
+        graph.edges.remove(&a);
+    }
+
+    // Insert an indirection from a to b.
+    let ty = graph.vertices[b].ty.clone();
+    graph.vertices[a].indirected.push(ty);
 }
 
 /// A directed graph on an owned set of vertices.

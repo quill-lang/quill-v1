@@ -110,7 +110,7 @@ pub fn compile_function<'ctx>(
                 "fptr",
             );
 
-            fobj_repr.store(codegen, fobj.into_pointer_value(), fptr, ".fptr");
+            fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), fptr, ".fptr");
 
             codegen.builder.build_return(Some(&fobj));
         }
@@ -137,7 +137,7 @@ pub fn compile_function<'ctx>(
                 )
                 .into_pointer_value();
             for arg in 0..def.arity - func.curry_steps[0] {
-                let arg_ptr = fobj_repr.load(codegen, fobj, &format!("field_{}", arg));
+                let arg_ptr = fobj_repr.load(codegen, reprs, fobj, &format!("field_{}", arg));
                 if let Some(arg_ptr) = arg_ptr {
                     locals.insert(LocalVariableName::Argument(ArgumentIndex(arg)), arg_ptr);
                 }
@@ -202,7 +202,7 @@ pub fn compile_function<'ctx>(
                 "fptr",
             );
 
-            fobj_repr.store(codegen, fobj.into_pointer_value(), fptr, ".fptr");
+            fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), fptr, ".fptr");
 
             // Store the other arguments in the function object.
             for arg in args_supplied..args_supplied + num_args {
@@ -210,6 +210,7 @@ pub fn compile_function<'ctx>(
                 if fobj_repr.has_field(&field) {
                     fobj_repr.store(
                         codegen,
+                        reprs,
                         fobj.into_pointer_value(),
                         func_value
                             .get_nth_param((arg - args_supplied + 1) as u32)
@@ -552,12 +553,13 @@ fn create_real_func_body_cfg<'ctx>(
                             })
                             .unwrap();
                         // Assign the discriminant.
-                        enum_repr.store_discriminant(ctx.codegen, target_value, variant);
+                        enum_repr.store_discriminant(ctx.codegen, ctx.reprs, target_value, variant);
                         let variant_repr = &enum_repr.variants[variant];
                         for (field_name, field_rvalue) in fields {
                             if variant_repr.has_field(field_name) {
                                 variant_repr.store_ptr(
                                     ctx.codegen,
+                                    ctx.reprs,
                                     target_value,
                                     get_pointer_to_rvalue(
                                         ctx.codegen,
@@ -586,6 +588,7 @@ fn create_real_func_body_cfg<'ctx>(
                             if data_repr.has_field(field_name) {
                                 data_repr.store(
                                     ctx.codegen,
+                                    ctx.reprs,
                                     target_value,
                                     get_pointer_to_rvalue(
                                         ctx.codegen,
@@ -789,7 +792,7 @@ fn get_pointer_to_rvalue<'ctx>(
                                         },
                                     })
                                     .unwrap();
-                                ptr = data.load(codegen, ptr, &field).unwrap();
+                                ptr = data.load(codegen, reprs, ptr, &field).unwrap();
                             } else {
                                 unreachable!()
                             }
@@ -831,7 +834,9 @@ fn get_pointer_to_rvalue<'ctx>(
                                         },
                                     })
                                     .unwrap();
-                                ptr = the_enum.load(codegen, ptr, &variant, &field).unwrap();
+                                ptr = the_enum
+                                    .load(codegen, reprs, ptr, &variant, &field)
+                                    .unwrap();
                             } else {
                                 unreachable!()
                             }
