@@ -185,7 +185,18 @@ impl MonomorphisedFunction {
         } else {
             let mut builder = DataRepresentationBuilder::new(reprs);
             // Add the function pointer as the first field.
-            builder.add_field_raw(".fptr".to_string(), None);
+            builder.add_field_raw(
+                ".fptr".to_string(),
+                Some(AnyTypeRepresentation {
+                    llvm_type: codegen
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::Generic)
+                        .into(),
+                    size: 8,
+                    alignment: 8,
+                }),
+            );
             // Add only the arguments not pertaining to the last currying step.
             for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
                 if let Some(repr) = arg_repr_indices[i as usize].map(|i| args_with_reprs[i]) {
@@ -354,6 +365,21 @@ impl<'ctx> DataRepresentation<'ctx> {
                 .build_struct_gep(ptr, *index, &self.name)
                 .unwrap(),
             FieldIndex::Heap(index) => {
+                println!(
+                    "Loading {} from heap at {:#?}, index {}",
+                    field_name, ptr, index
+                );
+                println!(
+                    "struct was {:#?}",
+                    ptr.get_type().get_element_type().into_struct_type()
+                );
+                println!(
+                    "fields were {:#?}",
+                    ptr.get_type()
+                        .get_element_type()
+                        .into_struct_type()
+                        .get_field_types()
+                );
                 let ptr = codegen
                     .builder
                     .build_struct_gep(ptr, *index, &self.name)
@@ -455,9 +481,24 @@ impl<'ctx> EnumRepresentation<'ctx> {
         variant: &str,
         field: &str,
     ) -> Option<PointerValue<'ctx>> {
-        self.variants
-            .get(variant)
-            .and_then(|variant| variant.load(codegen, reprs, ptr, field))
+        println!("Loading {} from {}", field, variant);
+        self.variants.get(variant).and_then(|variant| {
+            // Bitcast the pointer to a pointer to the correct enum variant.
+            let ptr_bitcast = codegen
+                .builder
+                .build_bitcast(
+                    ptr,
+                    variant
+                        .llvm_repr
+                        .as_ref()
+                        .unwrap()
+                        .ty
+                        .ptr_type(AddressSpace::Generic),
+                    "variant_bitcast",
+                )
+                .into_pointer_value();
+            variant.load(codegen, reprs, ptr_bitcast, field)
+        })
     }
 
     /// Gets the discriminant of this enum.

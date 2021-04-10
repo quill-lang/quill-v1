@@ -553,6 +553,20 @@ fn create_real_func_body_cfg<'ctx>(
                             })
                             .unwrap();
                         // Assign the discriminant.
+                        let target_value = ctx
+                            .codegen
+                            .builder
+                            .build_bitcast(
+                                target_value,
+                                enum_repr.variants[variant]
+                                    .llvm_repr
+                                    .as_ref()
+                                    .unwrap()
+                                    .ty
+                                    .ptr_type(AddressSpace::Generic),
+                                "variant_bitcast",
+                            )
+                            .into_pointer_value();
                         enum_repr.store_discriminant(ctx.codegen, ctx.reprs, target_value, variant);
                         let variant_repr = &enum_repr.variants[variant];
                         for (field_name, field_rvalue) in fields {
