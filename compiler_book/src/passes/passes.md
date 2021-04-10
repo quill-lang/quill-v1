@@ -30,10 +30,6 @@ This step generates the MIR from the HIR. MIR is a mid-level intermediate repres
 
 The borrow checking phase computes the lifetimes of borrows, and checks that all borrows to data are valid.
 
-## LIR
-
-At this step, data types obtain specific representations in memory. The stack and the heap are now considered "different", and functions are monomorphised.
-
 ## LLVM IR
 
 Finally, we can produce LLVM IR, an IR which can be translated into an object file for many kinds of architectures.
