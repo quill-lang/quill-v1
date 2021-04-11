@@ -20,7 +20,7 @@ then the arity would be two, the arguments would have types `[int, int]` and the
 
 ```
 def foo: int -> int -> int {
-    foo a = \\b -> a
+    foo a = \b -> a
 }
 ```
 
