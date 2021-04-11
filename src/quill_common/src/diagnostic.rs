@@ -32,7 +32,7 @@ impl Diagnostic {
     }
 }
 
-/// https://rustc-dev-guide.rust-lang.org/diagnostics.html#diagnostic-levels
+/// <https://rustc-dev-guide.rust-lang.org/diagnostics.html#diagnostic-levels>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -54,7 +54,7 @@ pub struct ErrorMessage {
     pub help: Vec<HelpMessage>,
 }
 
-/// TODO: consider https://doc.rust-lang.org/nightly/nightly-rustc/rustc_errors/enum.Applicability.html
+/// TODO: consider <https://doc.rust-lang.org/nightly/nightly-rustc/rustc_errors/enum.Applicability.html>
 #[derive(Debug)]
 pub struct HelpMessage {
     pub message: String,

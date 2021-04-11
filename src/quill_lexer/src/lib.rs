@@ -432,7 +432,8 @@ fn parse_token(
 /// Given an identifier make of alphanumeric characters, determine the token type.
 /// If no specific in-built token type was deduced, the token is simply an `Identifier`.
 fn token_type_alphabetic(s: String) -> TokenType {
-    match s.as_str() {
+    use unicode_normalization::UnicodeNormalization;
+    match s.nfc().collect::<String>().as_str() {
         "pub" => TokenType::Pub,
         "data" => TokenType::Data,
         "variant" => TokenType::Variant,
@@ -447,7 +448,8 @@ fn token_type_alphabetic(s: String) -> TokenType {
 /// Given an identifier make of symbolic characters, determine the token type.
 /// If no specific in-built token type was deduced, the token is simply an `Identifier`.
 fn token_type_symbol(s: String) -> TokenType {
-    match s.as_str() {
+    use unicode_normalization::UnicodeNormalization;
+    match s.nfc().collect::<String>().as_str() {
         "=" => TokenType::Assign,
         ":" => TokenType::Type,
         "->" => TokenType::Arrow,

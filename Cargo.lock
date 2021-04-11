@@ -1056,6 +1056,7 @@ dependencies = [
  "quill_common",
  "quill_source_file",
  "tokio",
+ "unicode-normalization",
 ]
 
 [[package]]

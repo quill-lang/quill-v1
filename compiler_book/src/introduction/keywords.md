@@ -4,9 +4,9 @@ We define a number of useful keywords for the internals of the compiler to ensur
 
 ## Locations and Ranges
 
-A _location_ is a zero-indexed line number and column number inside a source file. An empty file begins at location (0, 0). A _range_ is a pair of locations, the beginning and end of the range. The end location is _not included_ in the range, so a range starting at (3, 6) containing two characters would have end point (3, 8).
+A _location_ is a zero-indexed line number and column number inside a source file. An empty file begins at location (0, 0). A _range_ is a pair of locations, the beginning and end of the range. The end location is _not included_ in the range, so a range starting at (3, 6) containing two characters would have end point (3, 8). If some object is _ranged_, there exists a method that produces a range given a reference to that object. This is implemented using the `Ranged` trait in the compiler.
 
-A _source file_ is a `.quill` file, containing Quill source code. Source files may be grouped into directories on disk, which are referred to as _modules_. A source file identifier is the combination of a module identifier (a list of module segments, which may be empty) and a file name (which does not include the `.quill` extension, as this is implicit).
+A _source file_ is a `.quill` file, containing Quill source code. Source files may be grouped into directories on disk, which are referred to as _modules_. A source file identifier is the combination of a module identifier (a list of module segments, which may be empty) and a file name (which does not include the `.quill` extension, as this is implicit). File names do include the file extension if it is not `.quill`; notably the `quill.toml` file at the project root must be fully qualified as such.
 
 ## Names and Identifiers
 
@@ -14,7 +14,17 @@ We define a _name_ to be an unqualified name for a variable, data structure, fun
 
 ## Diagnostics and Errors
 
-A monadic diagnostic system is used, which allows for correct chaining of diagnostic messages combined with results (see the compiler source code for how diagnostic results are used in practise). A _diagnostic_ is the location where a message is emitted from, represented by a source file identifier and optionally a more specific range of characters inside the file. If a range is supplied to the diagnostic, then it will print this range of characters alongside the error message it emits. A _diagnostic result_ contains the result of a calculation (if it succeeded), along with a list of error messages to be emitted.
+A monadic diagnostic system is used, which allows for correct chaining of diagnostic messages combined with results (see the compiler source code for how diagnostic results are used in practise). A _diagnostic_ is the location where a message is emitted from, represented by a source file identifier and optionally a more specific range of characters inside the file. If a range is supplied to the diagnostic, then it will print this range of characters alongside the error message it emits.
+
+A _diagnostic result_ contains optionally a value, along with a list of error messages to be emitted. A diagnostic result has _failed_ if it contains no value. Otherwise, the result has _succeeded_. If a diagnostic result failed, then it must contain at least one error message with the `Error` severity.
+
+Diagnostic results can be bound together using the `bind` function, which combines the diagnostics and error states of the two diagnostic results. In particular, running `a.bind(b)` gives:
+
+- if `a` failed, returns a failed diagnostic result with `a`'s error messages
+- if `a` succeeded, executes the function `b` with the value inside `a`
+
+  - if `b(a_value)` failed, returns a failed diagnostic result with `a`'s error messages and `b`'s error messages concatenated together
+  - if `b(a_value)` succeeded, returns a successful diagnostic result with `a`'s error messages and `b`'s error messages
 
 ## Expressions
 
@@ -35,6 +45,5 @@ Concrete types and type variables may take a number of _type parameters_. A _pri
 Quill code is translated through a number of different intermediate representations, or IRs, before being translated into machine code. The main stages, in order, are:
 
 - HIR (high-level IR). In high-level IR, expression contents are known, but expression types are not. All references have already been resolved by this point, converting unqualified identifiers into qualified names.
-- MIR (mid-level IR). At this stage, the types of each expression have been deduced. This IR still looks mostly like the structure of a Quill program you would write yourself. It is at this stage that borrow checking and move checking occurs.
-- LIR (low-level IR). Explicit creation and deletion instructions have been now added to objects, and the control flow has been translated from a functional style into an imperative style. The main primitive is no longer the _expression_, but the _instruction_. Code is organised into blocks, which have jump conditions that describe how to jump between code blocks.
+- MIR (mid-level IR). At this stage, the types of each expression have been deduced. The main primitive is no longer the _expression_, but the _instruction_; the control flow has been translated from a functional style into an imperative style. Code is organised into blocks, which have jump conditions that describe how to jump between code blocks. It is at this stage that borrow checking, drop checking, and most optimisations occur.
 - LLVM IR (low-level IR). LIR is converted into LLVM's IR, which allows it to be compiled to machine code. It is at this stage that the compiler performs useful tasks such as monomorphisation and inlining.
