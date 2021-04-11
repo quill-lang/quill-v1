@@ -3,7 +3,7 @@ name: Deploy book
 on: [push]
 
 jobs:
-  test:
+  deploy-book:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,9 +17,6 @@ jobs:
 
       - name: Build book
         run: mdbook build compiler_book
-
-      - name: Test book
-        run: mdbook test compiler_book
 
       - name: Deploy book
         uses: peaceiris/actions-gh-pages@v3
