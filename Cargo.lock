@@ -1173,7 +1173,6 @@ dependencies = [
 name = "quill_install"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "console",
  "dirs",
  "flate2",
