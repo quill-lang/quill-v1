@@ -4,6 +4,7 @@ use flate2::bufread::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::IntoUrl;
 use tar::Archive;
+use tokio::io::BufReader;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
@@ -58,7 +59,17 @@ async fn main() {
                 .bright()
                 .bold()
         );
+        println!(
+            "To complete installation, add {} to your PATH.",
+            console::style(install_location.to_string_lossy())
+                .cyan()
+                .bold()
+        );
     }
+
+    use tokio::io::AsyncBufReadExt;
+    let reader = BufReader::new(tokio::io::stdin());
+    reader.lines().next_line().await.unwrap();
 }
 
 async fn download_tar_gz_or_exit<U: IntoUrl>(url: U, dir: PathBuf) {
