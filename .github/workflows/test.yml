@@ -90,7 +90,7 @@ jobs:
 
   create-release:
     runs-on: ubuntu-latest
-    needs: compile-llvm
+    needs: test
     steps:
       - name: Download all workflow run artifacts
         uses: actions/download-artifact@v2
