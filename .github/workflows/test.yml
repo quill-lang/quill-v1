@@ -3,6 +3,21 @@ name: Run tests and produce release
 on: [push]
 
 jobs:
+  version-gen:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate version
+        run: |
+          date --rfc-3339 > version.txt
+          echo version.txt
+
+      - name: Upload version
+        uses: actions/upload-artifact@v2
+        with:
+          name: version
+          path: version.txt
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -81,6 +96,12 @@ jobs:
 
       # Now create a release and upload the compiler.
 
+      - name: Fetch version
+        uses: actions/download-artifact@v2
+        with:
+          name: version
+          path: target/release
+
       - name: Create compiler tarballs (Windows)
         if: matrix.os == 'windows-latest'
         run: |
@@ -141,3 +162,4 @@ jobs:
           files: |
             quill-*/*
             compiler-deps/*
+            version.txt
