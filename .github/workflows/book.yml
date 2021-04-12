@@ -26,32 +26,3 @@ jobs:
           publish_branch: main
           publish_dir: ./compiler_book/book
           force_orphan: true
-
-  deploy-rustdoc:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v1
-
-      - name: Build rustdoc
-        run: cargo doc --workspace --no-deps
-
-      - name: Create index.html
-        run: |
-          echo "<!DOCTYPE html>" >> target/doc/index.html
-          echo "<html>" >> target/doc/index.html
-          echo "<head>" >> target/doc/index.html
-          echo "<meta http-equiv="refresh" content=\"0; URL=quill/index.html\" />" >> target/doc/index.html
-          echo "</head>" >> target/doc/index.html
-          echo "<body>" >> target/doc/index.html
-          echo "<p>Redirecting to <a href=\"quill/index.html\">quill/index.html</a>...</p>" >> target/doc/index.html
-          echo "</body>" >> target/doc/index.html
-          echo "</html>" >> target/doc/index.html
-
-      - name: Deploy rustdoc
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          deploy_key: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/doc
-          force_orphan: true

@@ -41,3 +41,30 @@ jobs:
         with:
           command: test
           args: --no-fail-fast
+
+      # We also build the rustdoc in this action so that we avoid recompilation.
+
+      - name: Build rustdoc
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo doc --workspace --no-deps
+
+      - name: Create index.html
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "<!DOCTYPE html>" >> target/doc/index.html
+          echo "<html>" >> target/doc/index.html
+          echo "<head>" >> target/doc/index.html
+          echo "<meta http-equiv="refresh" content=\"0; URL=quill/index.html\" />" >> target/doc/index.html
+          echo "</head>" >> target/doc/index.html
+          echo "<body>" >> target/doc/index.html
+          echo "<p>Redirecting to <a href=\"quill/index.html\">quill/index.html</a>...</p>" >> target/doc/index.html
+          echo "</body>" >> target/doc/index.html
+          echo "</html>" >> target/doc/index.html
+
+      - name: Deploy rustdoc
+        if: matrix.os == 'ubuntu-latest'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc
+          force_orphan: true
