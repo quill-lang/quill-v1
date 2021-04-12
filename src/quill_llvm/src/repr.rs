@@ -362,12 +362,12 @@ impl<'ctx> DataRepresentation<'ctx> {
         self.field_indices.get(field_name).map(|field| match field {
             FieldIndex::Literal(index) => codegen
                 .builder
-                .build_struct_gep(ptr, *index, &self.name)
+                .build_struct_gep(ptr, *index, field_name)
                 .unwrap(),
             FieldIndex::Heap(index) => {
                 let ptr = codegen
                     .builder
-                    .build_struct_gep(ptr, *index, &self.name)
+                    .build_struct_gep(ptr, *index, field_name)
                     .unwrap();
                 let ptr = codegen
                     .builder
