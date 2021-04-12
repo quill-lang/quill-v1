@@ -85,17 +85,17 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           cd target/release
-          tar -czvf quill.tar.gz quill.exe
-          tar -czvf quillc.tar.gz quillc.exe
-          tar -czvf quill_lsp.tar.gz quill_lsp.exe
+          tar -czvf ${{ matrix.os }}_quill.tar.gz quill.exe
+          tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc.exe
+          tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp.exe
 
       - name: Create compiler tarballs (Unix)
         if: matrix.os != 'windows-latest'
         run: |
           cd target/release
-          tar -czvf quill.tar.gz quill
-          tar -czvf quillc.tar.gz quillc
-          tar -czvf quill_lsp.tar.gz quill_lsp
+          tar -czvf ${{ matrix.os }}_quill.tar.gz quill
+          tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc
+          tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp
 
       - name: Upload compiler tarballs
         uses: actions/upload-artifact@v2
