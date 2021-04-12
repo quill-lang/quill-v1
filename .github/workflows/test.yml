@@ -30,14 +30,14 @@ jobs:
       - name: Cache compiler artifacts
         uses: Swatinem/rust-cache@v1
 
-      - name: Download compiler dependencies
-        run: cargo run --bin download_compiler_deps
-
       - name: Build project
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release
+
+      - name: Download compiler dependencies
+        run: cargo run --release --bin download_compiler_deps
 
       - name: Check warnings
         uses: actions-rs/cargo@v1
@@ -80,13 +80,49 @@ jobs:
 
       # Now create a release and upload the compiler.
 
-      - name: Upload compiler
+      - name: Create compiler tarballs (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/release
+          tar -czvf quill.tar.gz quill.exe
+          tar -czvf quillc.tar.gz quillc.exe
+          tar -czvf quill_lsp.tar.gz quill_lsp.exe
+
+      - name: Create compiler tarballs (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/release
+          tar -czvf quill.tar.gz quill
+          tar -czvf quillc.tar.gz quillc
+          tar -czvf quill_lsp.tar.gz quill_lsp
+
+      - name: Upload compiler tarballs
         uses: actions/upload-artifact@v2
         with:
           name: quill-${{ matrix.os }}
           path: |
-            target/release/quill*
-            !**.d
+            target/release/quill.tar.gz
+            target/release/quillc.tar.gz
+            target/release/quill_lsp.tar.gz
+
+      # We also want to re-upload compiler dependencies to ensure a fixed version is used.
+
+      - name: Create compiler deps tarballs
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd compiler-deps
+          tar -czvf dev-linux.tar.gz dev-linux
+          tar -czvf dev-win.tar.gz dev-win
+          tar -czvf target-linux.tar.gz target-linux
+          tar -czvf target-win.tar.gz target-win
+
+      - name: Upload compiler deps tarballs
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v2
+        with:
+          name: quill-${{ matrix.os }}
+          path: |
+            compiler-deps/*.tar.gz
 
   create-release:
     runs-on: ubuntu-latest
@@ -102,4 +138,4 @@ jobs:
           prerelease: false
           automatic_release_tag: latest
           files: |
-            quill-*
+            quill-*/*

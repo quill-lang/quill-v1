@@ -10,8 +10,16 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 #[tokio::main]
 async fn main() {
-    let _ = std::fs::remove_dir_all(Path::new("../../compiler-deps"));
-    std::fs::create_dir_all(Path::new("../../compiler-deps")).unwrap();
+    let _ = std::fs::remove_dir_all(Path::new("compiler-deps"));
+    std::fs::create_dir_all(Path::new("compiler-deps")).unwrap();
+    println!(
+        "Unpacking into {}",
+        Path::new("compiler-deps")
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
 
     for (i, asset) in ["dev-linux", "dev-win", "target-linux", "target-win"]
         .iter()
@@ -37,6 +45,6 @@ async fn main() {
         println!("Unpacking {}", asset);
         let decoder = GzDecoder::new(&*asset_downloaded);
         let mut archive = Archive::new(decoder);
-        archive.unpack(Path::new("../../compiler-deps")).unwrap();
+        archive.unpack(Path::new("compiler-deps")).unwrap();
     }
 }
