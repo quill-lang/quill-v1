@@ -5,11 +5,10 @@ on: [push]
 jobs:
   version-gen:
     runs-on: ubuntu-latest
-
     steps:
       - name: Generate version
         run: |
-          date --rfc-3339 > version.txt
+          date --rfc-3339=date > version.txt
           echo version.txt
 
       - name: Upload version
@@ -20,6 +19,7 @@ jobs:
 
   test:
     runs-on: ${{ matrix.os }}
+    needs: version-gen
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
