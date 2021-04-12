@@ -85,7 +85,7 @@ jobs:
         with:
           name: quill-${{ matrix.os }}
           path: |
-            target/quill*
+            target/release/quill*
             !**.d
 
   create-release:
