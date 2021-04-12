@@ -13,8 +13,12 @@ async fn main() {
     let _ = std::fs::remove_dir_all(Path::new("../../compiler-deps"));
     std::fs::create_dir_all(Path::new("../../compiler-deps")).unwrap();
 
-    for asset in &["dev-linux", "dev-win", "target-linux", "target-win"] {
+    for (i, asset) in ["dev-linux", "dev-win", "target-linux", "target-win"]
+        .iter()
+        .enumerate()
+    {
         // Download this asset.
+        println!("Downloading {} ({}/4)", asset, i + 1);
         let asset_downloaded = Client::builder()
             .user_agent(APP_USER_AGENT)
             .build()
@@ -30,6 +34,7 @@ async fn main() {
             .await
             .unwrap();
 
+        println!("Unpacking {}", asset);
         let decoder = GzDecoder::new(&*asset_downloaded);
         let mut archive = Archive::new(decoder);
         archive.unpack(Path::new("../../compiler-deps")).unwrap();

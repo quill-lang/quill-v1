@@ -2,5 +2,15 @@
 members = [
     "src/quill",
     "src/quillc",
-    "src/quill_lsp"
+    "src/quill_lsp",
+    "src/download_compiler_deps"
 ]
+
+[profile.release]
+opt-level = 2
+
+# cargo test --release uses the bench profile.
+# To preserve compiler artifacts, speeding up compilation time,
+# we must therefore use the same compiler flags to compile for bench and release.
+[profile.bench]
+opt-level = 2

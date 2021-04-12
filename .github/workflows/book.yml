@@ -1,4 +1,4 @@
-name: Deploy book and rustdoc
+name: Deploy book
 
 on: [push]
 

@@ -1,4 +1,4 @@
-name: Run tests
+name: Run tests and produce release
 
 on: [push]
 
@@ -30,17 +30,26 @@ jobs:
       - name: Cache compiler artifacts
         uses: Swatinem/rust-cache@v1
 
+      - name: Download compiler dependencies
+        run: cargo run --bin download_compiler_deps
+
+      - name: Build project
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
       - name: Check warnings
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: -- -Dwarnings
+          args: --release -- -Dwarnings
 
       - name: Run test suite
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --no-fail-fast
+          args: --release --no-fail-fast
 
       # We also build the rustdoc in this action so that we avoid recompilation.
 
@@ -68,3 +77,29 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
           force_orphan: true
+
+      # Now create a release and upload the compiler.
+
+      - name: Upload compiler
+        uses: actions/upload-artifact@v2
+        with:
+          name: quill-${{ matrix.os }}
+          path: |
+            target/quill*
+            !**.d
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: compile-llvm
+    steps:
+      - name: Download all workflow run artifacts
+        uses: actions/download-artifact@v2
+
+      - name: Create GitHub release
+        uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          prerelease: false
+          automatic_release_tag: latest
+          files: |
+            quill-*/*
