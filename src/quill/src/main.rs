@@ -25,17 +25,42 @@ use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
 use quillc_api::{ProjectInfo, QuillcInvocation};
-use reqwest::IntoUrl;
 use tokio::process::Command;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-struct CliConfig {
+mod update;
+
+pub struct CliConfig {
     verbose: bool,
     compiler_location: CompilerLocation,
 }
 
-static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum HostType {
+    Linux,
+    Windows,
+}
+
+impl HostType {
+    /// Make the file have the right extension to be an executable on this platform.
+    /// On windows, this adds the `.exe` extension.
+    pub fn as_executable<P: AsRef<Path>>(&self, path: P) -> PathBuf {
+        match self {
+            HostType::Linux => path.as_ref().to_owned(),
+            HostType::Windows => path.as_ref().with_extension("exe"),
+        }
+    }
+
+    /// Returns the component name prefix assigned to this host.
+    /// Returns `ubuntu-latest` for Linux, `windows-latest` for Windows.
+    pub fn component_prefix(&self) -> &'static str {
+        match self {
+            HostType::Linux => "ubuntu-latest",
+            HostType::Windows => "windows-latest",
+        }
+    }
+}
 
 /// Where is the Quill compiler stored?
 /// By default, `quillc` and related tools are installed by the `quill` program, so it knows where to find them.
@@ -43,6 +68,9 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 enum CompilerLocation {
     /// Runs the `quillc` whose source is in the given folder, by using `cargo`.
     Cargo { source: PathBuf },
+    /// The root dir contains `compiler-deps` and a folder for each component e.g. `quillc`, `quill_lsp`.
+    /// If the host is windows, a `.exe` file extension is appended to executables.
+    Installed { host: HostType, root: PathBuf },
 }
 
 impl CompilerLocation {
@@ -61,6 +89,9 @@ impl CompilerLocation {
                 command.arg("--");
                 command
             }
+            CompilerLocation::Installed { host, root } => {
+                Command::new(host.as_executable(root.join("quillc").join("quillc")))
+            }
         };
         command.arg(json);
         let status = command.status().await.unwrap();
@@ -74,6 +105,9 @@ impl CompilerLocation {
         match self {
             CompilerLocation::Cargo { source } => {
                 source.join("compiler-deps").canonicalize().unwrap()
+            }
+            CompilerLocation::Installed { root, .. } => {
+                root.join("compiler-deps").canonicalize().unwrap()
             }
         }
     }
@@ -110,7 +144,7 @@ async fn main() {
         ("run", Some(sub_args)) => {
             process_run(&cli_config, &gen_project_config(&args).await, sub_args).await
         }
-        ("update", Some(sub_args)) => process_update(&cli_config, sub_args).await,
+        ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args).await,
         ("", _) => {
             clap::App::from_yaml(yaml).print_help().unwrap();
         }
@@ -128,15 +162,26 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
         info!("initialised logging with verbosity level {}", log_level);
     }
 
-    // TODO change this so that `quill` uses its own `quillc` rather than relying on being inside a source tree.
-
-    // Find where the root directory of the `quill` source code is.
-    let mut compiler_location_path: PathBuf = Path::new(".").into();
-    while compiler_location_path.is_dir() && !compiler_location_path.join("Cargo.lock").is_file() {
-        compiler_location_path = compiler_location_path.join("..");
-    }
-    let compiler_location = CompilerLocation::Cargo {
-        source: compiler_location_path,
+    let compiler_location = if args.is_present("source") {
+        // Find where the root directory of the `quill` source code is.
+        let mut compiler_location_path: PathBuf = Path::new(".").into();
+        while compiler_location_path.is_dir()
+            && !compiler_location_path.join("Cargo.lock").is_file()
+        {
+            compiler_location_path = compiler_location_path.join("..");
+        }
+        CompilerLocation::Cargo {
+            source: compiler_location_path,
+        }
+    } else {
+        CompilerLocation::Installed {
+            host: if cfg!(windows) {
+                HostType::Windows
+            } else {
+                HostType::Linux
+            },
+            root: dirs::home_dir().unwrap().join(".quill"),
+        }
     };
 
     CliConfig {
@@ -325,41 +370,6 @@ async fn process_run(
         build_folder: project_config.build_folder.clone(),
     };
     run(cli_config, project_config, info).await;
-}
-
-async fn process_update(_cli_config: &CliConfig, _args: &ArgMatches<'_>) {
-    download_text_or_exit(
-        "https://github.com/quill-lang/quill/releases/download/latest/version.txt",
-    )
-    .await;
-}
-
-async fn download_text_or_exit<U: IntoUrl>(url: U) -> String {
-    let response = match reqwest::Client::builder()
-        .user_agent(APP_USER_AGENT)
-        .build()
-        .unwrap()
-        .get(url)
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(_) => error("could not fetch quill version (could not connect to server)"),
-    };
-
-    if !response.status().is_success() {
-        error(format!(
-            "could not fetch quill version (connected but server returned error code '{}')",
-            response.status()
-        ))
-    }
-
-    match response.text().await {
-        Ok(text) => text,
-        Err(_) => {
-            error("could not fetch quill version (connected but could not retrieve response body)")
-        }
-    }
 }
 
 async fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: BuildInfo) {

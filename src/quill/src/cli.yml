@@ -11,6 +11,9 @@ args:
   - verbose:
       short: v
       help: Makes the compiler emit verbose output
+  - source:
+      short: s
+      help: Executes components of the Quill compiler from source, not intended for use outside of development of the compiler
 subcommands:
   - build:
       about: Builds the Quill code in a given folder into an executable file

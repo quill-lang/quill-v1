@@ -3,7 +3,8 @@ members = [
     "src/quill",
     "src/quillc",
     "src/quill_lsp",
-    "src/download_compiler_deps"
+    "src/download_compiler_deps",
+    "src/quill_install"
 ]
 
 [profile.release]
