@@ -27,8 +27,9 @@ jobs:
           override: true
           components: clippy
 
-      - name: Cache compiler artifacts
-        uses: Swatinem/rust-cache@v1
+      # Cache is disabled since we're using the nightly compiler. It will probably just slow everything down.
+      # - name: Cache compiler artifacts
+      #   uses: Swatinem/rust-cache@v1
 
       - name: Build project
         uses: actions-rs/cargo@v1
@@ -101,9 +102,9 @@ jobs:
         with:
           name: quill-${{ matrix.os }}
           path: |
-            target/release/quill.tar.gz
-            target/release/quillc.tar.gz
-            target/release/quill_lsp.tar.gz
+            target/release/${{ matrix.os }}_quill.tar.gz
+            target/release/${{ matrix.os }}_quillc.tar.gz
+            target/release/${{ matrix.os }}_quill_lsp.tar.gz
 
       # We also want to re-upload compiler dependencies to ensure a fixed version is used.
 
