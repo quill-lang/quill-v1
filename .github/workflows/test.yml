@@ -8,8 +8,8 @@ jobs:
     steps:
       - name: Generate version
         run: |
-          date --rfc-3339=date > version.txt
-          echo version.txt
+          date --rfc-3339=seconds > version.txt
+          cat version.txt
 
       - name: Upload version
         uses: actions/upload-artifact@v2
@@ -100,23 +100,26 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: version
-          path: target/release
 
       - name: Create compiler tarballs (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cd target/release
-          tar -czvf ${{ matrix.os }}_quill.tar.gz quill.exe
-          tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc.exe
-          tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp.exe
+          cd version
+          move version.txt "../target/release"
+          cd ../target/release
+          tar -czvf ${{ matrix.os }}_quill.tar.gz quill.exe version.txt
+          tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc.exe version.txt
+          tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp.exe version.txt
 
       - name: Create compiler tarballs (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          cd target/release
-          tar -czvf ${{ matrix.os }}_quill.tar.gz quill
-          tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc
-          tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp
+          cd version
+          mv version.txt ../target/release
+          cd ../target/release
+          tar -czvf ${{ matrix.os }}_quill.tar.gz quill version.txt
+          tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc version.txt
+          tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp version.txt
 
       - name: Upload compiler tarballs
         uses: actions/upload-artifact@v2
@@ -162,4 +165,4 @@ jobs:
           files: |
             quill-*/*
             compiler-deps/*
-            version.txt
+            version/version.txt
