@@ -120,7 +120,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v2
         with:
-          name: quill-${{ matrix.os }}
+          name: compiler-deps
           path: |
             compiler-deps/*.tar.gz
 
@@ -139,3 +139,4 @@ jobs:
           automatic_release_tag: latest
           files: |
             quill-*/*
+            compiler-deps/*
