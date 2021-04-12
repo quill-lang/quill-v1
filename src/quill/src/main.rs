@@ -328,9 +328,10 @@ async fn process_run(
 }
 
 async fn process_update(_cli_config: &CliConfig, _args: &ArgMatches<'_>) {
-    let version = download_text_or_exit(
+    download_text_or_exit(
         "https://github.com/quill-lang/quill/releases/download/latest/version.txt",
-    ).await;
+    )
+    .await;
 }
 
 async fn download_text_or_exit<U: IntoUrl>(url: U) -> String {

@@ -28,14 +28,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
 
-      - name: Fetch version
-        uses: actions/download-artifact@v2
-        with:
-          name: version
-
-      - name: Print version
-        run: ls -lah . && cat version/version.txt
-
       - name: Install LLVM
         uses: thirdsgames/install-llvm-action@v1
         with:
@@ -104,12 +96,16 @@ jobs:
 
       # Now create a release and upload the compiler.
 
+      - name: Fetch version
+        uses: actions/download-artifact@v2
+        with:
+          name: version
+          path: target/release
+
       - name: Create compiler tarballs (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cd version
-          move version.txt "../target/release"
-          cd ../target/release
+          cd target/release
           tar -czvf ${{ matrix.os }}_quill.tar.gz quill.exe version.txt
           tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc.exe version.txt
           tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp.exe version.txt
@@ -117,9 +113,7 @@ jobs:
       - name: Create compiler tarballs (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          cd version
-          mv version.txt ../target/release
-          cd ../target/release
+          cd target/release
           tar -czvf ${{ matrix.os }}_quill.tar.gz quill version.txt
           tar -czvf ${{ matrix.os }}_quillc.tar.gz quillc version.txt
           tar -czvf ${{ matrix.os }}_quill_lsp.tar.gz quill_lsp version.txt
