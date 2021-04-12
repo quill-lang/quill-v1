@@ -28,6 +28,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
 
+      - name: Fetch version
+        uses: actions/download-artifact@v2
+        with:
+          name: version
+
+      - name: Print version
+        run: ls -lah . && cat version/version.txt
+
       - name: Install LLVM
         uses: thirdsgames/install-llvm-action@v1
         with:
@@ -95,11 +103,6 @@ jobs:
           force_orphan: true
 
       # Now create a release and upload the compiler.
-
-      - name: Fetch version
-        uses: actions/download-artifact@v2
-        with:
-          name: version
 
       - name: Create compiler tarballs (Windows)
         if: matrix.os == 'windows-latest'

@@ -13,7 +13,6 @@
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use clap::ArgMatches;
@@ -26,6 +25,8 @@ use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
 use quillc_api::{ProjectInfo, QuillcInvocation};
+use reqwest::IntoUrl;
+use tokio::process::Command;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -33,6 +34,8 @@ struct CliConfig {
     verbose: bool,
     compiler_location: CompilerLocation,
 }
+
+static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 /// Where is the Quill compiler stored?
 /// By default, `quillc` and related tools are installed by the `quill` program, so it knows where to find them.
@@ -43,7 +46,7 @@ enum CompilerLocation {
 }
 
 impl CompilerLocation {
-    fn invoke_quillc(&self, verbose: bool, invocation: &QuillcInvocation) {
+    async fn invoke_quillc(&self, verbose: bool, invocation: &QuillcInvocation) {
         let json = serde_json::to_string(invocation).unwrap();
         let mut command = match self {
             CompilerLocation::Cargo { source } => {
@@ -60,7 +63,7 @@ impl CompilerLocation {
             }
         };
         command.arg(json);
-        let status = command.status().unwrap();
+        let status = command.status().await.unwrap();
         if !status.success() {
             std::process::exit(1);
         }
@@ -102,11 +105,12 @@ async fn main() {
 
     match args.subcommand() {
         ("build", Some(sub_args)) => {
-            process_build(&cli_config, &gen_project_config(&args).await, sub_args)
+            process_build(&cli_config, &gen_project_config(&args).await, sub_args).await
         }
         ("run", Some(sub_args)) => {
-            process_run(&cli_config, &gen_project_config(&args).await, sub_args)
+            process_run(&cli_config, &gen_project_config(&args).await, sub_args).await
         }
+        ("update", Some(sub_args)) => process_update(&cli_config, sub_args).await,
         ("", _) => {
             clap::App::from_yaml(yaml).print_help().unwrap();
         }
@@ -285,7 +289,11 @@ fn default_target() -> TargetTriple {
     }
 }
 
-fn process_build(cli_config: &CliConfig, project_config: &ProjectConfig, args: &ArgMatches) {
+async fn process_build(
+    cli_config: &CliConfig,
+    project_config: &ProjectConfig,
+    args: &ArgMatches<'_>,
+) {
     let targets_str = args.values_of_lossy("target");
     let targets = targets_str
         .map(|targets_str| {
@@ -302,34 +310,75 @@ fn process_build(cli_config: &CliConfig, project_config: &ProjectConfig, args: &
             code_folder: project_config.code_folder.clone(),
             build_folder: project_config.build_folder.clone(),
         };
-        build(cli_config, project_config, build_info);
+        build(cli_config, project_config, build_info).await;
     }
 }
 
-fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &ArgMatches) {
+async fn process_run(
+    cli_config: &CliConfig,
+    project_config: &ProjectConfig,
+    _args: &ArgMatches<'_>,
+) {
     let info = BuildInfo {
         target_triple: default_target(),
         code_folder: project_config.code_folder.clone(),
         build_folder: project_config.build_folder.clone(),
     };
-    run(cli_config, project_config, info);
+    run(cli_config, project_config, info).await;
 }
 
-fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: BuildInfo) {
-    cli_config.compiler_location.invoke_quillc(
-        cli_config.verbose,
-        &QuillcInvocation {
-            build_info,
-            deps_directory: cli_config.compiler_location.deps_directory(),
-        },
-    );
+async fn process_update(_cli_config: &CliConfig, _args: &ArgMatches<'_>) {
+    let version = download_text_or_exit(
+        "https://github.com/quill-lang/quill/releases/download/latest/version.txt",
+    ).await;
 }
 
-fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
-    build(cli_config, project_config, build_info.clone());
+async fn download_text_or_exit<U: IntoUrl>(url: U) -> String {
+    let response = match reqwest::Client::builder()
+        .user_agent(APP_USER_AGENT)
+        .build()
+        .unwrap()
+        .get(url)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => error("could not fetch quill version (could not connect to server)"),
+    };
+
+    if !response.status().is_success() {
+        error(format!(
+            "could not fetch quill version (connected but server returned error code '{}')",
+            response.status()
+        ))
+    }
+
+    match response.text().await {
+        Ok(text) => text,
+        Err(_) => {
+            error("could not fetch quill version (connected but could not retrieve response body)")
+        }
+    }
+}
+
+async fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: BuildInfo) {
+    cli_config
+        .compiler_location
+        .invoke_quillc(
+            cli_config.verbose,
+            &QuillcInvocation {
+                build_info,
+                deps_directory: cli_config.compiler_location.deps_directory(),
+            },
+        )
+        .await;
+}
+
+async fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
+    build(cli_config, project_config, build_info.clone()).await;
     let mut command = Command::new(build_info.executable(&project_config.project_info.name));
     command.current_dir(build_info.code_folder);
-    let status = command.status().unwrap();
+    let status = command.status().await.unwrap();
     if !status.success() {
         if let Some(code) = status.code() {
             error(format!("program terminated with error code {}", code))
