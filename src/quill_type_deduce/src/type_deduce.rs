@@ -654,7 +654,6 @@ fn generate_constraints(
             open_bracket,
             close_bracket,
             statements,
-            final_semicolon,
         } => {
             // Generate constraints for every statement in the block.
             let mut statements_with_constraints = Vec::new();
@@ -724,13 +723,9 @@ fn generate_constraints(
 
             // Work out what the type of the block is. Typically, this is just the type of the last statement in the block,
             // unless a final semicolon was added.
-            let block_type = if final_semicolon.is_some() {
-                TypeVariable::Primitive(PrimitiveType::Unit)
-            } else {
-                statements_with_constraints[statements_with_constraints.len() - 1]
-                    .type_variable
-                    .clone()
-            };
+            let block_type = statements_with_constraints[statements_with_constraints.len() - 1]
+                .type_variable
+                .clone();
 
             DiagnosticResult::ok_with_many(
                 ExprTypeCheck {
@@ -740,7 +735,6 @@ fn generate_constraints(
                             open_bracket,
                             close_bracket,
                             statements: statements_with_constraints,
-                            final_semicolon,
                         },
                     },
                     type_variable_definition_ranges,
@@ -1641,7 +1635,6 @@ fn substitute_contents(
             open_bracket,
             close_bracket,
             statements,
-            final_semicolon,
         } => statements
             .into_iter()
             .map(|stmt| substitute(substitution, stmt, source_file))
@@ -1650,7 +1643,6 @@ fn substitute_contents(
                 open_bracket,
                 close_bracket,
                 statements,
-                final_semicolon,
             }),
         ExpressionContentsT::ConstructData {
             data_type_name,

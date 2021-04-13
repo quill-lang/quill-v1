@@ -61,7 +61,14 @@ pub fn parse(
     };
     let mut items = Vec::new();
     while parser.tokens.peek().is_some() {
-        let item = parser.parse_item();
+        let item = parser.parse_item().bind(|result| {
+            parser
+                .parse_token(
+                    |t| matches!(t, TokenType::EndOfLine { .. }),
+                    "expected end of line",
+                )
+                .map(|_| result)
+        });
         let failed = item.failed();
         items.push(item);
         if failed {
@@ -234,7 +241,7 @@ impl<'input> Parser<'input> {
                 })
                 .bind(|field| {
                     if self
-                        .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
+                        .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
                         .is_some()
                     {
                         self.parse_type_ctor_body().map(|mut remaining_body| {
@@ -407,7 +414,7 @@ impl<'input> Parser<'input> {
     fn parse_def_body_pattern_matched(&mut self) -> DiagnosticResult<Vec<DefinitionCaseP>> {
         self.parse_def_case().bind(|first_case| {
             if self
-                .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
                 .is_some()
             {
                 if self.tokens.peek().is_some() {
@@ -552,7 +559,7 @@ impl<'input> Parser<'input> {
                 };
 
                 if self
-                    .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
+                    .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
                     .is_some()
                 {
                     self.parse_type_param_names().map(|mut remaining_params| {
@@ -577,7 +584,7 @@ impl<'input> Parser<'input> {
         )
         .bind(|_| {
             if self
-                .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
                 .is_some()
             {
                 self.parse_type_param_params().map(|value| value + 1)
@@ -591,7 +598,7 @@ impl<'input> Parser<'input> {
     fn parse_type_params(&mut self) -> DiagnosticResult<Vec<TypeP>> {
         self.parse_type().bind(|first_param| {
             if self
-                .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
+                .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
                 .is_some()
             {
                 self.parse_type_params().map(|mut remaining_params| {
@@ -630,15 +637,12 @@ pub enum ExprPatP {
         name: NameP,
         expr: Box<ExprPatP>,
     },
-    /// A block of statements, inside parentheses, separated by semicolons,
+    /// A block of statements, inside parentheses, separated by newlines,
     /// where the final expression in the block is the type of the block as a whole.
-    /// If a semicolon is included as the last token in the block, the block implicitly returns the unit type instead;
-    /// in this case, the `final_semicolon` variable contains this semicolon and the block's return type is considered to just be unit.
     Block {
         open_bracket: Range,
         close_bracket: Range,
         statements: Vec<ExprPatP>,
-        final_semicolon: Option<Range>,
     },
     /// The name of a data type, followed by brace brackets containing the data structure's fields.
     ConstructData {
@@ -690,7 +694,6 @@ impl Ranged for ExprPatP {
 /// An internal structure used when parsing expression blocks.
 struct ExprBlockBody {
     statements: Vec<ExprPatP>,
-    final_semicolon: Option<Range>,
 }
 
 impl<'input> Parser<'input> {
@@ -797,7 +800,6 @@ impl<'input> Parser<'input> {
                         open_bracket,
                         close_bracket,
                         statements: expr_block_body.statements,
-                        final_semicolon: expr_block_body.final_semicolon,
                     }),
             )
         } else if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Underscore))
@@ -827,13 +829,15 @@ impl<'input> Parser<'input> {
         }
     }
 
-    /// `expr_block_body ::= expr (';' expr_block_body?)?`
+    /// `expr_block_body ::= expr (',' expr_block_body?)?`
     fn parse_expr_block_body(&mut self) -> DiagnosticResult<ExprBlockBody> {
         self.parse_expr().bind(|expr| {
-            // Is the next token a semicolon?
-            if let Some(semicolon) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Semicolon))
+            // Is the next token the end of this line (or a comma)?
+            if self
+                .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
+                .is_some()
             {
-                // We have a semicolon, so potentially there's another expression/statement in the block left to parse.
+                // We have an EOL, so potentially there's another expression/statement in the block left to parse.
                 if self.tokens.peek().is_some() {
                     // There are more expressions to consider.
                     self.parse_expr_block_body().map(|mut remaining_body| {
@@ -841,17 +845,15 @@ impl<'input> Parser<'input> {
                         remaining_body
                     })
                 } else {
-                    // This is the final semicolon, and the end of this expression block.
+                    // This is the final EOL, and the end of this expression block.
                     DiagnosticResult::ok(ExprBlockBody {
                         statements: vec![expr],
-                        final_semicolon: Some(semicolon.range),
                     })
                 }
             } else {
-                // This is the end of this expression block, and there was no final semicolon.
+                // This is the end of this expression block, and there was no final EOL.
                 DiagnosticResult::ok(ExprBlockBody {
                     statements: vec![expr],
-                    final_semicolon: None,
                 })
             }
         })
@@ -879,7 +881,7 @@ impl<'input> Parser<'input> {
 
             value.bind(|value| {
                 if self
-                    .parse_token_maybe(|ty| matches!(ty, TokenType::Comma))
+                    .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
                     .is_some()
                 {
                     // We might have more of the body to parse.

@@ -1737,11 +1737,7 @@ fn generate_expr(
                 locals_to_drop: rvalue.locals_to_drop,
             }
         }
-        ExpressionContentsGeneric::Block {
-            mut statements,
-            final_semicolon,
-            ..
-        } => {
+        ExpressionContentsGeneric::Block { mut statements, .. } => {
             // Make a list of all the local variables we'll need to drop at the end of this scope.
             let locals_to_drop = statements
                 .iter()
@@ -1773,13 +1769,7 @@ fn generate_expr(
                 kind: TerminatorKind::Goto(drop_block),
             };
 
-            let final_expression = if final_semicolon.is_none() {
-                statements.pop()
-            } else {
-                None
-            };
-
-            if let Some(final_expression) = final_expression {
+            if let Some(final_expression) = statements.pop() {
                 let final_expr = generate_expr(ctx, final_expression, drop_terminator);
 
                 let mut chain = generate_chain_with_terminator(

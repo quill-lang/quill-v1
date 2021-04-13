@@ -762,15 +762,12 @@ pub enum ExpressionContentsGeneric<E, T> {
         name: NameP,
         expr: Box<E>,
     },
-    /// A block of statements, inside parentheses, separated by semicolons,
+    /// A block of statements, inside parentheses, separated by line breaks or commas,
     /// where the final expression in the block is the type of the block as a whole.
-    /// If a semicolon is included as the last token in the block, the block implicitly returns the unit type instead;
-    /// in this case, the `final_semicolon` variable contains this semicolon and the block's return type is considered to just be unit.
     Block {
         open_bracket: Range,
         close_bracket: Range,
         statements: Vec<E>,
-        final_semicolon: Option<Range>,
     },
     /// Explicitly create a value of a data type.
     ConstructData {

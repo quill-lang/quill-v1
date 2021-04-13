@@ -3,21 +3,21 @@ pub enum Either[T, U] = Left { value: T } | Right { value: U }
 pub data Unit {}
 
 pub def create_either[T]: T -> Either[T, Unit] {
-    create_either t = Left { value = t },
-    //create_either a = Right { value = a },
+    create_either t = Left { value = t }
+    //create_either a = Right { value = a }
 }
 
 pub enum Option[T] = Some { value: T } | None {}
 
 pub def unwrap_or[T]: T -> Option[T] -> T {
-    unwrap_or _ Some { value } = value,
+    unwrap_or _ Some { value } = value
     unwrap_or t None {} = t
 }
 
 pub def block: Option[Option[Unit]] {
     block = (
-        let inner = Unit {};
-        let next = Some { value = inner };
+        let inner = Unit {}
+        let next = Some { value = inner }
         Some { value = next }
     )
 }
@@ -25,18 +25,18 @@ pub def block: Option[Option[Unit]] {
 // pub enum Bool = True {} | False {}
 //
 // pub def or: Bool -> Bool -> Bool {
-//     or True {} = \a -> a,
+//     or True {} = \a -> a
 //     or _ = \a -> False {}
 // }
 
 def main: unit {
     main = (
-        // unwrap_or Some { value = Unit {} } block;
-        // create_either 104;
-        // drop make_unit;
-        // drop Some { value = 100 };
-        // putchar 72;
-        // putchar (unwrap_or 65 Some { value = 66 });
+        // unwrap_or Some { value = Unit {} } block
+        // create_either 104
+        // drop make_unit
+        // drop Some { value = 100 }
+        // putchar 72
+        // putchar (unwrap_or 65 Some { value = 66 })
 
         // "Hello, world!" in Unicode code points is
         // 72 101 108 108 111 44 32 119 111 114 108 100 33
@@ -57,20 +57,20 @@ def putchar: int -> unit { compiler_intrinsic }
 enum List[T] = Cons { value: T, list: List[T] } | Empty {}
 
 def map_first[T]: (T -> T) -> (List[T] -> List[T]) {
-    map_first f Cons { value, list } = Cons { value = f value, list },
+    map_first f Cons { value, list } = Cons { value = f value, list }
     map_first _ Empty {}             = Empty {}
 }
 
 def print_list: List[int] -> unit {
     print_list Cons { value, list } = (
-        putchar value;
+        putchar value
         print_list list
     ),
-    print_list _ = unit,
+    print_list _ = unit
 }
 
 // Once we have some `clone` function, we can implement `map` for a cloneable function object.
 // def map[T, U]: (T -> U) -> (List[T] -> List[U]) {
-//     map f Cons { value, list } = Cons { value = f value, list = map f list },
+//     map f Cons { value, list } = Cons { value = f value, list = map f list }
 //     map _ Empty {}             = Empty {}
 // }

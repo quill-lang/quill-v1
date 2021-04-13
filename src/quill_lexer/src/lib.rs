@@ -22,14 +22,14 @@ pub enum TokenType {
     Dot,
     /// `::`
     Scope,
-    /// `,`
-    Comma,
     /// `|`
     TypeOr,
     /// '\'
     Lambda,
-    /// ';'
-    Semicolon,
+    /// ',' or '\n' after certain characters
+    EndOfLine {
+        explicit: bool,
+    },
 
     LeftParenthesis,
     RightParenthesis,
@@ -304,7 +304,34 @@ fn tokenise_line(
         consume_whitespace(line_number, &mut chars);
     }
 
-    DiagnosticResult::sequence(tokens)
+    DiagnosticResult::sequence(tokens).map(|mut tokens| {
+        // If the last token on the line could be the end of an expression/item, append a semicolon.
+        if let Some(token) = tokens.last() {
+            if should_insert_semicolon_after(&token.token_type) {
+                let range = Location {
+                    line: token.range.end.line,
+                    col: token.range.end.col + 1,
+                }
+                .into();
+                tokens.push(Token {
+                    token_type: TokenType::EndOfLine { explicit: false },
+                    range,
+                })
+            }
+        }
+        tokens
+    })
+}
+
+/// If this token type appears at the end of a line, do we insert an implicit semicolon afterwards?
+fn should_insert_semicolon_after(ty: &TokenType) -> bool {
+    matches!(
+        ty,
+        TokenType::Identifier(_)
+            | TokenType::RightBrace
+            | TokenType::RightParenthesis
+            | TokenType::RightSquare
+    )
 }
 
 /// When we have parsed a token, what was the result?
@@ -456,10 +483,9 @@ fn token_type_symbol(s: String) -> TokenType {
         "_" => TokenType::Underscore,
         "." => TokenType::Dot,
         "::" => TokenType::Scope,
-        "," => TokenType::Comma,
         "|" => TokenType::TypeOr,
         "\\" => TokenType::Lambda,
-        ";" => TokenType::Semicolon,
+        "," => TokenType::EndOfLine { explicit: true },
         _ => TokenType::Identifier(s),
     }
 }
