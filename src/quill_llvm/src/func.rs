@@ -251,6 +251,92 @@ fn create_real_func_body<'ctx>(
     }
 }
 
+fn lifetime_start<'ctx>(
+    ctx: &BodyCreationContext<'_, 'ctx>,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    variable: &LocalVariableName,
+) {
+    let ptr = ctx.locals[variable];
+    let ptr = ctx.codegen.builder.build_bitcast(
+        ptr,
+        ctx.codegen
+            .context
+            .i8_type()
+            .ptr_type(AddressSpace::Generic),
+        "lifetime_start_obj",
+    );
+    let size = ctx
+        .reprs
+        .repr(local_variable_names[variable].ty.clone())
+        .unwrap()
+        .size;
+    ctx.codegen.builder.build_call(
+        ctx.codegen
+            .module
+            .get_function("llvm.lifetime.start.p0i8")
+            .unwrap(),
+        &[
+            ctx.codegen
+                .context
+                .i64_type()
+                .const_int(size as u64, false)
+                .into(),
+            ptr,
+        ],
+        "lifetime_start",
+    );
+}
+
+fn lifetime_end<'ctx>(
+    ctx: &BodyCreationContext<'_, 'ctx>,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    variable: &LocalVariableName,
+) {
+    let ptr = ctx.locals[variable];
+    let ptr = ctx.codegen.builder.build_bitcast(
+        ptr,
+        ctx.codegen
+            .context
+            .i8_type()
+            .ptr_type(AddressSpace::Generic),
+        "lifetime_end_obj",
+    );
+    let size = ctx
+        .reprs
+        .repr(local_variable_names[variable].ty.clone())
+        .unwrap()
+        .size;
+    ctx.codegen.builder.build_call(
+        ctx.codegen
+            .module
+            .get_function("llvm.lifetime.end.p0i8")
+            .unwrap(),
+        &[
+            ctx.codegen
+                .context
+                .i64_type()
+                .const_int(size as u64, false)
+                .into(),
+            ptr,
+        ],
+        "lifetime_end",
+    );
+}
+
+/// If this rvalue represented a moved value, mark the moved value as dead.
+fn lifetime_end_if_moved<'ctx>(
+    ctx: &BodyCreationContext<'_, 'ctx>,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    variable: &Rvalue,
+) {
+    if let Rvalue::Use(Operand::Move(place)) = variable {
+        if place.projection.is_empty() {
+            // Trivially this place is now dead.
+            lifetime_end(ctx, local_variable_names, &place.local);
+        }
+    }
+}
+
 fn create_real_func_body_cfg<'ctx>(
     mut ctx: BodyCreationContext<'_, 'ctx>,
     cfg: &mut ControlFlowGraph,
@@ -286,6 +372,7 @@ fn create_real_func_body_cfg<'ctx>(
                         .builder
                         .build_alloca(target_repr.llvm_type, &target.to_string());
                     ctx.locals.insert(*target, target_value);
+                    lifetime_start(&ctx, local_variable_names, target);
                     ctx.codegen
                         .builder
                         .build_memcpy(
@@ -307,6 +394,7 @@ fn create_real_func_body_cfg<'ctx>(
                                 .const_int(target_repr.size as u64, false),
                         )
                         .unwrap();
+                    lifetime_end_if_moved(&ctx, local_variable_names, source);
                 }
                 StatementKind::InvokeFunction {
                     name,
@@ -351,6 +439,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_alloca(target_repr.llvm_type, &target.to_string());
                         ctx.locals.insert(*target, target_value);
+                        lifetime_start(&ctx, local_variable_names, target);
                         let call_site_value = ctx.codegen.builder.build_call(
                             func,
                             &args,
@@ -365,6 +454,10 @@ fn create_real_func_body_cfg<'ctx>(
                         ctx.codegen
                             .builder
                             .build_call(func, &args, &target.to_string());
+                    }
+
+                    for arg in arguments {
+                        lifetime_end_if_moved(&ctx, local_variable_names, arg);
                     }
                 }
                 StatementKind::ConstructFunctionObject {
@@ -410,6 +503,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_alloca(return_type, &target.to_string());
                         ctx.locals.insert(*target, target_value);
+                        lifetime_start(&ctx, local_variable_names, target);
                         let call_site_value = ctx.codegen.builder.build_call(
                             func,
                             &args,
@@ -424,6 +518,10 @@ fn create_real_func_body_cfg<'ctx>(
                         ctx.codegen
                             .builder
                             .build_call(func, &args, &target.to_string());
+                    }
+
+                    for arg in curried_arguments {
+                        lifetime_end_if_moved(&ctx, local_variable_names, arg);
                     }
                 }
                 StatementKind::InvokeFunctionObject {
@@ -503,6 +601,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_alloca(return_type, &target.to_string());
                         ctx.locals.insert(*target, target_value);
+                        lifetime_start(&ctx, local_variable_names, target);
                         let call_site_value = ctx.codegen.builder.build_call(
                             fptr,
                             &args,
@@ -518,6 +617,10 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_call(fptr, &args, &target.to_string());
                     }
+
+                    for arg in additional_arguments {
+                        lifetime_end_if_moved(&ctx, local_variable_names, arg);
+                    }
                 }
                 StatementKind::Drop { variable } => {
                     // Depending on the type of the variable, we might need to do a variety of things.
@@ -529,8 +632,9 @@ fn create_real_func_body_cfg<'ctx>(
                         ctx.locals[variable],
                     );
                 }
-                StatementKind::Free { .. } => {
+                StatementKind::Free { variable } => {
                     // We can signal to LLVM that we're done using this variable, and that its lifetime has ended.
+                    lifetime_end(&ctx, local_variable_names, variable);
                 }
                 StatementKind::ConstructData {
                     ty,
@@ -545,6 +649,7 @@ fn create_real_func_body_cfg<'ctx>(
                         .builder
                         .build_alloca(target_repr.llvm_type, &target.to_string());
                     ctx.locals.insert(*target, target_value);
+                    lifetime_start(&ctx, local_variable_names, target);
 
                     // If any elements of this type are indirect, `malloc` some space for the fields.
                     if let Type::Named { name, parameters } = target_ty.clone() {
@@ -646,6 +751,10 @@ fn create_real_func_body_cfg<'ctx>(
                                 );
                             }
                         }
+                    }
+
+                    for field_value in fields.values() {
+                        lifetime_end_if_moved(&ctx, local_variable_names, field_value);
                     }
                 }
                 _ => {}
