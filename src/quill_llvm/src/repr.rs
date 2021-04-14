@@ -187,15 +187,14 @@ impl MonomorphisedFunction {
             // Add the function pointer as the first field.
             builder.add_field_raw(
                 ".fptr".to_string(),
-                Some(AnyTypeRepresentation {
-                    llvm_type: codegen
+                Some(AnyTypeRepresentation::new(
+                    codegen,
+                    codegen
                         .context
                         .i8_type()
                         .ptr_type(AddressSpace::Generic)
                         .into(),
-                    size: 8,
-                    alignment: 8,
-                }),
+                )),
             );
             // Add only the arguments not pertaining to the last currying step.
             for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
@@ -328,22 +327,36 @@ pub enum FieldIndex {
 }
 
 #[derive(Clone)]
-pub struct LLVMRepresentation<'ctx> {
+pub struct LLVMStructRepresentation<'ctx> {
     pub ty: StructType<'ctx>,
-    pub size: u32,
-    pub alignment: u32,
+    /// For some types, they require a higher alignment than LLVM says they do.
+    /// This is particularly important for enum types, where variants may have higher alignment requirements than the base enum type itself.
+    abi_alignment: u32,
+}
+
+impl<'ctx> LLVMStructRepresentation<'ctx> {
+    pub fn new(codegen: &CodeGenContext<'ctx>, ty: StructType<'ctx>) -> Self {
+        let abi_alignment = codegen.target_data().get_abi_alignment(&ty);
+        Self { ty, abi_alignment }
+    }
+
+    pub fn new_with_alignment(ty: StructType<'ctx>, abi_alignment: u32) -> Self {
+        Self { ty, abi_alignment }
+    }
+
+    pub fn store_size(&self, codegen: &CodeGenContext<'ctx>) -> u64 {
+        codegen.target_data().get_store_size(&self.ty)
+    }
 }
 
 #[derive(Clone)]
 pub struct DataRepresentation<'ctx> {
     /// The LLVM representation of the data structure, if it requires a representation at all.
-    pub llvm_repr: Option<LLVMRepresentation<'ctx>>,
+    pub llvm_repr: Option<LLVMStructRepresentation<'ctx>>,
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
     /// If this contains *any* fields, `llvm_repr` is Some.
     field_indices: HashMap<String, FieldIndex>,
     field_types: HashMap<String, Type>,
-    field_sizes: HashMap<String, u64>,
-    field_alignments: HashMap<String, u64>,
     name: String,
 }
 
@@ -422,13 +435,17 @@ impl<'ctx> DataRepresentation<'ctx> {
         field_name: &str,
     ) {
         let dest = self.load(codegen, reprs, ptr, field_name).unwrap();
+        let align = reprs
+            .repr(self.field_types[field_name].clone())
+            .unwrap()
+            .abi_alignment();
         codegen
             .builder
             .build_memcpy(
                 dest,
-                self.field_alignments[field_name] as u32,
+                align,
                 src,
-                self.field_alignments[field_name] as u32,
+                align,
                 codegen
                     .context
                     .ptr_sized_int_type(codegen.target_data(), None)
@@ -547,7 +564,7 @@ impl<'ctx> DataRepresentation<'ctx> {
 pub struct EnumRepresentation<'ctx> {
     /// The LLVM representation of the enum structure.
     /// Enums always have a representation, since they always have a discriminant to store.
-    pub llvm_repr: LLVMRepresentation<'ctx>,
+    pub llvm_repr: LLVMStructRepresentation<'ctx>,
     /// Maps variant names to data representations of the enum variants.
     /// If a discriminant is required in the data representation, it will have field name `.discriminant`.
     pub variants: HashMap<String, DataRepresentation<'ctx>>,
@@ -626,14 +643,9 @@ struct DataRepresentationBuilder<'a, 'ctx> {
     llvm_field_types: Vec<BasicTypeEnum<'ctx>>,
     field_indices: HashMap<String, FieldIndex>,
     field_types: HashMap<String, Type>,
-    field_sizes: HashMap<String, u64>,
-    field_alignments: HashMap<String, u64>,
 
     /// If a field's name is in this set, it can be accessed only behind a heap pointer.
     indirect_fields: HashSet<String>,
-
-    size: u32,
-    alignment: u32,
 }
 
 impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
@@ -643,11 +655,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
             llvm_field_types: Vec::new(),
             field_indices: HashMap::new(),
             field_types: HashMap::new(),
-            field_sizes: HashMap::new(),
-            field_alignments: HashMap::new(),
             indirect_fields: HashSet::new(),
-            size: 0,
-            alignment: 1,
         }
     }
 
@@ -679,29 +687,12 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
     /// If `repr` is None, this field is considered to be an "indirect" field, and a i8* is stored instead of the type itself.
     fn add_field_raw(&mut self, field_name: String, repr: Option<AnyTypeRepresentation<'ctx>>) {
         if let Some(repr) = repr {
-            self.field_sizes
-                .insert(field_name.clone(), repr.size as u64);
-            self.field_alignments
-                .insert(field_name.clone(), repr.alignment as u64);
             self.field_indices.insert(
                 field_name,
                 FieldIndex::Literal(self.llvm_field_types.len() as u32),
             );
             self.llvm_field_types.push(repr.llvm_type);
-
-            // Update size and alignment.
-            self.alignment = std::cmp::max(self.alignment, repr.alignment);
-            // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
-            let padding_to_add = repr.alignment - self.size % repr.alignment;
-            self.size += if padding_to_add == repr.alignment {
-                0
-            } else {
-                padding_to_add
-            };
-            self.size += repr.size;
         } else {
-            self.field_sizes.insert(field_name.clone(), 8);
-            self.field_alignments.insert(field_name.clone(), 8);
             self.field_indices.insert(
                 field_name,
                 FieldIndex::Heap(self.llvm_field_types.len() as u32),
@@ -714,17 +705,6 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
                     .ptr_type(AddressSpace::Generic)
                     .into(),
             );
-
-            // Update size and alignment.
-            self.alignment = std::cmp::max(self.alignment, 8);
-            // Increase the size of the object (essentially adding padding) until it's a multiple of `repr.alignment`.
-            let padding_to_add = 8 - self.size % 8;
-            self.size += if padding_to_add == 8 {
-                0
-            } else {
-                padding_to_add
-            };
-            self.size += 8;
         }
     }
 
@@ -767,23 +747,15 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
                 llvm_repr: None,
                 field_indices: self.field_indices,
                 field_types: self.field_types,
-                field_sizes: self.field_sizes,
-                field_alignments: self.field_alignments,
                 name,
             }
         } else {
             let llvm_ty = self.reprs.codegen.context.opaque_struct_type(&name);
             llvm_ty.set_body(&self.llvm_field_types, false);
             DataRepresentation {
-                llvm_repr: Some(LLVMRepresentation {
-                    ty: llvm_ty,
-                    size: self.size,
-                    alignment: self.alignment,
-                }),
+                llvm_repr: Some(LLVMStructRepresentation::new(self.reprs.codegen, llvm_ty)),
                 field_indices: self.field_indices,
                 field_types: self.field_types,
-                field_sizes: self.field_sizes,
-                field_alignments: self.field_alignments,
                 name,
             }
         }
@@ -829,18 +801,38 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
         // Now work out the largest size of an enum variant and use that as the size of the "base" enum case.
         let size = variants
             .values()
-            .map(|repr| repr.llvm_repr.as_ref().unwrap().size)
+            .map(|repr| {
+                codegen
+                    .target_data()
+                    .get_store_size(&repr.llvm_repr.as_ref().unwrap().ty)
+            })
             .max()
             .unwrap();
         let alignment = variants
             .values()
-            .map(|repr| repr.llvm_repr.as_ref().unwrap().alignment)
+            .map(|repr| {
+                codegen
+                    .target_data()
+                    .get_abi_alignment(&repr.llvm_repr.as_ref().unwrap().ty)
+            })
             .max()
             .unwrap();
 
+        // Add padding to ensure that the alignment of the enum variant inside the enum matches the alignment of the enum itself.
+        let discriminant_size = codegen
+            .target_data()
+            .get_store_size(&codegen.context.i64_type());
+        let padding_size = alignment.saturating_sub(discriminant_size as u32);
+
         let llvm_field_types = vec![
             BasicTypeEnum::IntType(codegen.context.i64_type()),
-            BasicTypeEnum::ArrayType(codegen.context.i8_type().array_type(size - 8)),
+            BasicTypeEnum::ArrayType(codegen.context.i8_type().array_type(padding_size)),
+            BasicTypeEnum::ArrayType(
+                codegen
+                    .context
+                    .i8_type()
+                    .array_type(size as u32 - padding_size - discriminant_size as u32),
+            ),
         ];
         let llvm_ty = codegen.context.opaque_struct_type(&mono.to_string());
         llvm_ty.set_body(&llvm_field_types, false);
@@ -853,11 +845,7 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
             .collect::<HashMap<_, _>>();
 
         EnumRepresentation {
-            llvm_repr: LLVMRepresentation {
-                ty: llvm_ty,
-                size,
-                alignment,
-            },
+            llvm_repr: LLVMStructRepresentation::new_with_alignment(llvm_ty, alignment),
             variants,
             variant_discriminants,
         }
@@ -877,8 +865,34 @@ pub struct Representations<'a, 'ctx> {
 #[derive(Debug, Clone, Copy)]
 pub struct AnyTypeRepresentation<'ctx> {
     pub llvm_type: BasicTypeEnum<'ctx>,
-    pub size: u32,
-    pub alignment: u32,
+    /// For some types, they require a higher alignment than LLVM says they do.
+    /// This is particularly important for enum types, where variants may have higher alignment requirements than the base enum type itself.
+    abi_alignment: u32,
+}
+
+impl<'ctx> AnyTypeRepresentation<'ctx> {
+    pub fn new(codegen: &CodeGenContext<'ctx>, llvm_type: BasicTypeEnum<'ctx>) -> Self {
+        let abi_alignment = codegen.target_data().get_abi_alignment(&llvm_type);
+        Self {
+            llvm_type,
+            abi_alignment,
+        }
+    }
+
+    pub fn new_with_alignment(llvm_type: BasicTypeEnum<'ctx>, abi_alignment: u32) -> Self {
+        Self {
+            llvm_type,
+            abi_alignment,
+        }
+    }
+
+    pub fn abi_alignment(&self) -> u32 {
+        self.abi_alignment
+    }
+
+    pub fn store_size(&self, codegen: &CodeGenContext<'ctx>) -> u64 {
+        codegen.target_data().get_store_size(&self.llvm_type)
+    }
 }
 
 impl<'a, 'ctx> Representations<'a, 'ctx> {
@@ -901,11 +915,10 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             datas: HashMap::new(),
             enums: HashMap::new(),
             func_objects: HashMap::new(),
-            general_func_obj_ty: AnyTypeRepresentation {
-                llvm_type: general_func_obj_ty.ptr_type(AddressSpace::Generic).into(),
-                size: 8,
-                alignment: 8,
-            },
+            general_func_obj_ty: AnyTypeRepresentation::new(
+                codegen,
+                general_func_obj_ty.ptr_type(AddressSpace::Generic).into(),
+            ),
         };
 
         // Sort the types according to what types are used in what other types.
@@ -954,17 +967,17 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     },
                 };
                 if let Some(repr) = self.datas.get(&mono_ty) {
-                    repr.llvm_repr.as_ref().map(|repr| AnyTypeRepresentation {
-                        llvm_type: BasicTypeEnum::StructType(repr.ty),
-                        size: repr.size,
-                        alignment: repr.alignment,
+                    repr.llvm_repr.as_ref().map(|repr| {
+                        AnyTypeRepresentation::new_with_alignment(
+                            BasicTypeEnum::StructType(repr.ty),
+                            repr.abi_alignment,
+                        )
                     })
                 } else if let Some(repr) = self.enums.get(&mono_ty) {
-                    Some(AnyTypeRepresentation {
-                        llvm_type: BasicTypeEnum::StructType(repr.llvm_repr.ty),
-                        size: repr.llvm_repr.size,
-                        alignment: repr.llvm_repr.alignment,
-                    })
+                    Some(AnyTypeRepresentation::new_with_alignment(
+                        BasicTypeEnum::StructType(repr.llvm_repr.ty),
+                        repr.llvm_repr.abi_alignment,
+                    ))
                 } else {
                     unreachable!()
                 }
@@ -975,11 +988,10 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 Some(self.general_func_obj_ty)
             }
             Type::Primitive(PrimitiveType::Unit) => None,
-            Type::Primitive(PrimitiveType::Int) => Some(AnyTypeRepresentation {
-                llvm_type: BasicTypeEnum::IntType(self.codegen.context.i64_type()),
-                size: 8,
-                alignment: 8,
-            }),
+            Type::Primitive(PrimitiveType::Int) => Some(AnyTypeRepresentation::new(
+                self.codegen,
+                BasicTypeEnum::IntType(self.codegen.context.i64_type()),
+            )),
         }
     }
 

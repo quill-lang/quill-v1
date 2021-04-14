@@ -1,6 +1,6 @@
 use inkwell::{
-    attributes::AttributeLoc, builder::Builder, context::Context,
-    execution_engine::ExecutionEngine, module::Module, targets::TargetData, values::FunctionValue,
+    builder::Builder, context::Context, execution_engine::ExecutionEngine, module::Module,
+    targets::TargetData, values::FunctionValue,
 };
 
 pub struct CodeGenContext<'ctx> {
@@ -34,45 +34,35 @@ impl<'a, 'ctx> CodeGenContext<'ctx> {
             None,
         );
 
-        module
-            .add_function(
-                "llvm.lifetime.start.p0i8",
-                context.void_type().fn_type(
-                    &[
-                        context.i64_type().into(),
-                        context
-                            .i8_type()
-                            .ptr_type(inkwell::AddressSpace::Generic)
-                            .into(),
-                    ],
-                    false,
-                ),
-                None,
-            )
-            .add_attribute(
-                AttributeLoc::Param(1),
-                context.create_string_attribute("nocapture", ""),
-            );
+        module.add_function(
+            "llvm.lifetime.start.p0i8",
+            context.void_type().fn_type(
+                &[
+                    context.i64_type().into(),
+                    context
+                        .i8_type()
+                        .ptr_type(inkwell::AddressSpace::Generic)
+                        .into(),
+                ],
+                false,
+            ),
+            None,
+        );
 
-        module
-            .add_function(
-                "llvm.lifetime.end.p0i8",
-                context.void_type().fn_type(
-                    &[
-                        context.i64_type().into(),
-                        context
-                            .i8_type()
-                            .ptr_type(inkwell::AddressSpace::Generic)
-                            .into(),
-                    ],
-                    false,
-                ),
-                None,
-            )
-            .add_attribute(
-                AttributeLoc::Param(1),
-                context.create_string_attribute("nocapture", ""),
-            );
+        module.add_function(
+            "llvm.lifetime.end.p0i8",
+            context.void_type().fn_type(
+                &[
+                    context.i64_type().into(),
+                    context
+                        .i8_type()
+                        .ptr_type(inkwell::AddressSpace::Generic)
+                        .into(),
+                ],
+                false,
+            ),
+            None,
+        );
 
         let builder = context.create_builder();
         let execution_engine = module.create_interpreter_execution_engine().unwrap();

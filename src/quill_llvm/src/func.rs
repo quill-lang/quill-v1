@@ -80,7 +80,10 @@ pub fn compile_function<'ctx>(
                     &[codegen
                         .context
                         .i64_type()
-                        .const_int(fobj_repr.llvm_repr.as_ref().unwrap().size as u64, false)
+                        .const_int(
+                            fobj_repr.llvm_repr.as_ref().unwrap().store_size(codegen),
+                            false,
+                        )
                         .into()],
                     "malloc_invocation",
                 )
@@ -269,7 +272,7 @@ fn lifetime_start<'ctx>(
         .reprs
         .repr(local_variable_names[variable].ty.clone())
         .unwrap()
-        .size;
+        .store_size(ctx.codegen);
     ctx.codegen.builder.build_call(
         ctx.codegen
             .module
@@ -305,7 +308,7 @@ fn lifetime_end<'ctx>(
         .reprs
         .repr(local_variable_names[variable].ty.clone())
         .unwrap()
-        .size;
+        .store_size(ctx.codegen);
     ctx.codegen.builder.build_call(
         ctx.codegen
             .module
@@ -377,7 +380,7 @@ fn create_real_func_body_cfg<'ctx>(
                         .builder
                         .build_memcpy(
                             target_value,
-                            target_repr.alignment,
+                            target_repr.abi_alignment(),
                             get_pointer_to_rvalue(
                                 ctx.codegen,
                                 ctx.index,
@@ -387,11 +390,11 @@ fn create_real_func_body_cfg<'ctx>(
                                 source,
                             )
                             .unwrap(),
-                            target_repr.alignment,
+                            target_repr.abi_alignment(),
                             ctx.codegen
                                 .context
                                 .ptr_sized_int_type(ctx.codegen.target_data(), None)
-                                .const_int(target_repr.size as u64, false),
+                                .const_int(target_repr.store_size(ctx.codegen) as u64, false),
                         )
                         .unwrap();
                     lifetime_end_if_moved(&ctx, local_variable_names, source);
