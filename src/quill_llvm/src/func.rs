@@ -259,7 +259,11 @@ fn lifetime_start<'ctx>(
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     variable: &LocalVariableName,
 ) {
-    let ptr = ctx.locals[variable];
+    let ptr = if let Some(ptr) = ctx.locals.get(variable) {
+        *ptr
+    } else {
+        return;
+    };
     let ptr = ctx.codegen.builder.build_bitcast(
         ptr,
         ctx.codegen
@@ -295,7 +299,11 @@ fn lifetime_end<'ctx>(
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     variable: &LocalVariableName,
 ) {
-    let ptr = ctx.locals[variable];
+    let ptr = if let Some(ptr) = ctx.locals.get(variable) {
+        *ptr
+    } else {
+        return;
+    };
     let ptr = ctx.codegen.builder.build_bitcast(
         ptr,
         ctx.codegen
