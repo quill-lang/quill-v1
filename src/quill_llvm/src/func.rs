@@ -519,8 +519,19 @@ fn create_real_func_body_cfg<'ctx>(
                             .build_call(fptr, &args, &target.to_string());
                     }
                 }
-                StatementKind::Drop { .. } => {}
-                StatementKind::Free { .. } => {}
+                StatementKind::Drop { variable } => {
+                    // Depending on the type of the variable, we might need to do a variety of things.
+                    // In the simplest case, where the variable is contained entirely on the stack, no action is required.
+                    // If the variable contains any heap allocation, we need to free this memory (recursively).
+                    // Because this can get so complicated and can recurse, we need to call a 'drop function'.
+                    ctx.reprs.drop_ptr(
+                        local_variable_names[variable].ty.clone(),
+                        ctx.locals[variable],
+                    );
+                }
+                StatementKind::Free { .. } => {
+                    // We can signal to LLVM that we're done using this variable, and that its lifetime has ended.
+                }
                 StatementKind::ConstructData {
                     ty,
                     variant,

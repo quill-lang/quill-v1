@@ -80,6 +80,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_i
     for func in &mono.functions {
         func.add_llvm_type(&codegen, &mut reprs, mir);
     }
+    reprs.create_drop_funcs();
     for func in &mono.functions {
         compile_function(&codegen, &reprs, index, mir, func.clone());
     }

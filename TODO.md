@@ -3,11 +3,12 @@
 - Make it a hard error to use a `let` statement outside a block. This can mess with move checking and it's basically a useless feature anyway since it returns the unit type.
 - Make a proper `main` entry point function.
 - When destructuring an object, drop all fields that we don't care about.
-- Make data structures use heap allocation when Tarjan's algorithm finds a cycle.
 - Use `TargetData` to compute size/alignment of data.
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
-- Implement heap allocation in `quill_llvm/repr.rs`.
 - Implement drop and free in LLVM IR.
 - Decide what terms to use for high level constructs: project, package, module, crate, binary...?
 - Add `.quill` extension on source file names so that there's a single `SourceFileIdentifier` syntax for `.toml` and `.quill` files.
+- Implement a proper vtable for function objects and dynamic trait objects. Should dynamic trait objects be limited to single dispatch?
+- Make imports.
+- The heap allocation algorithm might stack overflow with large projects with lots of indirection. Convert recursion into a loop.

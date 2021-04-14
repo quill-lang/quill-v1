@@ -442,9 +442,28 @@ impl<'ctx> DataRepresentation<'ctx> {
             .unwrap();
     }
 
+    /// Lists the fields which are stored indirectly (on the heap).
+    pub fn field_names_on_heap(&self) -> Vec<&str> {
+        self.field_indices
+            .iter()
+            .filter_map(|(k, v)| {
+                if matches!(v, FieldIndex::Heap(_)) {
+                    Some(k.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Checks to see if a field *with representation* exists in this data structure.
     pub fn has_field(&self, name: &str) -> bool {
         self.field_indices.contains_key(name)
+    }
+
+    /// Retrieves the type of the given field.
+    pub fn field_ty(&self, name: &str) -> Option<&Type> {
+        self.field_types.get(name)
     }
 
     /// Allocate space for indirect fields of this struct.
@@ -458,10 +477,6 @@ impl<'ctx> DataRepresentation<'ctx> {
             if let FieldIndex::Heap(index) = index {
                 // Malloc this field.
                 let ty = reprs.repr(self.field_types[field_name].clone()).unwrap();
-                // let malloc = codegen
-                //     .builder
-                //     .build_malloc(ty.llvm_type, field_name)
-                //     .unwrap();
                 let llvm_type_ptr = match ty.llvm_type {
                     BasicTypeEnum::ArrayType(ty) => ty.ptr_type(AddressSpace::Generic),
                     BasicTypeEnum::FloatType(ty) => ty.ptr_type(AddressSpace::Generic),
@@ -504,10 +519,34 @@ impl<'ctx> DataRepresentation<'ctx> {
             }
         }
     }
+
+    /// Deallocate space for indirect fields of this struct.
+    pub fn free_fields(&self, codegen: &CodeGenContext<'ctx>, ptr: PointerValue<'ctx>) {
+        for (field_name, index) in &self.field_indices {
+            if let FieldIndex::Heap(index) = index {
+                // Free this field.
+                let field = codegen
+                    .builder
+                    .build_struct_gep(ptr, *index, field_name)
+                    .unwrap();
+                let field_value = codegen.builder.build_load(field, "field_loaded");
+                codegen
+                    .builder
+                    .build_call(
+                        codegen.module.get_function("free").unwrap(),
+                        &[field_value],
+                        "free_invocation",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_right();
+            }
+        }
+    }
 }
 
 pub struct EnumRepresentation<'ctx> {
     /// The LLVM representation of the enum structure.
+    /// Enums always have a representation, since they always have a discriminant to store.
     pub llvm_repr: LLVMRepresentation<'ctx>,
     /// Maps variant names to data representations of the enum variants.
     /// If a discriminant is required in the data representation, it will have field name `.discriminant`.
@@ -957,6 +996,170 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         descriptor: &FunctionObjectDescriptor,
     ) -> Option<&DataRepresentation<'ctx>> {
         self.func_objects.get(descriptor)
+    }
+
+    /// Drops a value of the given type behind the given pointer.
+    pub fn drop_ptr(&self, ty: Type, variable_ptr: PointerValue<'ctx>) {
+        match ty.clone() {
+            Type::Named { name, parameters } => {
+                // We need to call this type's drop function.
+                let repr = self.repr(ty);
+                let mono_ty = MonomorphisedType {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("drop/{}", mono_ty))
+                    .unwrap();
+                if repr.is_some() {
+                    self.codegen.builder.build_call(
+                        func,
+                        &[variable_ptr.into()],
+                        &format!("drop_{}", mono_ty),
+                    );
+                } else {
+                    self.codegen
+                        .builder
+                        .build_call(func, &[], &format!("drop_{}", mono_ty));
+                }
+            }
+            Type::Variable { .. } => {
+                // We've already monomorphised all type variables into concrete types, so this should never happen.
+                unreachable!()
+            }
+            Type::Function(_, _) => {
+                // TODO drop functions.
+                // This will have to be done using dynamic (single) dispatch,
+                // since function objects might contain things that need to be dropped/freed.
+            }
+            Type::Primitive(_) => {
+                // No operation is required.
+            }
+        }
+    }
+
+    /// Create a `drop` function for each type.
+    /// It is automatically populated with code that will drop each field.
+    /// However, if a custom implementation of `drop` is provided, this will overwrite the default `drop` implementation.
+    pub fn create_drop_funcs(&self) {
+        // First, declare all the function signatures.
+        for (ty, repr) in &self.datas {
+            self.codegen.module.add_function(
+                &format!("drop/{}", ty),
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    self.codegen.context.void_type().fn_type(
+                        &[llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
+                        false,
+                    )
+                } else {
+                    self.codegen.context.void_type().fn_type(&[], false)
+                },
+                None,
+            );
+        }
+        for (ty, repr) in &self.enums {
+            self.codegen.module.add_function(
+                &format!("drop/{}", ty),
+                self.codegen.context.void_type().fn_type(
+                    &[repr.llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
+                    false,
+                ),
+                None,
+            );
+        }
+
+        // Now, implement the functions.
+        for (ty, repr) in &self.datas {
+            let func = self
+                .codegen
+                .module
+                .get_function(&format!("drop/{}", ty))
+                .unwrap();
+
+            let block = self.codegen.context.append_basic_block(func, "drop");
+            self.codegen.builder.position_at_end(block);
+
+            if repr.llvm_repr.is_some() {
+                let variable = func.get_first_param().unwrap().into_pointer_value();
+
+                for heap_field in repr.field_names_on_heap() {
+                    let ptr_to_field = repr.load(self.codegen, self, variable, heap_field).unwrap();
+                    let ty = repr.field_ty(heap_field).unwrap().clone();
+                    self.drop_ptr(ty, ptr_to_field);
+                }
+
+                repr.free_fields(self.codegen, variable);
+            }
+
+            self.codegen.builder.build_return(None);
+        }
+        for (ty, repr) in &self.enums {
+            let func = self
+                .codegen
+                .module
+                .get_function(&format!("drop/{}", ty))
+                .unwrap();
+
+            let block = self.codegen.context.append_basic_block(func, "drop");
+            self.codegen.builder.position_at_end(block);
+
+            let variable = func.get_first_param().unwrap().into_pointer_value();
+
+            // Switch on the discriminant to see what needs dropping.
+            let disc = repr.get_discriminant(self.codegen, variable);
+            let disc_loaded = self
+                .codegen
+                .builder
+                .build_load(disc, "discriminant")
+                .into_int_value();
+
+            // Build the blocks for each case.
+            let mut cases = Vec::new();
+            for (discriminant, int_value) in &repr.variant_discriminants {
+                let block = self
+                    .codegen
+                    .context
+                    .insert_basic_block_after(block, &format!("discriminant_{}", int_value));
+                cases.push((
+                    self.codegen.context.i64_type().const_int(*int_value, false),
+                    block,
+                ));
+                self.codegen.builder.position_at_end(block);
+                let variant = &repr.variants[discriminant];
+                let variable = self
+                    .codegen
+                    .builder
+                    .build_bitcast(
+                        variable,
+                        variant
+                            .llvm_repr
+                            .as_ref()
+                            .unwrap()
+                            .ty
+                            .ptr_type(AddressSpace::Generic),
+                        &format!("as_{}", discriminant),
+                    )
+                    .into_pointer_value();
+                for heap_field in variant.field_names_on_heap() {
+                    let ptr_to_field = variant
+                        .load(self.codegen, self, variable, heap_field)
+                        .unwrap();
+                    let ty = variant.field_ty(heap_field).unwrap().clone();
+                    self.drop_ptr(ty, ptr_to_field);
+                }
+                variant.free_fields(self.codegen, variable);
+                self.codegen.builder.build_return(None);
+            }
+
+            self.codegen.builder.position_at_end(block);
+            self.codegen
+                .builder
+                .build_switch(disc_loaded, cases[0].1, &cases);
+        }
     }
 }
 
