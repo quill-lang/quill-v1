@@ -1,6 +1,7 @@
 #[tokio::test]
 async fn test_typeck() {
     use quill_common::location::SourceFileIdentifier;
+    use quill_common::location::SourceFileType;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
@@ -14,6 +15,7 @@ async fn test_typeck() {
         let file_ident = SourceFileIdentifier {
             module: vec![].into(),
             file: fname.into(),
+            file_type: SourceFileType::Quill,
         };
 
         let lexed = lex(&fs, &file_ident).await;

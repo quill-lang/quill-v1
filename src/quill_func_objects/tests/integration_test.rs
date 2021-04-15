@@ -1,17 +1,19 @@
-use std::collections::HashMap;
-
-use quill_common::{location::Location, name::QualifiedName};
-use quill_mir::{ProjectMIR, SourceFileMIR};
-
 #[tokio::test]
 async fn test_convert_func_objects() {
+    use std::collections::HashMap;
+
     use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
+    use quill_common::{
+        location::{Location, SourceFileType},
+        name::QualifiedName,
+    };
     use quill_func_objects::convert_func_objects;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_mir::to_mir;
+    use quill_mir::{ProjectMIR, SourceFileMIR};
     use quill_parser::parse;
     use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
@@ -23,6 +25,7 @@ async fn test_convert_func_objects() {
         let file_ident = SourceFileIdentifier {
             module: vec![].into(),
             file: fname.into(),
+            file_type: SourceFileType::Quill,
         };
 
         let lexed = lex(&fs, &file_ident).await;

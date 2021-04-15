@@ -1,6 +1,7 @@
 #[tokio::test]
 async fn test_index() {
     use quill_common::location::SourceFileIdentifier;
+    use quill_common::location::SourceFileType;
     use quill_lexer::lex;
     use quill_parser::parse;
     use quill_source_file::ErrorEmitter;
@@ -13,6 +14,7 @@ async fn test_index() {
     let file_ident = SourceFileIdentifier {
         module: vec![].into(),
         file: "main".into(),
+        file_type: SourceFileType::Quill,
     };
 
     let lexed = lex(&fs, &file_ident).await;

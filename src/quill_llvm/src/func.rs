@@ -1118,6 +1118,7 @@ fn monomorphise<'ctx>(
     for info in result.local_variable_names.values_mut() {
         mono(&mut info.ty);
     }
+    mono(&mut result.return_type);
 
     if let DefinitionBodyM::PatternMatch(cfg) = &mut result.body {
         for block in cfg.basic_blocks.values_mut() {

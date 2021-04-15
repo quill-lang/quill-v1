@@ -1,12 +1,12 @@
-use quill_mir::SourceFileMIR;
-
 #[tokio::test]
 async fn test_mir() {
     use quill_common::location::SourceFileIdentifier;
+    use quill_common::location::SourceFileType;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_mir::to_mir;
+    use quill_mir::SourceFileMIR;
     use quill_parser::parse;
     use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
@@ -18,6 +18,7 @@ async fn test_mir() {
         let file_ident = SourceFileIdentifier {
             module: vec![].into(),
             file: fname.into(),
+            file_type: SourceFileType::Quill,
         };
 
         let lexed = lex(&fs, &file_ident).await;

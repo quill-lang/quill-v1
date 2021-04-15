@@ -1,23 +1,25 @@
-use std::{collections::HashMap, path::Path};
-
-use quill_common::{location::Location, name::QualifiedName};
-use quill_mir::ProjectMIR;
-use quill_target::{
-    BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
-};
-
 #[tokio::test]
 async fn test_llvm() {
+    use std::{collections::HashMap, path::Path};
+
     use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
+    use quill_common::{
+        location::{Location, SourceFileType},
+        name::QualifiedName,
+    };
     use quill_func_objects::convert_func_objects;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_mir::to_mir;
+    use quill_mir::ProjectMIR;
     use quill_parser::parse;
     use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
+    use quill_target::{
+        BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
+    };
     use quill_type_deduce::check;
     use std::path::PathBuf;
 
@@ -26,6 +28,7 @@ async fn test_llvm() {
         let file_ident = SourceFileIdentifier {
             module: vec![].into(),
             file: fname.into(),
+            file_type: SourceFileType::Quill,
         };
 
         let lexed = lex(&fs, &file_ident).await;
