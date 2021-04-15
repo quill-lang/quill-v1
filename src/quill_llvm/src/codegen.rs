@@ -1,6 +1,11 @@
 use inkwell::{
-    builder::Builder, context::Context, execution_engine::ExecutionEngine, module::Module,
-    targets::TargetData, values::FunctionValue,
+    builder::Builder,
+    context::Context,
+    debug_info::{DICompileUnit, DebugInfoBuilder},
+    execution_engine::ExecutionEngine,
+    module::Module,
+    targets::TargetData,
+    values::FunctionValue,
 };
 
 pub struct CodeGenContext<'ctx> {
@@ -8,60 +13,101 @@ pub struct CodeGenContext<'ctx> {
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
     pub execution_engine: ExecutionEngine<'ctx>,
+    pub di_builder: DebugInfoBuilder<'ctx>,
+    pub di_compile_unit: DICompileUnit<'ctx>,
+}
+
+fn declare_libc<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {
+    module.add_function(
+        "malloc",
+        context
+            .i8_type()
+            .ptr_type(inkwell::AddressSpace::Generic)
+            .fn_type(&[context.i64_type().into()], false),
+        None,
+    );
+
+    module.add_function(
+        "free",
+        context.void_type().fn_type(
+            &[context
+                .i8_type()
+                .ptr_type(inkwell::AddressSpace::Generic)
+                .into()],
+            false,
+        ),
+        None,
+    );
+}
+
+fn declare_lifetime_intrinsics<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {
+    module.add_function(
+        "llvm.lifetime.start.p0i8",
+        context.void_type().fn_type(
+            &[
+                context.i64_type().into(),
+                context
+                    .i8_type()
+                    .ptr_type(inkwell::AddressSpace::Generic)
+                    .into(),
+            ],
+            false,
+        ),
+        None,
+    );
+
+    module.add_function(
+        "llvm.lifetime.end.p0i8",
+        context.void_type().fn_type(
+            &[
+                context.i64_type().into(),
+                context
+                    .i8_type()
+                    .ptr_type(inkwell::AddressSpace::Generic)
+                    .into(),
+            ],
+            false,
+        ),
+        None,
+    );
 }
 
 /// Creates declarations of useful functions from libc.
 impl<'a, 'ctx> CodeGenContext<'ctx> {
     pub fn new(context: &'ctx Context, module: Module<'ctx>) -> Self {
-        module.add_function(
-            "malloc",
-            context
-                .i8_type()
-                .ptr_type(inkwell::AddressSpace::Generic)
-                .fn_type(&[context.i64_type().into()], false),
-            None,
+        declare_libc(context, &module);
+        declare_lifetime_intrinsics(context, &module);
+
+        let debug_metadata_version = context.i32_type().const_int(3, false);
+        module.add_basic_value_flag(
+            "Debug Info Version",
+            inkwell::module::FlagBehavior::Warning,
+            debug_metadata_version,
         );
 
-        module.add_function(
-            "free",
-            context.void_type().fn_type(
-                &[context
-                    .i8_type()
-                    .ptr_type(inkwell::AddressSpace::Generic)
-                    .into()],
-                false,
-            ),
-            None,
-        );
+        // let code_view = context.i32_type().const_int(1, false);
+        // module.add_basic_value_flag(
+        //     "CodeView",
+        //     inkwell::module::FlagBehavior::Warning,
+        //     code_view,
+        // );
 
-        module.add_function(
-            "llvm.lifetime.start.p0i8",
-            context.void_type().fn_type(
-                &[
-                    context.i64_type().into(),
-                    context
-                        .i8_type()
-                        .ptr_type(inkwell::AddressSpace::Generic)
-                        .into(),
-                ],
-                false,
-            ),
-            None,
-        );
-
-        module.add_function(
-            "llvm.lifetime.end.p0i8",
-            context.void_type().fn_type(
-                &[
-                    context.i64_type().into(),
-                    context
-                        .i8_type()
-                        .ptr_type(inkwell::AddressSpace::Generic)
-                        .into(),
-                ],
-                false,
-            ),
-            None,
+        let (di_builder, di_compile_unit) = module.create_debug_info_builder(
+            true,
+            inkwell::debug_info::DWARFSourceLanguage::C,
+            "test_filename",
+            "test_directory",
+            "quillc",
+            false,
+            "", // compiler command line flags
+            0,
+            "",
+            inkwell::debug_info::DWARFEmissionKind::Full,
+            0,
+            false,
+            false,
+            "test_sysroot",
+            "test_sdk",
         );
 
         let builder = context.create_builder();
@@ -71,6 +117,8 @@ impl<'a, 'ctx> CodeGenContext<'ctx> {
             module,
             builder,
             execution_engine,
+            di_builder,
+            di_compile_unit,
         }
     }
 

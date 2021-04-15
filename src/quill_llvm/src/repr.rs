@@ -7,11 +7,15 @@ use std::{
 };
 
 use inkwell::{
+    debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIType},
     types::{BasicTypeEnum, FunctionType, StructType},
     values::{BasicValue, PointerValue},
     AddressSpace,
 };
-use quill_common::name::QualifiedName;
+use quill_common::{
+    location::{Location, Range, SourceFileIdentifier},
+    name::QualifiedName,
+};
 use quill_index::{EnumI, ProjectIndex, TypeConstructorI, TypeDeclarationTypeI, TypeParameter};
 use quill_mir::{ArgumentIndex, DefinitionBodyM, LocalVariableName, ProjectMIR, StatementKind};
 use quill_type::{PrimitiveType, Type};
@@ -194,6 +198,7 @@ impl MonomorphisedFunction {
                         .i8_type()
                         .ptr_type(AddressSpace::Generic)
                         .into(),
+                    reprs.general_func_obj_ty.di_type,
                 )),
             );
             // Add only the arguments not pertaining to the last currying step.
@@ -203,7 +208,11 @@ impl MonomorphisedFunction {
                 }
             }
 
-            let repr = builder.build(descriptor.to_string());
+            let repr = builder.build(
+                &self.func.source_file,
+                self.func.range,
+                descriptor.to_string(),
+            );
             reprs.func_objects.insert(descriptor, repr.clone());
             repr
         };
@@ -349,10 +358,27 @@ impl<'ctx> LLVMStructRepresentation<'ctx> {
     }
 }
 
+pub fn source_file_debug_info<'ctx>(
+    codegen: &CodeGenContext<'ctx>,
+    source_file: &SourceFileIdentifier,
+) -> DIFile<'ctx> {
+    codegen.di_builder.create_file(
+        &source_file.file.0,
+        &source_file
+            .module
+            .segments
+            .iter()
+            .map(|seg| seg.0.as_str())
+            .intersperse("/")
+            .collect::<String>(),
+    )
+}
+
 #[derive(Clone)]
 pub struct DataRepresentation<'ctx> {
     /// The LLVM representation of the data structure, if it requires a representation at all.
     pub llvm_repr: Option<LLVMStructRepresentation<'ctx>>,
+    pub di_type: DIType<'ctx>,
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
     /// If this contains *any* fields, `llvm_repr` is Some.
     field_indices: HashMap<String, FieldIndex>,
@@ -565,6 +591,7 @@ pub struct EnumRepresentation<'ctx> {
     /// The LLVM representation of the enum structure.
     /// Enums always have a representation, since they always have a discriminant to store.
     pub llvm_repr: LLVMStructRepresentation<'ctx>,
+    pub di_type: DIType<'ctx>,
     /// Maps variant names to data representations of the enum variants.
     /// If a discriminant is required in the data representation, it will have field name `.discriminant`.
     pub variants: HashMap<String, DataRepresentation<'ctx>>,
@@ -741,19 +768,69 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
     }
 
     /// Returns a data representation.
-    fn build(self, name: String) -> DataRepresentation<'ctx> {
+    fn build(
+        self,
+        file: &SourceFileIdentifier,
+        range: Range,
+        name: String,
+    ) -> DataRepresentation<'ctx> {
+        let file = source_file_debug_info(self.reprs.codegen, file);
+        let Range {
+            start: Location { line, col },
+            end: _,
+        } = range;
+
         if self.llvm_field_types.is_empty() {
+            let di_type = self.reprs.codegen.di_builder.create_struct_type(
+                self.reprs
+                    .codegen
+                    .di_builder
+                    .create_lexical_block(file.as_debug_info_scope(), file, line, col)
+                    .as_debug_info_scope(),
+                &name,
+                file,
+                line,
+                0,
+                1,
+                DIFlagsConstants::PUBLIC,
+                None,
+                &[],
+                0,
+                None,
+                &name,
+            );
             DataRepresentation {
                 llvm_repr: None,
+                di_type: di_type.as_type(),
                 field_indices: self.field_indices,
                 field_types: self.field_types,
                 name,
             }
         } else {
+            // TODO add fields.
             let llvm_ty = self.reprs.codegen.context.opaque_struct_type(&name);
             llvm_ty.set_body(&self.llvm_field_types, false);
+            let di_type = self.reprs.codegen.di_builder.create_struct_type(
+                self.reprs
+                    .codegen
+                    .di_builder
+                    .create_lexical_block(file.as_debug_info_scope(), file, line, col)
+                    .as_debug_info_scope(),
+                &name,
+                file,
+                line,
+                0,
+                1,
+                DIFlagsConstants::PUBLIC,
+                None,
+                &[],
+                0,
+                None,
+                &name,
+            );
             DataRepresentation {
                 llvm_repr: Some(LLVMStructRepresentation::new(self.reprs.codegen, llvm_ty)),
+                di_type: di_type.as_type(),
                 field_indices: self.field_indices,
                 field_types: self.field_types,
                 name,
@@ -793,7 +870,11 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
 
                 (
                     variant.name.name.clone(),
-                    builder.build(format!("{}@{}", mono, variant.name.name)),
+                    builder.build(
+                        &mono.name.source_file,
+                        ty.range,
+                        format!("{}@{}", mono, variant.name.name),
+                    ),
                 )
             })
             .collect::<HashMap<_, _>>();
@@ -844,8 +925,25 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
             .map(|(i, variant)| (variant.name.name.clone(), i as u64))
             .collect::<HashMap<_, _>>();
 
+        let file = source_file_debug_info(codegen, &mono.name.source_file);
+        let di_type = codegen.di_builder.create_struct_type(
+            file.as_debug_info_scope(),
+            &"<function object>",
+            file,
+            ty.range.start.line,
+            0,
+            1,
+            DIFlagsConstants::PUBLIC,
+            None,
+            &[],
+            0,
+            None,
+            &mono.to_string(),
+        );
+
         EnumRepresentation {
             llvm_repr: LLVMStructRepresentation::new_with_alignment(llvm_ty, alignment),
+            di_type: di_type.as_type(),
             variants,
             variant_discriminants,
         }
@@ -865,23 +963,34 @@ pub struct Representations<'a, 'ctx> {
 #[derive(Debug, Clone, Copy)]
 pub struct AnyTypeRepresentation<'ctx> {
     pub llvm_type: BasicTypeEnum<'ctx>,
+    pub di_type: DIType<'ctx>,
     /// For some types, they require a higher alignment than LLVM says they do.
     /// This is particularly important for enum types, where variants may have higher alignment requirements than the base enum type itself.
     abi_alignment: u32,
 }
 
 impl<'ctx> AnyTypeRepresentation<'ctx> {
-    pub fn new(codegen: &CodeGenContext<'ctx>, llvm_type: BasicTypeEnum<'ctx>) -> Self {
+    pub fn new(
+        codegen: &CodeGenContext<'ctx>,
+        llvm_type: BasicTypeEnum<'ctx>,
+        di_type: DIType<'ctx>,
+    ) -> Self {
         let abi_alignment = codegen.target_data().get_abi_alignment(&llvm_type);
         Self {
             llvm_type,
+            di_type,
             abi_alignment,
         }
     }
 
-    pub fn new_with_alignment(llvm_type: BasicTypeEnum<'ctx>, abi_alignment: u32) -> Self {
+    pub fn new_with_alignment(
+        llvm_type: BasicTypeEnum<'ctx>,
+        di_type: DIType<'ctx>,
+        abi_alignment: u32,
+    ) -> Self {
         Self {
             llvm_type,
+            di_type,
             abi_alignment,
         }
     }
@@ -918,6 +1027,18 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             general_func_obj_ty: AnyTypeRepresentation::new(
                 codegen,
                 general_func_obj_ty.ptr_type(AddressSpace::Generic).into(),
+                codegen
+                    .di_builder
+                    .create_basic_type(
+                        "<function object>",
+                        codegen
+                            .target_data()
+                            .get_bit_size(&general_func_obj_ty.ptr_type(AddressSpace::Generic)),
+                        1,
+                        DIFlagsConstants::PUBLIC,
+                    )
+                    .unwrap()
+                    .as_type(),
             ),
         };
 
@@ -937,7 +1058,11 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                         &mono_ty.ty.mono,
                         mono_ty.indirected,
                     );
-                    let repr = builder.build(mono_ty.ty.to_string());
+                    let repr = builder.build(
+                        &mono_ty.ty.name.source_file,
+                        mono_ty.ty.name.range,
+                        mono_ty.ty.to_string(),
+                    );
                     reprs.datas.insert(mono_ty.ty, repr);
                 }
                 TypeDeclarationTypeI::Enum(enumi) => {
@@ -967,15 +1092,17 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     },
                 };
                 if let Some(repr) = self.datas.get(&mono_ty) {
-                    repr.llvm_repr.as_ref().map(|repr| {
+                    repr.llvm_repr.as_ref().map(|llvm_repr| {
                         AnyTypeRepresentation::new_with_alignment(
-                            BasicTypeEnum::StructType(repr.ty),
-                            repr.abi_alignment,
+                            BasicTypeEnum::StructType(llvm_repr.ty),
+                            repr.di_type,
+                            llvm_repr.abi_alignment,
                         )
                     })
                 } else if let Some(repr) = self.enums.get(&mono_ty) {
                     Some(AnyTypeRepresentation::new_with_alignment(
                         BasicTypeEnum::StructType(repr.llvm_repr.ty),
+                        repr.di_type,
                         repr.llvm_repr.abi_alignment,
                     ))
                 } else {
@@ -991,6 +1118,11 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             Type::Primitive(PrimitiveType::Int) => Some(AnyTypeRepresentation::new(
                 self.codegen,
                 BasicTypeEnum::IntType(self.codegen.context.i64_type()),
+                self.codegen
+                    .di_builder
+                    .create_basic_type("int", 64, 5, DIFlagsConstants::PUBLIC)
+                    .unwrap()
+                    .as_type(),
             )),
         }
     }

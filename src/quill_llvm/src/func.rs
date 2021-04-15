@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use inkwell::{
     basic_block::BasicBlock,
+    debug_info::{AsDIScope, DIScope},
     types::BasicTypeEnum,
     values::{FunctionValue, PointerValue},
     AddressSpace,
@@ -16,7 +17,10 @@ use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
 
 use crate::{
     codegen::CodeGenContext,
-    repr::{MonomorphisationParameters, MonomorphisedFunction, MonomorphisedType, Representations},
+    repr::{
+        source_file_debug_info, MonomorphisationParameters, MonomorphisedFunction,
+        MonomorphisedType, Representations,
+    },
 };
 
 pub fn compile_function<'ctx>(
@@ -29,8 +33,38 @@ pub fn compile_function<'ctx>(
     let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
 
+    let di_file = source_file_debug_info(codegen, &func.func.source_file);
+    let subprogram = codegen.di_builder.create_function(
+        di_file.as_debug_info_scope(),
+        &func.func.to_string(),
+        Some(&func.to_string()),
+        di_file,
+        func.func.range.start.line,
+        codegen.di_builder.create_subroutine_type(
+            di_file,
+            reprs.repr(def.return_type.clone()).map(|repr| repr.di_type),
+            &(0..def.arity)
+                .map(|i| {
+                    &def.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(i))].ty
+                })
+                .cloned()
+                .filter_map(|ty| reprs.repr(ty))
+                .map(|repr| repr.di_type)
+                .collect::<Vec<_>>(),
+            0,
+        ),
+        true,
+        true,
+        func.func.range.start.line,
+        0,
+        false,
+    );
+    func_value.set_subprogram(subprogram);
+    let scope = subprogram.as_debug_info_scope();
+
     let block = codegen.context.append_basic_block(func_value, "entry");
     codegen.builder.position_at_end(block);
+    codegen.builder.unset_current_debug_location();
 
     // Check what kind of function this is.
     if func.direct {
@@ -67,6 +101,7 @@ pub fn compile_function<'ctx>(
                     locals,
                 },
                 def,
+                scope,
             );
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
@@ -184,6 +219,7 @@ pub fn compile_function<'ctx>(
                     locals,
                 },
                 def,
+                scope,
             );
             codegen.builder.position_at_end(block);
             codegen.builder.build_unconditional_branch(contents_block);
@@ -241,13 +277,18 @@ struct BodyCreationContext<'a, 'ctx> {
 fn create_real_func_body<'ctx>(
     context: BodyCreationContext<'_, 'ctx>,
     def: &DefinitionM,
+    scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
     let mut def = monomorphise(context.reprs, &context.func, def);
 
     match &mut def.body {
-        DefinitionBodyM::PatternMatch(cfg) => {
-            create_real_func_body_cfg(context, cfg, &def.local_variable_names, &def.type_variables)
-        }
+        DefinitionBodyM::PatternMatch(cfg) => create_real_func_body_cfg(
+            context,
+            cfg,
+            &def.local_variable_names,
+            &def.type_variables,
+            scope,
+        ),
         DefinitionBodyM::CompilerIntrinsic => {
             create_real_func_body_intrinsic(context, &def.local_variable_names, &def.type_variables)
         }
@@ -353,6 +394,7 @@ fn create_real_func_body_cfg<'ctx>(
     cfg: &mut ControlFlowGraph,
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     type_variables: &[TypeParameter],
+    scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
     // Create new LLVM basic blocks for each MIR basic block.
     let blocks = cfg
@@ -373,6 +415,16 @@ fn create_real_func_body_cfg<'ctx>(
 
         // Handle the statements.
         for stmt in &block.statements {
+            ctx.codegen.builder.set_current_debug_location(
+                ctx.codegen.context,
+                ctx.codegen.di_builder.create_debug_location(
+                    ctx.codegen.context,
+                    stmt.range.start.line,
+                    stmt.range.start.col,
+                    scope,
+                    None,
+                ),
+            );
             match &stmt.kind {
                 StatementKind::Assign { target, source } => {
                     // Create a new local variable in LLVM for this assignment target.

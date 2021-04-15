@@ -1,3 +1,5 @@
+#![feature(iter_intersperse)]
+
 use codegen::CodeGenContext;
 use func::compile_function;
 use inkwell::targets::{InitializationConfig, Target};
@@ -17,7 +19,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::Path,
-    process::{Command, Output},
+    process::Output,
 };
 
 mod codegen;
@@ -114,6 +116,19 @@ pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_i
         .builder
         .build_return(Some(&codegen.context.i32_type().const_int(0, false)));
 
+    let object_path = build_info.build_folder.join(path);
+    let asm_path = build_info.build_folder.join(path.with_extension("asm"));
+    let bc_path = build_info.build_folder.join(path.with_extension("bc"));
+    let bc_opt_path = build_info.build_folder.join(path.with_extension("opt.bc"));
+    let ll_unverified_path = build_info
+        .build_folder
+        .join(path.with_extension("unverified.ll"));
+
+    // We print twice here because it's useful to see the output if finalize fails.
+    codegen.module.print_to_file(&ll_unverified_path).unwrap();
+    codegen.di_builder.finalize();
+    codegen.module.print_to_file(ll_unverified_path).unwrap();
+
     let pm = PassManager::<Module>::create(&());
     pm.add_verifier_pass();
     println!("Verifying...");
@@ -123,11 +138,6 @@ pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_i
     // println!("Compiling to target machine...");
 
     Target::initialize_all(&InitializationConfig::default());
-
-    let object_path = build_info.build_folder.join(path);
-    let asm_path = build_info.build_folder.join(path.with_extension("asm"));
-    let bc_path = build_info.build_folder.join(path.with_extension("bc"));
-    let bc_opt_path = build_info.build_folder.join(path.with_extension("opt.bc"));
 
     let target = Target::from_name("x86-64").unwrap();
     let target_machine = target
@@ -141,24 +151,29 @@ pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_i
         )
         .unwrap();
 
-    // Output the LLVM bitcode, and decompile it if we have `llvm-dis` on the system.
+    // Output the LLVM bitcode and IR.
     codegen.module.write_bitcode_to_path(&bc_path);
-    let _ = Command::new("llvm-dis")
-        .arg(bc_path.to_str().unwrap())
-        .status();
+    codegen
+        .module
+        .print_to_file(bc_path.with_extension("ll"))
+        .unwrap();
 
     let opt = PassManager::<Module>::create(&());
     opt.add_jump_threading_pass();
-    opt.add_promote_memory_to_register_pass();
+    // These steps optimise, but make the LLVM IR very unreadable.
+    // opt.add_scalar_repl_aggregates_pass_ssa();
+    // opt.add_demote_memory_to_register_pass();
     opt.add_memcpy_optimize_pass();
+    opt.add_function_attrs_pass();
     println!("Optimising...");
     opt.run_on(&codegen.module);
     println!("Writing bitcode, assembly, and object file...");
 
     codegen.module.write_bitcode_to_path(&bc_opt_path);
-    let _ = Command::new("llvm-dis")
-        .arg(bc_opt_path.to_str().unwrap())
-        .status();
+    codegen
+        .module
+        .print_to_file(bc_opt_path.with_extension("ll"))
+        .unwrap();
 
     assert!(target_machine
         .write_to_file(&codegen.module, FileType::Assembly, &asm_path)
