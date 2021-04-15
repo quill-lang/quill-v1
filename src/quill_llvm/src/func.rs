@@ -42,7 +42,7 @@ pub fn compile_function<'ctx>(
         &func.func.to_string(),
         Some(&func.to_string()),
         di_file,
-        func.func.range.start.line,
+        func.func.range.start.line + 1,
         codegen.di_builder.create_subroutine_type(
             di_file,
             reprs
@@ -60,7 +60,7 @@ pub fn compile_function<'ctx>(
         ),
         true,
         true,
-        func.func.range.start.line,
+        func.func.range.start.line + 1,
         0,
         false,
     );

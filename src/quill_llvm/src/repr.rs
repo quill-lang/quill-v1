@@ -793,7 +793,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
                 self.reprs
                     .codegen
                     .di_builder
-                    .create_lexical_block(file.as_debug_info_scope(), file, line, col)
+                    .create_lexical_block(file.as_debug_info_scope(), file, line + 1, col + 1)
                     .as_debug_info_scope(),
                 &name,
                 file,
@@ -822,7 +822,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
                 self.reprs
                     .codegen
                     .di_builder
-                    .create_lexical_block(file.as_debug_info_scope(), file, line, col)
+                    .create_lexical_block(file.as_debug_info_scope(), file, line + 1, col + 1)
                     .as_debug_info_scope(),
                 &name,
                 file,
@@ -938,7 +938,7 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
             file.as_debug_info_scope(),
             &"<function object>",
             file,
-            ty.range.start.line,
+            ty.range.start.line + 1,
             0,
             1,
             DIFlagsConstants::PUBLIC,
