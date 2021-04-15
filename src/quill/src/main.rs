@@ -18,7 +18,7 @@ use std::{
 use clap::ArgMatches;
 use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, Severity},
-    location::{Location, SourceFileIdentifier},
+    location::{Location, SourceFileIdentifier, SourceFileType},
 };
 use quill_source_file::{ErrorEmitter, PackageFileSystem};
 use quill_target::{
@@ -225,7 +225,8 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                             Diagnostic::at_location(
                                 &SourceFileIdentifier {
                                     module: vec![].into(),
-                                    file: "quill.toml".into(),
+                                    file: "quill".into(),
+                                    file_type: SourceFileType::Toml,
                                 },
                                 Location {
                                     line: line as u32,
@@ -256,7 +257,8 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                         Severity::Error,
                         Diagnostic::in_file(&SourceFileIdentifier {
                             module: vec![].into(),
-                            file: "quill.toml".into(),
+                            file: "quill".into(),
+                            file_type: SourceFileType::Toml,
                         }),
                     ),
                 )
@@ -271,7 +273,8 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                 Severity::Error,
                 Diagnostic::in_file(&SourceFileIdentifier {
                     module: vec![].into(),
-                    file: "quill.toml".into(),
+                    file: "quill".into(),
+                    file_type: SourceFileType::Toml,
                 }),
             ),
         )

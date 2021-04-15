@@ -142,6 +142,31 @@ impl From<ModuleIdentifier> for PathBuf {
 pub struct SourceFileIdentifier {
     pub module: ModuleIdentifier,
     pub file: SourceFileIdentifierSegment,
+    pub file_type: SourceFileType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SourceFileType {
+    Quill,
+    Toml,
+}
+
+impl Display for SourceFileType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceFileType::Quill => write!(f, "Quill source file"),
+            SourceFileType::Toml => write!(f, "TOML file"),
+        }
+    }
+}
+
+impl SourceFileType {
+    pub fn file_extension(&self) -> &'static str {
+        match self {
+            SourceFileType::Quill => "quill",
+            SourceFileType::Toml => "toml",
+        }
+    }
 }
 
 impl Debug for SourceFileIdentifier {
@@ -162,13 +187,24 @@ impl Display for SourceFileIdentifier {
 
 impl From<SourceFileIdentifier> for PathBuf {
     fn from(identifier: SourceFileIdentifier) -> Self {
-        PathBuf::from(identifier.module).join(identifier.file.0)
+        PathBuf::from(identifier.module)
+            .join(identifier.file.0)
+            .with_extension(identifier.file_type.file_extension())
     }
 }
 
 impl<P: AsRef<Path>> From<P> for SourceFileIdentifier {
     fn from(path: P) -> Self {
         let path = path.as_ref();
+        let extension = path
+            .extension()
+            .map(|str| str.to_string_lossy().to_string());
+        let file_type = match extension.as_deref() {
+            Some("quill") => SourceFileType::Quill,
+            Some("toml") => SourceFileType::Toml,
+            Some(other) => panic!("{}", other),
+            None => panic!(),
+        };
         let mut components = path
             .components()
             .filter_map(|component| match component {
@@ -185,6 +221,7 @@ impl<P: AsRef<Path>> From<P> for SourceFileIdentifier {
                 segments: components,
             },
             file: last,
+            file_type,
         }
     }
 }

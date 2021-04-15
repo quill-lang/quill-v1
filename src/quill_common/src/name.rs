@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
-use crate::location::{Range, SourceFileIdentifier};
+use crate::location::{Range, SourceFileIdentifier, SourceFileType};
 
 /// A fully qualified name referring to a top-level item declared in a `.quill` file.
 /// This should not be used for qualified identifiers, since in this case we need to also keep track
@@ -51,6 +51,7 @@ impl QualifiedName {
                     segments: Vec::new(),
                 },
                 file: "test_file".into(),
+                file_type: SourceFileType::Quill,
             },
             name: s.to_string(),
             range: Location { line: 0, col: 0 }.into(),

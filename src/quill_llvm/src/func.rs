@@ -419,8 +419,8 @@ fn create_real_func_body_cfg<'ctx>(
                 ctx.codegen.context,
                 ctx.codegen.di_builder.create_debug_location(
                     ctx.codegen.context,
-                    stmt.range.start.line,
-                    stmt.range.start.col,
+                    stmt.range.start.line + 1,
+                    stmt.range.start.col + 1,
                     scope,
                     None,
                 ),

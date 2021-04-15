@@ -63,6 +63,7 @@ pub fn link(project_name: &str, deps: &Path, build_info: BuildInfo) {
                     .to_str()
                     .unwrap()
             ));
+            linker.arg("/DEBUG");
             linker.arg(build_info.build_folder.join("out.o"));
             linker.arg(dep_win(deps, "msvcrt.lib"));
             linker.arg(dep_win(deps, "kernel32.lib"));

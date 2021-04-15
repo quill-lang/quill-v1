@@ -73,7 +73,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_i
     let context = Context::create();
     let module = context.create_module(project_name);
     module.set_triple(&target_triple);
-    let codegen = CodeGenContext::new(&context, module);
+    let codegen = CodeGenContext::new(&context, module, build_info.code_folder.clone());
 
     let mono = Monomorphisation::new(mir);
     let mut reprs = Representations::new(&codegen, index, mono.types);

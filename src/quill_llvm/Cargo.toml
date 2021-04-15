@@ -13,6 +13,7 @@ quill_type = { path = "../quill_type" }
 quill_type_deduce = { path = "../quill_type_deduce" }
 quill_mir = { path = "../quill_mir" }
 quill_target = { path = "../quill_target" }
+dunce = "1.0.1"
 
 [dev-dependencies]
 quill_parser = { path = "../quill_parser" }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use quill_common::{
-    location::{Location, SourceFileIdentifier},
+    location::{Location, SourceFileIdentifier, SourceFileType},
     name::QualifiedName,
 };
 use quill_index::ProjectIndex;
@@ -32,6 +32,7 @@ async fn main() {
     let file_ident = SourceFileIdentifier {
         module: vec![].into(),
         file: "main".into(),
+        file_type: SourceFileType::Quill,
     };
 
     let lexed = quill_lexer::lex(&fs, &file_ident).await;

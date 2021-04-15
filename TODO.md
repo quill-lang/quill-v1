@@ -7,7 +7,6 @@
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
 - Decide what terms to use for high level constructs: project, package, module, crate, binary...?
-- Add `.quill` extension on source file names so that there's a single `SourceFileIdentifier` syntax for `.toml` and `.quill` files.
 - Implement a proper vtable for function objects and dynamic trait objects. Should dynamic trait objects be limited to single dispatch?
 - Make imports.
 - The heap allocation algorithm might stack overflow with large projects with lots of indirection. Convert recursion into a loop.

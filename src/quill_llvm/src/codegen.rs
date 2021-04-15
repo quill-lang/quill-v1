@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use inkwell::{
     builder::Builder,
     context::Context,
@@ -13,6 +15,7 @@ pub struct CodeGenContext<'ctx> {
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
     pub execution_engine: ExecutionEngine<'ctx>,
+    pub project_root: PathBuf,
     pub di_builder: DebugInfoBuilder<'ctx>,
     pub di_compile_unit: DICompileUnit<'ctx>,
 }
@@ -74,7 +77,7 @@ fn declare_lifetime_intrinsics<'ctx>(context: &'ctx Context, module: &Module<'ct
 
 /// Creates declarations of useful functions from libc.
 impl<'a, 'ctx> CodeGenContext<'ctx> {
-    pub fn new(context: &'ctx Context, module: Module<'ctx>) -> Self {
+    pub fn new(context: &'ctx Context, module: Module<'ctx>, project_root: PathBuf) -> Self {
         declare_libc(context, &module);
         declare_lifetime_intrinsics(context, &module);
 
@@ -85,12 +88,20 @@ impl<'a, 'ctx> CodeGenContext<'ctx> {
             debug_metadata_version,
         );
 
-        // let code_view = context.i32_type().const_int(1, false);
-        // module.add_basic_value_flag(
-        //     "CodeView",
-        //     inkwell::module::FlagBehavior::Warning,
-        //     code_view,
-        // );
+        // Enable CodeView emission.
+        let code_view = context.i32_type().const_int(1, false);
+        module.add_basic_value_flag(
+            "CodeView",
+            inkwell::module::FlagBehavior::Warning,
+            code_view,
+        );
+        // Enable DWARF version 2.
+        let dwarf = context.i32_type().const_int(2, false);
+        module.add_basic_value_flag(
+            "Dwarf Version",
+            inkwell::module::FlagBehavior::Warning,
+            dwarf,
+        );
 
         let (di_builder, di_compile_unit) = module.create_debug_info_builder(
             true,
@@ -117,6 +128,7 @@ impl<'a, 'ctx> CodeGenContext<'ctx> {
             module,
             builder,
             execution_engine,
+            project_root,
             di_builder,
             di_compile_unit,
         }
