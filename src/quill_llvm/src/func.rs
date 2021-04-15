@@ -33,6 +33,9 @@ pub fn compile_function<'ctx>(
     let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
 
+    let mono =
+        |ty: Type| replace_type_variables(ty, &def.type_variables, &func.mono.type_parameters);
+
     let di_file = source_file_debug_info(codegen, &func.func.source_file);
     let subprogram = codegen.di_builder.create_function(
         di_file.as_debug_info_scope(),
@@ -42,13 +45,15 @@ pub fn compile_function<'ctx>(
         func.func.range.start.line,
         codegen.di_builder.create_subroutine_type(
             di_file,
-            reprs.repr(def.return_type.clone()).map(|repr| repr.di_type),
+            reprs
+                .repr(mono(def.return_type.clone()))
+                .map(|repr| repr.di_type),
             &(0..def.arity)
                 .map(|i| {
                     &def.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(i))].ty
                 })
                 .cloned()
-                .filter_map(|ty| reprs.repr(ty))
+                .filter_map(|ty| reprs.repr(mono(ty)))
                 .map(|repr| repr.di_type)
                 .collect::<Vec<_>>(),
             0,
