@@ -1114,7 +1114,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                         repr.llvm_repr.abi_alignment,
                     ))
                 } else {
-                    unreachable!()
+                    unreachable!("ty was {}", mono_ty)
                 }
             }
             Type::Variable { .. } => unreachable!(),
@@ -1341,6 +1341,8 @@ impl Monomorphisation {
             Vec::new(),
         );
 
+        // println!("Mono: {:#?}", mono);
+
         mono
     }
 
@@ -1384,7 +1386,17 @@ impl Monomorphisation {
                                     mir,
                                     name.clone(),
                                     MonomorphisationParameters {
-                                        type_parameters: type_variables.clone(),
+                                        type_parameters: type_variables
+                                            .iter()
+                                            .cloned()
+                                            .map(|ty| {
+                                                replace_type_variables(
+                                                    ty,
+                                                    &def.type_variables,
+                                                    &mono.type_parameters,
+                                                )
+                                            })
+                                            .collect(),
                                     },
                                     true,
                                     Vec::new(),
@@ -1400,7 +1412,17 @@ impl Monomorphisation {
                                     mir,
                                     name.clone(),
                                     MonomorphisationParameters {
-                                        type_parameters: type_variables.clone(),
+                                        type_parameters: type_variables
+                                            .iter()
+                                            .cloned()
+                                            .map(|ty| {
+                                                replace_type_variables(
+                                                    ty,
+                                                    &def.type_variables,
+                                                    &mono.type_parameters,
+                                                )
+                                            })
+                                            .collect(),
                                     },
                                     true,
                                     curry_steps.clone(),

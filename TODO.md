@@ -3,7 +3,6 @@
 - Make it a hard error to use a `let` statement outside a block. This can mess with move checking and it's basically a useless feature anyway since it returns the unit type.
 - Make a proper `main` entry point function.
 - When destructuring an object, drop all fields that we don't care about.
-- Use `TargetData` to compute size/alignment of data.
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
 - Decide what terms to use for high level constructs: project, package, module, crate, binary...?

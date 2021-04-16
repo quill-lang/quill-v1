@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use inkwell::{
     basic_block::BasicBlock,
-    debug_info::{AsDIScope, DIScope},
+    debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIScope},
     types::BasicTypeEnum,
     values::{FunctionValue, PointerValue},
     AddressSpace,
 };
+use quill_common::location::Range;
 use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
 use quill_mir::{
     ArgumentIndex, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo,
@@ -36,6 +37,7 @@ pub fn compile_function<'ctx>(
     let mono =
         |ty: Type| replace_type_variables(ty, &def.type_variables, &func.mono.type_parameters);
 
+    // Create debug info for the function as a whole.
     let di_file = source_file_debug_info(codegen, &func.func.source_file);
     let subprogram = codegen.di_builder.create_function(
         di_file.as_debug_info_scope(),
@@ -104,6 +106,7 @@ pub fn compile_function<'ctx>(
                     func,
                     func_value,
                     locals,
+                    di_file,
                 },
                 def,
                 scope,
@@ -222,6 +225,7 @@ pub fn compile_function<'ctx>(
                     func,
                     func_value,
                     locals,
+                    di_file,
                 },
                 def,
                 scope,
@@ -277,6 +281,7 @@ struct BodyCreationContext<'a, 'ctx> {
     func: MonomorphisedFunction,
     func_value: FunctionValue<'ctx>,
     locals: HashMap<LocalVariableName, PointerValue<'ctx>>,
+    di_file: DIFile<'ctx>,
 }
 
 fn create_real_func_body<'ctx>(
@@ -300,16 +305,50 @@ fn create_real_func_body<'ctx>(
     }
 }
 
+/// The range given is the range where the name was defined.
 fn lifetime_start<'ctx>(
     ctx: &BodyCreationContext<'_, 'ctx>,
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     variable: &LocalVariableName,
+    scope: DIScope<'ctx>,
+    range: Range,
 ) {
     let ptr = if let Some(ptr) = ctx.locals.get(variable) {
         *ptr
     } else {
         return;
     };
+
+    let info = local_variable_names[variable].clone();
+    let repr = ctx.reprs.repr(info.ty.clone()).unwrap();
+    let name = info.name.unwrap_or_else(|| variable.to_string());
+
+    // Initialise debug info for the variable.
+    // TODO: make the scope be the actual scope of the variable.
+    ctx.codegen.di_builder.insert_declare_at_end(
+        ptr,
+        Some(ctx.codegen.di_builder.create_auto_variable(
+            scope,
+            &name,
+            ctx.di_file,
+            range.start.line + 1,
+            repr.di_type,
+            true,
+            DIFlagsConstants::ZERO,
+            repr.abi_alignment() * 8,
+        )),
+        None,
+        ctx.codegen.di_builder.create_debug_location(
+            ctx.codegen.context,
+            range.start.line + 1,
+            range.start.col + 1,
+            scope,
+            None,
+        ),
+        ctx.codegen.builder.get_insert_block().unwrap(),
+    );
+
+    // Start the variable's lifetime.
     let ptr = ctx.codegen.builder.build_bitcast(
         ptr,
         ctx.codegen
@@ -318,11 +357,7 @@ fn lifetime_start<'ctx>(
             .ptr_type(AddressSpace::Generic),
         "lifetime_start_obj",
     );
-    let size = ctx
-        .reprs
-        .repr(local_variable_names[variable].ty.clone())
-        .unwrap()
-        .store_size(ctx.codegen);
+    let size = repr.store_size(ctx.codegen);
     ctx.codegen.builder.build_call(
         ctx.codegen
             .module
@@ -440,7 +475,7 @@ fn create_real_func_body_cfg<'ctx>(
                         .builder
                         .build_alloca(target_repr.llvm_type, &target.to_string());
                     ctx.locals.insert(*target, target_value);
-                    lifetime_start(&ctx, local_variable_names, target);
+                    lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
                     ctx.codegen
                         .builder
                         .build_memcpy(
@@ -507,7 +542,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_alloca(target_repr.llvm_type, &target.to_string());
                         ctx.locals.insert(*target, target_value);
-                        lifetime_start(&ctx, local_variable_names, target);
+                        lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
                         let call_site_value = ctx.codegen.builder.build_call(
                             func,
                             &args,
@@ -571,7 +606,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_alloca(return_type, &target.to_string());
                         ctx.locals.insert(*target, target_value);
-                        lifetime_start(&ctx, local_variable_names, target);
+                        lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
                         let call_site_value = ctx.codegen.builder.build_call(
                             func,
                             &args,
@@ -669,7 +704,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_alloca(return_type, &target.to_string());
                         ctx.locals.insert(*target, target_value);
-                        lifetime_start(&ctx, local_variable_names, target);
+                        lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
                         let call_site_value = ctx.codegen.builder.build_call(
                             fptr,
                             &args,
@@ -717,7 +752,7 @@ fn create_real_func_body_cfg<'ctx>(
                         .builder
                         .build_alloca(target_repr.llvm_type, &target.to_string());
                     ctx.locals.insert(*target, target_value);
-                    lifetime_start(&ctx, local_variable_names, target);
+                    lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
 
                     // If any elements of this type are indirect, `malloc` some space for the fields.
                     if let Type::Named { name, parameters } = target_ty.clone() {
@@ -1133,6 +1168,17 @@ fn monomorphise<'ctx>(
                     | StatementKind::InvokeFunction { type_variables, .. }
                     | StatementKind::ConstructFunctionObject { type_variables, .. } => {
                         for ty in type_variables {
+                            mono(ty);
+                        }
+                    }
+
+                    StatementKind::InvokeFunctionObject {
+                        return_type,
+                        additional_argument_types,
+                        ..
+                    } => {
+                        mono(return_type);
+                        for ty in additional_argument_types {
                             mono(ty);
                         }
                     }

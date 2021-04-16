@@ -56,11 +56,16 @@ impl Display for SourceFileMIR {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct ArgumentIndex(pub u64);
+impl Display for ArgumentIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}arg", self.0)
+    }
+}
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct LocalVariableId(pub u64);
 impl Display for LocalVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "_{}", self.0)
+        write!(f, "{}local", self.0)
     }
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
@@ -155,7 +160,7 @@ pub enum LocalVariableName {
 impl Display for LocalVariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LocalVariableName::Argument(arg) => write!(f, "arg{}", arg.0),
+            LocalVariableName::Argument(arg) => write!(f, "{}", arg),
             LocalVariableName::Local(local) => write!(f, "{}", local),
         }
     }
