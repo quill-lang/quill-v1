@@ -13,7 +13,7 @@ async fn test_convert_func_objects() {
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_mir::to_mir;
-    use quill_mir::{ProjectMIR, SourceFileMIR};
+    use quill_mir::ProjectMIR;
     use quill_parser::parse;
     use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
@@ -40,6 +40,7 @@ async fn test_convert_func_objects() {
                         .bind(|typeck| to_mir(&project_index, typeck))
                         .deny()
                         .bind(|mir| borrow_check(&file_ident, mir))
+                        .map(|mir| (mir, project_index))
                 })
             })
             .deny();
@@ -49,7 +50,7 @@ async fn test_convert_func_objects() {
         error_emitter.emit_all().await;
 
         // If the conversion fails, the test will fail.
-        let mir: SourceFileMIR = mir.unwrap();
+        let (mir, index) = mir.unwrap();
         let mut proj = ProjectMIR {
             files: {
                 let mut map = HashMap::new();
@@ -61,6 +62,7 @@ async fn test_convert_func_objects() {
                 name: "main".to_string(),
                 range: Location { line: 0, col: 0 }.into(),
             },
+            index,
         };
 
         convert_func_objects(&mut proj);

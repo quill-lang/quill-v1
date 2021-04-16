@@ -65,6 +65,7 @@ async fn test_llvm() {
                 name: "main".to_string(),
                 range: Location { line: 0, col: 0 }.into(),
             },
+            index,
         };
 
         convert_func_objects(&mut proj);
@@ -76,8 +77,8 @@ async fn test_llvm() {
             env: Some(TargetEnvironment::Gnu),
         };
 
-        let code_folder = Path::new("../../test_output/target").into();
-        let build_folder = Path::new("../../test_output/target")
+        let code_folder = Path::new("../../test_sources").into();
+        let build_folder = Path::new("../../test_sources/build/test_build")
             .join(fname)
             .join(target_triple.to_string());
 
@@ -90,7 +91,7 @@ async fn test_llvm() {
             build_folder,
         };
 
-        quill_llvm::build(fname, &proj, &index, build_info.clone());
+        quill_llvm::build(fname, &proj, build_info.clone());
         quill_link::link(
             "out",
             &Path::new("../../compiler-deps").canonicalize().unwrap(),

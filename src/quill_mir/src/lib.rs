@@ -28,6 +28,7 @@ pub struct ProjectMIR {
     pub files: HashMap<SourceFileIdentifier, SourceFileMIR>,
     /// The qualified name where the "main" function is.
     pub entry_point: QualifiedName,
+    pub index: ProjectIndex,
 }
 
 impl Display for ProjectMIR {

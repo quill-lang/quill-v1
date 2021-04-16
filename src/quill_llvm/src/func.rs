@@ -27,7 +27,6 @@ use crate::{
 pub fn compile_function<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &Representations<'_, 'ctx>,
-    index: &ProjectIndex,
     mir: &ProjectMIR,
     func: MonomorphisedFunction,
 ) {
@@ -102,7 +101,7 @@ pub fn compile_function<'ctx>(
                 BodyCreationContext {
                     codegen,
                     reprs,
-                    index,
+                    index: &mir.index,
                     func,
                     func_value,
                     locals,
@@ -221,7 +220,7 @@ pub fn compile_function<'ctx>(
                 BodyCreationContext {
                     codegen,
                     reprs,
-                    index,
+                    index: &mir.index,
                     func,
                     func_value,
                     locals,

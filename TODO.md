@@ -9,4 +9,6 @@
 - Implement a proper vtable for function objects and dynamic trait objects. Should dynamic trait objects be limited to single dispatch?
 - Make imports.
 - The heap allocation algorithm might stack overflow with large projects with lots of indirection. Convert recursion into a loop.
+- Maybe add a keyword to hint to the compiler that we want heap allocation on a specific variable.
 - Convert `LLVMStructRepresentation` to a specialised `AnyTypeRepresentation` to avoid code duplication.
+- If the `quillc` build fails, don't run the executable anyway.

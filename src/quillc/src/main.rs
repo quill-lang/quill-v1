@@ -1,13 +1,46 @@
 use std::collections::HashMap;
 
 use quill_common::{
+    diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
     location::{Location, SourceFileIdentifier, SourceFileType},
     name::QualifiedName,
 };
 use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
 use quill_source_file::{ErrorEmitter, PackageFileSystem};
+use quill_type::{PrimitiveType, Type};
 use quillc_api::{ProjectInfo, QuillcInvocation};
+
+/// Perform some basic validation that must pass in order to complete monomorphisation and code emission.
+fn validate(mir: &ProjectMIR) -> DiagnosticResult<()> {
+    if let Some(file) = mir.files.get(&mir.entry_point.source_file) {
+        if let Some(main) = file.definitions.get("main") {
+            // Check that the main function has the correct signature.
+            if main.arity == 0 && matches!(main.return_type, Type::Primitive(PrimitiveType::Unit)) {
+                DiagnosticResult::ok(())
+            } else {
+                DiagnosticResult::fail(ErrorMessage::new(
+                    "`main` function had incorrect function signature, expected unit type"
+                        .to_string(),
+                    Severity::Error,
+                    Diagnostic::at(&mir.entry_point.source_file, main),
+                ))
+            }
+        } else {
+            DiagnosticResult::fail(ErrorMessage::new(
+                "could not find `main` function in main source file".to_string(),
+                Severity::Error,
+                Diagnostic::in_file(&mir.entry_point.source_file),
+            ))
+        }
+    } else {
+        DiagnosticResult::fail(ErrorMessage::new(
+            "could not find main source file".to_string(),
+            Severity::Error,
+            Diagnostic::in_file(&mir.entry_point.source_file),
+        ))
+    }
+}
 
 /// The `quillc` compiler is not intended to be used as a CLI.
 /// Rather, the `quill` driver program should supply correct arguments to `quillc` in the form of JSON.
@@ -50,33 +83,32 @@ async fn main() {
                     .map(|result| (result, project_index))
             })
         })
-        .deny();
+        .deny()
+        .map(|(mir, index)| ProjectMIR {
+            files: {
+                let mut map = HashMap::new();
+                map.insert(file_ident.clone(), mir);
+                map
+            },
+            entry_point: QualifiedName {
+                source_file: file_ident,
+                name: "main".to_string(),
+                range: Location { line: 0, col: 0 }.into(),
+            },
+            index,
+        })
+        .bind(|mir| validate(&mir).map(|_| (mir)));
 
     let mir = error_emitter.consume_diagnostic(mir);
-    error_emitter.emit_all().await;
+    if error_emitter.emit_all().await {
+        return;
+    }
 
-    let (mir, index) = mir.unwrap();
-    let mut proj = ProjectMIR {
-        files: {
-            let mut map = HashMap::new();
-            map.insert(file_ident.clone(), mir);
-            map
-        },
-        entry_point: QualifiedName {
-            source_file: file_ident,
-            name: "main".to_string(),
-            range: Location { line: 0, col: 0 }.into(),
-        },
-    };
+    let mut mir = mir.unwrap();
 
-    quill_func_objects::convert_func_objects(&mut proj);
+    quill_func_objects::convert_func_objects(&mut mir);
 
-    quill_llvm::build(
-        &project_config.name,
-        &proj,
-        &index,
-        invocation.build_info.clone(),
-    );
+    quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
     quill_link::link(
         &project_config.name,
         &invocation.deps_directory,

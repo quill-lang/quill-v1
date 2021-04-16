@@ -9,7 +9,6 @@ use inkwell::{
     passes::PassManager,
     targets::{CodeModel, RelocMode},
 };
-use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
 use quill_target::{BuildInfo, TargetTriple};
 use repr::{Monomorphisation, MonomorphisationParameters, MonomorphisedFunction, Representations};
@@ -55,7 +54,7 @@ fn convert_triple(triple: TargetTriple) -> inkwell::targets::TargetTriple {
 }
 
 /// Builds an LLVM module for the given input source file, outputting it in the given directory.
-pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_info: BuildInfo) {
+pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     let target_triple = convert_triple(build_info.target_triple);
 
     let _ = std::fs::create_dir_all(&build_info.build_folder);
@@ -76,7 +75,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_i
     let codegen = CodeGenContext::new(&context, module, build_info.code_folder.clone());
 
     let mono = Monomorphisation::new(mir);
-    let mut reprs = Representations::new(&codegen, index, mono.types);
+    let mut reprs = Representations::new(&codegen, &mir.index, mono.types);
     // Now that we've computed data type representations we can actually compile the functions.
     // First, declare them all.
     for func in &mono.functions {
@@ -84,7 +83,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, index: &ProjectIndex, build_i
     }
     reprs.create_drop_funcs();
     for func in &mono.functions {
-        compile_function(&codegen, &reprs, index, mir, func.clone());
+        compile_function(&codegen, &reprs, mir, func.clone());
     }
 
     // Now introduce the main function.

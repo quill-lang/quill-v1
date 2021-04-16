@@ -1325,6 +1325,7 @@ dependencies = [
  "quill_mir",
  "quill_parser",
  "quill_source_file",
+ "quill_type",
  "quill_type_deduce",
  "quillc_api",
  "serde",
