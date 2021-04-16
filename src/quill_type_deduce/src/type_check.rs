@@ -638,7 +638,7 @@ impl TypeVariablePrinter {
     pub fn print(&mut self, ty: TypeVariable) -> String {
         match ty {
             TypeVariable::Named { name, parameters } => {
-                let mut result = name.name;
+                let mut result = name.to_string();
                 if !parameters.is_empty() {
                     result += "[";
                     for (i, param) in parameters.into_iter().enumerate() {

@@ -256,7 +256,7 @@ pub fn resolve_type_constructor(
             Some(data_name) => match &data_name.decl.decl_type {
                 TypeDeclarationTypeI::Data(datai) => {
                     let data_type = QualifiedName {
-                        source_file: source_file.clone(),
+                        source_file: data_name.source_file.clone(),
                         name: data_name.decl.name.name.clone(),
                         range: datai.range,
                     };
@@ -287,7 +287,7 @@ pub fn resolve_type_constructor(
                             &visible_names.types[enum_name.decl].decl.decl_type
                         {
                             let data_type = QualifiedName {
-                                source_file: source_file.clone(),
+                                source_file: enum_name.source_file.clone(),
                                 name: enum_name.decl.to_string(),
                                 range: enumi.range,
                             };
