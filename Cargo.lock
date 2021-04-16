@@ -1178,6 +1178,7 @@ dependencies = [
 name = "quill_index"
 version = "0.1.0"
 dependencies = [
+ "multimap",
  "quill_common",
  "quill_lexer",
  "quill_parser",

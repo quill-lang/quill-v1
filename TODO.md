@@ -12,3 +12,4 @@
 - Maybe add a keyword to hint to the compiler that we want heap allocation on a specific variable.
 - Convert `LLVMStructRepresentation` to a specialised `AnyTypeRepresentation` to avoid code duplication.
 - If the `quillc` build fails, don't run the executable anyway.
+- Make primitive types declarable and defined with compiler intrinsics, so that a primitive type behaves just like any other type as far as the type system is concerned.

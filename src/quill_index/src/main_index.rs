@@ -4,14 +4,17 @@
 
 use std::collections::{hash_map::Entry, HashMap, HashSet};
 
+use multimap::MultiMap;
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Range, SourceFileIdentifier},
+    location::{
+        ModuleIdentifier, Range, SourceFileIdentifier, SourceFileIdentifierSegment, SourceFileType,
+    },
 };
 use quill_parser::{FileP, NameP};
 use quill_type::Type;
 
-use crate::type_index::ProjectTypesC;
+use crate::type_index::{ProjectTypesC, TypeDeclarationC};
 
 /// An index of all top-level items in a file.
 ///
@@ -106,6 +109,120 @@ fn name_used_earlier(
     )
 }
 
+/// Represents a type declaration that may be in a different source file.
+pub(crate) struct ForeignTypeDeclarationC<'a> {
+    pub source_file: SourceFileIdentifier,
+    pub decl: &'a TypeDeclarationC,
+}
+
+pub struct UsedFile {
+    file: SourceFileIdentifier,
+}
+
+/// Produces a list of all the files (including itself) that are used in this file.
+pub fn compute_used_files(
+    source_file: &SourceFileIdentifier,
+    file_parsed: &FileP,
+    project_types: &ProjectTypesC,
+) -> DiagnosticResult<Vec<UsedFile>> {
+    let mut result = vec![UsedFile {
+        file: source_file.clone(),
+    }];
+    let mut messages = Vec::new();
+    for used_file in &file_parsed.uses {
+        // Resolve the used file into a concrete source file identifier.
+        // If we're in foo::bar and we're looking for baz::qux, we search
+        // - foo::bar::baz::qux
+        // - foo::baz::qux
+        // - baz::qux
+        let mut module = source_file.module.clone();
+        let mut used_file_segments = used_file.source_file.segments.clone();
+        let used_file_file: SourceFileIdentifierSegment =
+            used_file_segments.pop().unwrap().name.clone().into();
+        let used_file_module = used_file_segments
+            .into_iter()
+            .map(|name| name.name.into())
+            .collect::<Vec<_>>();
+        loop {
+            let used_file_id = SourceFileIdentifier {
+                module: ModuleIdentifier {
+                    segments: module
+                        .segments
+                        .iter()
+                        .cloned()
+                        .chain(used_file_module.clone())
+                        .collect(),
+                },
+                file: used_file_file.clone(),
+                file_type: SourceFileType::Quill,
+            };
+            if project_types.contains_key(&used_file_id) {
+                result.push(UsedFile { file: used_file_id });
+                break;
+            }
+
+            module.segments.pop();
+            if module.segments.is_empty() {
+                // We couldn't find the package.
+                messages.push(ErrorMessage::new(
+                    "could not find this package".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &used_file.source_file),
+                ));
+                break;
+            }
+        }
+    }
+    DiagnosticResult::ok_with_many(result, messages)
+}
+
+/// Work out what type names are visible inside a file.
+fn compute_visible_types<'a>(
+    source_file: &'a SourceFileIdentifier,
+    file_parsed: &'a FileP,
+    project_types: &'a ProjectTypesC,
+) -> DiagnosticResult<HashMap<&'a str, ForeignTypeDeclarationC<'a>>> {
+    let mut visible_types = MultiMap::new();
+    let mut messages = Vec::new();
+
+    let (used_files, more_messages) =
+        compute_used_files(source_file, file_parsed, project_types).destructure();
+    messages.extend(more_messages);
+    for file in used_files.unwrap() {
+        for (ty, decl) in &project_types[&file.file] {
+            visible_types.insert(
+                ty.as_str(),
+                ForeignTypeDeclarationC {
+                    source_file: file.file.clone(),
+                    decl,
+                },
+            );
+        }
+    }
+
+    // Now generate error messages if the multimap contains any duplicate entries.
+    let result = visible_types.into_iter().filter_map(|(ty, mut decls)| {
+        if decls.len() == 1 {
+            Some((ty, decls.pop().unwrap()))
+        } else {
+            messages.push(ErrorMessage::new_with_many(
+                format!("type name `{}` was imported from multiple locations, which could cause ambiguity, so this name will not be usable in this file", ty),
+                Severity::Warning,
+                Diagnostic::in_file(source_file),
+                decls.into_iter().map(|decl| HelpMessage {
+                    message: format!("defined in {} here", decl.source_file),
+                    help_type: HelpType::Note,
+                    diagnostic: Diagnostic::at(&decl.source_file, &decl.decl.name.range),
+                }).collect()
+            ));
+            None
+        }
+    })
+        .collect();
+
+    DiagnosticResult::ok_with_many(result, messages)
+}
+
 /// Computes the index for a file.
 pub fn index(
     source_file: &SourceFileIdentifier,
@@ -113,6 +230,12 @@ pub fn index(
     project_types: &ProjectTypesC,
 ) -> DiagnosticResult<FileIndex> {
     let mut messages = Vec::new();
+    let visible_types = {
+        let (visible_types, more_messages) =
+            compute_visible_types(source_file, file_parsed, project_types).destructure();
+        messages.extend(more_messages);
+        visible_types.unwrap()
+    };
 
     let mut types = HashMap::<String, TypeDeclarationI>::new();
     let mut definitions = HashMap::<String, DefinitionI>::new();
@@ -137,7 +260,7 @@ pub fn index(
                         .iter()
                         .map(|id| id.name.name.clone())
                         .collect(),
-                    project_types,
+                    &visible_types,
                 );
                 let (symbol_type, mut inner_messages) = symbol_type.destructure();
                 messages.append(&mut inner_messages);
@@ -186,7 +309,7 @@ pub fn index(
                             source_file,
                             &field.ty,
                             &type_params,
-                            project_types,
+                            &visible_types,
                         );
                         ty.map(|ty| (field.name.clone(), ty))
                     })
@@ -247,7 +370,7 @@ pub fn index(
                                     source_file,
                                     &field.ty,
                                     &type_params,
-                                    project_types,
+                                    &visible_types,
                                 );
                                 ty.map(|ty| (field.name.clone(), ty))
                             })

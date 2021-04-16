@@ -170,7 +170,7 @@ enum ItemP {
 
 #[derive(Debug)]
 pub struct UseP {
-    source_file: IdentifierP,
+    pub source_file: IdentifierP,
 }
 
 ////////////////////
