@@ -5,7 +5,7 @@ use quill_common::{
     location::{Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_index::{DefinitionI, ProjectIndex, TypeDeclarationTypeI, TypeParameter};
+use quill_index::{DefinitionI, TypeDeclarationTypeI, TypeParameter};
 use quill_parser::IdentifierP;
 use quill_type::Type;
 
@@ -322,30 +322,26 @@ pub fn resolve_type_constructor(
 pub fn resolve_definition<'a>(
     source_file: &SourceFileIdentifier,
     identifier: &IdentifierP,
-    project_index: &'a ProjectIndex,
+    visible_names: &'a VisibleNames,
 ) -> DiagnosticResult<(&'a SourceFileIdentifier, &'a DefinitionI)> {
-    // We don't have `import`-style statements yet, so let's just only search for types in the current module path.
-    if let Some((source_file_long_lifetime, module_index)) =
-        project_index.get_key_value(source_file)
-    {
-        if identifier.segments.len() == 1 {
-            match module_index.definitions.get(&identifier.segments[0].name) {
-                Some(symbol) => DiagnosticResult::ok((source_file_long_lifetime, symbol)),
-                None => DiagnosticResult::fail(ErrorMessage::new(
-                    String::from("could not resolve definition"),
-                    Severity::Error,
-                    Diagnostic::at(source_file, &identifier.range()),
-                )),
-            }
-        } else {
-            DiagnosticResult::fail(ErrorMessage::new(
-                String::from("identifier had too many segments"),
+    if identifier.segments.len() == 1 {
+        match visible_names
+            .definitions
+            .get(identifier.segments[0].name.as_str())
+        {
+            Some(symbol) => DiagnosticResult::ok((&symbol.source_file, symbol.decl)),
+            None => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("could not resolve definition"),
                 Severity::Error,
                 Diagnostic::at(source_file, &identifier.range()),
-            ))
+            )),
         }
     } else {
-        panic!("module was not in index")
+        DiagnosticResult::fail(ErrorMessage::new(
+            String::from("identifier had too many segments"),
+            Severity::Error,
+            Diagnostic::at(source_file, &identifier.range()),
+        ))
     }
 }
 

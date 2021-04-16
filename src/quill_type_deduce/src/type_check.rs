@@ -1360,7 +1360,7 @@ impl<'a> TypeChecker<'a> {
         match expression {
             ExprPatP::Variable(identifier) => {
                 // This identifier should be the function.
-                let symbol = resolve_definition(self.source_file, &identifier, self.project_index);
+                let symbol = resolve_definition(self.source_file, &identifier, visible_names);
                 symbol.bind(|(symbol_source_file, symbol)| {
                     // Verify that the symbol really is the function.
                     if symbol_source_file != self.source_file || symbol.name.name != function_name {

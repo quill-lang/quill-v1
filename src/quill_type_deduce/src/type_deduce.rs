@@ -286,7 +286,7 @@ fn generate_constraints(
             }
 
             // Now let's look for a symbol in scope.
-            match resolve_definition(source_file, &identifier, project_index)
+            match resolve_definition(source_file, &identifier, visible_names)
                 .destructure()
                 .0
             {
