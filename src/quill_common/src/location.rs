@@ -1,6 +1,6 @@
 use std::{
     fmt::{Debug, Display},
-    path::{Component, Path, PathBuf},
+    path::PathBuf,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -163,7 +163,7 @@ impl Display for SourceFileType {
 impl SourceFileType {
     pub fn file_extension(&self) -> &'static str {
         match self {
-            SourceFileType::Quill => "quill",
+            SourceFileType::Quill => "ql",
             SourceFileType::Toml => "toml",
         }
     }
@@ -182,46 +182,5 @@ impl Debug for SourceFileIdentifier {
 impl Display for SourceFileIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self, f)
-    }
-}
-
-impl From<SourceFileIdentifier> for PathBuf {
-    fn from(identifier: SourceFileIdentifier) -> Self {
-        PathBuf::from(identifier.module)
-            .join(identifier.file.0)
-            .with_extension(identifier.file_type.file_extension())
-    }
-}
-
-impl<P: AsRef<Path>> From<P> for SourceFileIdentifier {
-    fn from(path: P) -> Self {
-        let path = path.as_ref();
-        let extension = path
-            .extension()
-            .map(|str| str.to_string_lossy().to_string());
-        let file_type = match extension.as_deref() {
-            Some("quill") => SourceFileType::Quill,
-            Some("toml") => SourceFileType::Toml,
-            Some(other) => panic!("{}", other),
-            None => panic!(),
-        };
-        let mut components = path
-            .components()
-            .filter_map(|component| match component {
-                Component::CurDir => None,
-                Component::Normal(segment) => Some(SourceFileIdentifierSegment(
-                    segment.to_string_lossy().into(),
-                )),
-                _ => unimplemented!(),
-            })
-            .collect::<Vec<_>>();
-        let last = components.pop().unwrap();
-        SourceFileIdentifier {
-            module: ModuleIdentifier {
-                segments: components,
-            },
-            file: last,
-            file_type,
-        }
     }
 }

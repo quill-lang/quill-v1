@@ -11,6 +11,7 @@
 //! - (no suffix): types have been deduced and references have been resolved.
 
 use std::{
+    collections::HashMap,
     fmt::Display,
     path::{Path, PathBuf},
 };
@@ -180,7 +181,7 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
             } else {
                 HostType::Linux
             },
-            root: dirs::home_dir().unwrap().join(".quill"),
+            root: dirs::home_dir().unwrap().join(".ql"),
         }
     };
 
@@ -208,36 +209,48 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     // Check that the code folder contains a `quill.toml` file.
     // TODO check parent directories to see if we're in a subfolder of a Quill project.
 
-    let fs = PackageFileSystem::new(code_folder.clone());
+    let dummy_fs = PackageFileSystem::new(HashMap::new());
 
     let project_info = if let Ok(project_config_str) = std::fs::read(code_folder.join("quill.toml"))
     {
         match std::str::from_utf8(&project_config_str) {
-            Ok(project_config_str) => match toml::from_str::<ProjectInfo>(project_config_str) {
-                Ok(toml) => toml,
-                Err(err) => {
-                    let (line, col) = err.line_col().unwrap_or((0, 0));
-                    exit(
-                        ErrorEmitter::new(&fs),
-                        ErrorMessage::new(
-                            format!("'quill.toml' contained an error: {}", err),
-                            Severity::Error,
-                            Diagnostic::at_location(
-                                &SourceFileIdentifier {
-                                    module: vec![].into(),
-                                    file: "quill".into(),
-                                    file_type: SourceFileType::Toml,
-                                },
-                                Location {
-                                    line: line as u32,
-                                    col: col as u32,
-                                },
-                            ),
-                        ),
+            Ok(project_config_str) => {
+                dummy_fs
+                    .overwrite_source_file(
+                        SourceFileIdentifier {
+                            module: vec![].into(),
+                            file: "quill".into(),
+                            file_type: SourceFileType::Toml,
+                        },
+                        project_config_str.to_string(),
                     )
-                    .await
+                    .await;
+                match toml::from_str::<ProjectInfo>(project_config_str) {
+                    Ok(toml) => toml,
+                    Err(err) => {
+                        let (line, col) = err.line_col().unwrap_or((0, 0));
+                        exit(
+                            ErrorEmitter::new(&dummy_fs),
+                            ErrorMessage::new(
+                                format!("'quill.toml' contained an error: {}", err),
+                                Severity::Error,
+                                Diagnostic::at_location(
+                                    &SourceFileIdentifier {
+                                        module: vec![].into(),
+                                        file: "quill".into(),
+                                        file_type: SourceFileType::Toml,
+                                    },
+                                    Location {
+                                        line: line as u32,
+                                        col: col as u32,
+                                    },
+                                ),
+                            ),
+                        )
+                        .await
+                    }
                 }
-            },
+            }
             Err(err) => {
                 let (valid, after_valid) = project_config_str.split_at(err.valid_up_to());
                 let safe_str = unsafe { std::str::from_utf8_unchecked(valid) };
@@ -247,7 +260,7 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                     .iter()
                     .collect();
                 exit(
-                    ErrorEmitter::new(&fs),
+                    ErrorEmitter::new(&dummy_fs),
                     ErrorMessage::new(
                         format!(
                         "'quill.toml' contained invalid UTF-8 after '...{}', bytes were {:02X?}",
@@ -267,7 +280,7 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
         }
     } else {
         exit(
-            ErrorEmitter::new(&fs),
+            ErrorEmitter::new(&dummy_fs),
             ErrorMessage::new(
                 "'quill.toml' file could not be found".to_string(),
                 Severity::Error,

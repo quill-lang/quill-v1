@@ -6,7 +6,7 @@ We define a number of useful keywords for the internals of the compiler to ensur
 
 A _location_ is a zero-indexed line number and column number inside a source file. An empty file begins at location (0, 0). A _range_ is a pair of locations, the beginning and end of the range. The end location is _not included_ in the range, so a range starting at (3, 6) containing two characters would have end point (3, 8). If some object is _ranged_, there exists a method that produces a range given a reference to that object. This is implemented using the `Ranged` trait in the compiler.
 
-A _source file_ is a `.quill` file, containing Quill source code. Source files may be grouped into directories on disk, which are referred to as _modules_. A source file identifier is the combination of a module identifier (a list of module segments, which may be empty) and a file name (which does not include the `.quill` extension, as this is implicit). File names do include the file extension if it is not `.quill`; notably the `quill.toml` file at the project root must be fully qualified as such.
+A _source file_ is a `.ql` file, containing Quill source code. Source files may be grouped into directories on disk, which are referred to as _modules_. A source file identifier is the combination of a module identifier (a list of module segments, which may be empty) and a file name (which does not include the `.ql` extension, as this is implicit). File names do include the file extension if it is not `.ql`; notably the `quill.toml` file at the project root must be fully qualified as such.
 
 ## Names and Identifiers
 

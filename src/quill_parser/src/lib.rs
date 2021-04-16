@@ -77,17 +77,20 @@ pub fn parse(
     }
 
     DiagnosticResult::sequence(items).map(|items| {
+        let mut uses = Vec::new();
         let mut data = Vec::new();
         let mut enums = Vec::new();
         let mut definitions = Vec::new();
         for item in items {
             match item {
+                ItemP::Use(i) => uses.push(i),
                 ItemP::Data(i) => data.push(i),
                 ItemP::Enum(i) => enums.push(i),
                 ItemP::Definition(i) => definitions.push(i),
             }
         }
         FileP {
+            uses,
             data,
             enums,
             definitions,
@@ -107,14 +110,29 @@ impl<'input> Parser<'input> {
         // An item starts with an optional visibility declaration.
         let vis = self.parse_visibility();
 
-        // Then we require `data`, `enum` or `def`.
+        // Then we require `use`, `data`, `enum` or `def`.
         let item_type = self.parse_token_maybe(|ty| {
-            matches!(ty, TokenType::Data | TokenType::Enum | TokenType::Def)
+            matches!(
+                ty,
+                TokenType::Use | TokenType::Data | TokenType::Enum | TokenType::Def
+            )
         });
 
         vis.bind(|vis| {
             if let Some(item_type) = item_type {
                 match item_type.token_type {
+                    TokenType::Use => {
+                        if matches!(vis, Visibility::Private) {
+                            self.parse_use().map(ItemP::Use)
+                        } else {
+                            DiagnosticResult::fail(ErrorMessage::new(
+                                "visibility specifier not expected before keyword `use`"
+                                    .to_string(),
+                                Severity::Error,
+                                Diagnostic::at(self.source_file, &self.tokens.range()),
+                            ))
+                        }
+                    }
                     TokenType::Data => self.parse_data(vis).map(ItemP::Data),
                     TokenType::Enum => self.parse_enum(vis).map(ItemP::Enum),
                     TokenType::Def => self.parse_def(vis).map(ItemP::Definition),
@@ -122,7 +140,7 @@ impl<'input> Parser<'input> {
                 }
             } else {
                 DiagnosticResult::fail(ErrorMessage::new(
-                    "expected keyword `data` or `def`".to_string(),
+                    "expected `use`, `data`, `enum` or `def`".to_string(),
                     Severity::Error,
                     Diagnostic::at(self.source_file, &self.tokens.range()),
                 ))
@@ -131,10 +149,11 @@ impl<'input> Parser<'input> {
     }
 }
 
-/// A single `.quill` file may export data types and definitions.
+/// A single `.ql` file may export data types and definitions.
 /// This `File` struct contains the parsed abstract syntax tree of a file.
 #[derive(Debug)]
 pub struct FileP {
+    pub uses: Vec<UseP>,
     pub data: Vec<DataP>,
     pub enums: Vec<EnumP>,
     pub definitions: Vec<DefinitionP>,
@@ -143,9 +162,15 @@ pub struct FileP {
 /// Any top level item such as a definition or theorem.
 #[derive(Debug)]
 enum ItemP {
+    Use(UseP),
     Data(DataP),
     Enum(EnumP),
     Definition(DefinitionP),
+}
+
+#[derive(Debug)]
+pub struct UseP {
+    source_file: IdentifierP,
 }
 
 ////////////////////
@@ -193,6 +218,10 @@ pub struct EnumVariantP {
 }
 
 impl<'input> Parser<'input> {
+    fn parse_use(&mut self) -> DiagnosticResult<UseP> {
+        self.parse_identifier().map(|id| UseP { source_file: id })
+    }
+
     /// `data ::= identifier type_params? type_ctor`
     fn parse_data(&mut self, vis: Visibility) -> DiagnosticResult<DataP> {
         self.parse_name_with_message("expected a name for this new data type")

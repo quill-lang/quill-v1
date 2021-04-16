@@ -17,8 +17,14 @@ use quillc_api::ProjectInfo;
 use tokio::sync::RwLock;
 use tracing::{info, trace, Level};
 
-fn file_to_url(project_root: &Path, file: SourceFileIdentifier) -> Url {
-    Url::from_file_path(project_root.join(PathBuf::from(file))).unwrap()
+/// Takes a relativised path and converts it to a source file identifier.
+fn path_to_file(_root_module: String, _path: &Path) -> SourceFileIdentifier {
+    unimplemented!()
+}
+
+fn file_to_url(_project_root: &Path, _file: SourceFileIdentifier) -> Url {
+    unimplemented!()
+    //Url::from_file_path(project_root.join(file_to_path(file))).unwrap()
 }
 
 fn into_diagnostic(project_root: &Path, message: ErrorMessage) -> Diagnostic {
@@ -120,19 +126,16 @@ impl Backend {
     /// In particular, this checks parent URIs until a `quill.toml` file is found.
     /// If one is found, then that directory is added to `RootFileSystems` as a file
     /// system root.
-    pub async fn get_project_root(
-        &self,
-        url: Url,
-    ) -> Option<(quill_common::location::SourceFileIdentifier, PathBuf)> {
+    pub async fn get_project_root(&self, url: Url) -> Option<(SourceFileIdentifier, PathBuf)> {
         assert!(url.scheme() == "file");
         let path = url.to_file_path().unwrap();
 
         // First, check if we've already loaded this project folder.
         {
             let read = self.root_file_systems.read().await;
-            for k in read.file_systems.keys() {
+            for (k, (root_module, _)) in &read.file_systems {
                 if let Ok(relative) = path.strip_prefix(k) {
-                    return Some((relative.into(), k.clone()));
+                    return Some((path_to_file(root_module.clone(), relative), k.clone()));
                 }
             }
         }
@@ -142,7 +145,11 @@ impl Backend {
             if let Ok(file_bytes) = tokio::fs::read(new_path.join("quill.toml")).await {
                 if let Ok(file_str) = std::str::from_utf8(&file_bytes) {
                     if let Ok(file_toml) = toml::from_str::<ProjectInfo>(file_str) {
-                        let fs = PackageFileSystem::new(new_path.clone());
+                        let fs = PackageFileSystem::new({
+                            let mut map = HashMap::new();
+                            map.insert(file_toml.name.clone(), new_path.clone());
+                            map
+                        });
                         info!(
                             "found quill project '{}' at {}",
                             file_toml.name,
@@ -152,8 +159,11 @@ impl Backend {
                             .write()
                             .await
                             .file_systems
-                            .insert(new_path.clone(), fs);
-                        return Some((path.strip_prefix(&new_path).unwrap().into(), new_path));
+                            .insert(new_path.clone(), (file_toml.name.clone(), fs));
+                        return Some((
+                            path_to_file(file_toml.name, path.strip_prefix(&new_path).unwrap()),
+                            new_path,
+                        ));
                     }
                 }
             }
@@ -168,8 +178,8 @@ impl Backend {
 /// Creates a PackageFileSystem for every Quill project we find.
 #[derive(Default)]
 struct RootFileSystems {
-    /// Maps workspace roots to package file systems.
-    pub file_systems: HashMap<PathBuf, PackageFileSystem>,
+    /// Maps workspace roots to package file systems and the name of the package at that root.
+    pub file_systems: HashMap<PathBuf, (String, PackageFileSystem)>,
 }
 
 #[lspower::async_trait]
@@ -224,7 +234,7 @@ impl LanguageServer for Backend {
             );
             let contents = params.content_changes[0].text.clone();
             let guard = self.root_file_systems.read().await;
-            let fs = &guard.file_systems[&project_root];
+            let (_, fs) = &guard.file_systems[&project_root];
             fs.overwrite_source_file(identifier.clone(), contents).await;
 
             // Parse the file and emit diagnostics.
@@ -251,6 +261,7 @@ impl LanguageServer for Backend {
             self.get_project_root(params.text_document.uri).await
         {
             self.root_file_systems.read().await.file_systems[&project_root]
+                .1
                 .remove_cache(&identifier)
                 .await;
         }
@@ -265,7 +276,7 @@ impl LanguageServer for Backend {
             // Create more detailed diagnostics by running the full Quill compiler
             // (at least, up to the MIR step) on this file's project root.
             let guard = self.root_file_systems.read().await;
-            let fs = &guard.file_systems[&project_root];
+            let fs = &guard.file_systems[&project_root].1;
             let lexed = quill_lexer::lex(&fs, &file_ident).await;
             let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &file_ident));
             let mir = parsed

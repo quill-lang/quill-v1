@@ -1,11 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
-    location::{Location, SourceFileIdentifier, SourceFileType},
+    location::{Location, ModuleIdentifier, SourceFileIdentifier, SourceFileType},
     name::QualifiedName,
 };
-use quill_index::ProjectIndex;
 use quill_mir::ProjectMIR;
 use quill_source_file::{ErrorEmitter, PackageFileSystem};
 use quill_type::{PrimitiveType, Type};
@@ -42,15 +41,54 @@ fn validate(mir: &ProjectMIR) -> DiagnosticResult<()> {
     }
 }
 
+#[async_recursion::async_recursion]
+async fn find_all_source_files(
+    root_module: ModuleIdentifier,
+    code_folder: &Path,
+) -> Vec<SourceFileIdentifier> {
+    let mut result = Vec::new();
+    let mut read_dir = tokio::fs::read_dir(code_folder).await.unwrap();
+    while let Some(entry) = read_dir.next_entry().await.unwrap() {
+        let metadata = entry.metadata().await.unwrap();
+        if metadata.is_file() {
+            let os_fname = entry.file_name();
+            let fname = os_fname.to_string_lossy();
+            if let Some(fname) = fname.strip_suffix(".ql") {
+                result.push(SourceFileIdentifier {
+                    module: root_module.clone(),
+                    file: fname.to_string().into(),
+                    file_type: SourceFileType::Quill,
+                })
+            }
+        } else if metadata.is_dir() {
+            let os_folder_name = entry.file_name();
+            let folder_name = os_folder_name.to_string_lossy();
+            // TODO: check if this is a valid folder name.
+            result.extend(
+                find_all_source_files(
+                    ModuleIdentifier {
+                        segments: root_module
+                            .segments
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(folder_name.into()))
+                            .collect(),
+                    },
+                    &entry.path(),
+                )
+                .await,
+            );
+        }
+    }
+    result
+}
+
 /// The `quillc` compiler is not intended to be used as a CLI.
 /// Rather, the `quill` driver program should supply correct arguments to `quillc` in the form of JSON.
 #[tokio::main]
 async fn main() {
     let invocation: QuillcInvocation =
         serde_json::from_str(&std::env::args().nth(1).unwrap()).unwrap();
-
-    let fs = PackageFileSystem::new(invocation.build_info.code_folder.clone());
-    let mut error_emitter = ErrorEmitter::new(&fs);
 
     // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
     // (This is excluding the annoying case where the file changes after being parsed by `quill`, and before this program is executed.)
@@ -62,36 +100,76 @@ async fn main() {
     )
     .unwrap();
 
-    let file_ident = SourceFileIdentifier {
-        module: vec![].into(),
-        file: "main".into(),
-        file_type: SourceFileType::Quill,
+    let fs = PackageFileSystem::new({
+        let mut map = HashMap::new();
+        map.insert(
+            project_config.name.clone(),
+            invocation.build_info.code_folder.clone(),
+        );
+        map
+    });
+    let mut error_emitter = ErrorEmitter::new(&fs);
+
+    // Find all the source files.
+    let source_files = find_all_source_files(
+        ModuleIdentifier {
+            segments: vec![project_config.name.clone().into()],
+        },
+        &invocation.build_info.code_folder,
+    )
+    .await;
+
+    let lexed = {
+        let mut results = Vec::new();
+        for file_ident in source_files.iter() {
+            results.push(
+                quill_lexer::lex(&fs, &file_ident)
+                    .await
+                    .map(|lexed| (file_ident.clone(), lexed)),
+            );
+        }
+        DiagnosticResult::sequence_unfail(results)
+            .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+            .deny()
     };
 
-    let lexed = quill_lexer::lex(&fs, &file_ident).await;
-    let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &file_ident));
+    let parsed =
+        lexed.bind(|lexed| {
+            DiagnosticResult::sequence_unfail(lexed.into_iter().map(|(file, lexed)| {
+                quill_parser::parse(lexed, &file).map(|parsed| (file, parsed))
+            }))
+            .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+            .deny()
+        });
+
     let mir = parsed
         .bind(|parsed| {
-            quill_index::index_single_file(&file_ident, &parsed).bind(|index| {
-                let mut project_index = ProjectIndex::new();
-                project_index.insert(file_ident.clone(), index);
-                quill_type_deduce::check(&file_ident, &project_index, parsed)
-                    .deny()
-                    .bind(|typeck| quill_mir::to_mir(&project_index, typeck))
-                    .deny()
-                    .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
-                    .map(|result| (result, project_index))
+            quill_index::index_project(&parsed).bind(|index| {
+                // Now that we have the index, run type deduction and MIR generation.
+                DiagnosticResult::sequence_unfail(parsed.into_iter().map(|(file_ident, parsed)| {
+                    quill_type_deduce::check(&file_ident, &index, parsed)
+                        .deny()
+                        .bind(|typeck| quill_mir::to_mir(&index, typeck))
+                        .deny()
+                        .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
+                        .map(|mir| (file_ident, mir))
+                }))
+                .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                .deny()
+                .map(|result| (result, index))
             })
         })
         .deny()
         .map(|(mir, index)| ProjectMIR {
-            files: {
-                let mut map = HashMap::new();
-                map.insert(file_ident.clone(), mir);
-                map
-            },
+            files: mir,
             entry_point: QualifiedName {
-                source_file: file_ident,
+                source_file: SourceFileIdentifier {
+                    module: ModuleIdentifier {
+                        segments: vec![project_config.name.clone().into()],
+                    },
+                    file: "main".to_string().into(),
+                    file_type: SourceFileType::Quill,
+                },
                 name: "main".to_string(),
                 range: Location { line: 0, col: 0 }.into(),
             },

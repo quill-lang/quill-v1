@@ -106,7 +106,7 @@ fn name_used_earlier(
     )
 }
 
-/// Computes the index for a module.
+/// Computes the index for a file.
 pub fn index(
     source_file: &SourceFileIdentifier,
     file_parsed: &FileP,

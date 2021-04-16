@@ -51,14 +51,15 @@ pub struct Module {
 /// which could be a binary, a static library, a shared object, a WASM module,
 /// or something else of that kind.
 pub struct PackageFileSystem {
-    pub directory: PathBuf,
+    /// Maps project names (e.g. `core`) to the path their sources (and the `quill.toml` file) are stored at.
+    pub project_directories: HashMap<String, PathBuf>,
     root_module: RwLock<Module>,
 }
 
 impl PackageFileSystem {
-    pub fn new(directory: PathBuf) -> Self {
+    pub fn new(project_directories: HashMap<String, PathBuf>) -> Self {
         Self {
-            directory,
+            project_directories,
             root_module: RwLock::new(Module::default()),
         }
     }
@@ -152,9 +153,22 @@ impl PackageFileSystem {
         identifier: SourceFileIdentifier,
     ) -> Result<SourceFile, SourceFileLoadError> {
         use tokio::io::AsyncReadExt;
-        let file = File::open(self.directory.join(PathBuf::from(identifier)))
-            .await
-            .map_err(SourceFileLoadError::Io)?;
+        let directory = self.project_directories[&identifier.module.segments[0].0].clone();
+        let directory = identifier
+            .module
+            .segments
+            .iter()
+            .skip(1)
+            .fold(directory, |dir, segment| dir.join(&segment.0));
+
+        let file = File::open(
+            directory
+                .join(identifier.file.0)
+                .with_extension(identifier.file_type.file_extension()),
+        )
+        .await
+        .map_err(SourceFileLoadError::Io)?;
+
         let metadata = file.metadata().await.map_err(SourceFileLoadError::Io)?;
         let modified_time = metadata.modified().map_err(SourceFileLoadError::Io)?;
         let mut contents = Default::default();

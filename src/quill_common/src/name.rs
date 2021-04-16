@@ -3,7 +3,7 @@ use std::hash::Hash;
 
 use crate::location::{Range, SourceFileIdentifier, SourceFileType};
 
-/// A fully qualified name referring to a top-level item declared in a `.quill` file.
+/// A fully qualified name referring to a top-level item declared in a `.ql` file.
 /// This should not be used for qualified identifiers, since in this case we need to also keep track
 /// of where the identifier was written; this type is concerned only with the name itself.
 #[derive(Clone, Eq)]

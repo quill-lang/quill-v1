@@ -5,13 +5,21 @@ async fn test_parser() {
     use quill_lexer::lex;
     use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use quill_parser::parse;
 
-    let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
+    let fs = PackageFileSystem::new({
+        let mut map = HashMap::new();
+        map.insert(
+            "test_project".to_string(),
+            PathBuf::from("../../test_sources"),
+        );
+        map
+    });
     let file_ident = SourceFileIdentifier {
-        module: vec![].into(),
+        module: vec!["test_project".into()].into(),
         file: "main".into(),
         file_type: SourceFileType::Quill,
     };

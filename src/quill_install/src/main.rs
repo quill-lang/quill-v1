@@ -34,7 +34,7 @@ async fn main() {
         .path()
         .join(if cfg!(windows) { "quill.exe" } else { "quill" });
 
-    let install_location = dirs::home_dir().unwrap().join(".quill");
+    let install_location = dirs::home_dir().unwrap().join(".ql");
     tokio::fs::create_dir_all(&install_location).await.unwrap();
     let new_exe = if let Some(ext) = exe.extension() {
         install_location.join("quill").with_extension(ext)

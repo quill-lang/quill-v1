@@ -20,10 +20,17 @@ async fn test_convert_func_objects() {
     use quill_type_deduce::check;
     use std::path::PathBuf;
 
-    let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
+    let fs = PackageFileSystem::new({
+        let mut map = HashMap::new();
+        map.insert(
+            "test_project".to_string(),
+            PathBuf::from("../../test_sources"),
+        );
+        map
+    });
     for &fname in &["main", "higher_kinded_types", "primitive_types"] {
         let file_ident = SourceFileIdentifier {
-            module: vec![].into(),
+            module: vec!["test_project".into()].into(),
             file: fname.into(),
             file_type: SourceFileType::Quill,
         };

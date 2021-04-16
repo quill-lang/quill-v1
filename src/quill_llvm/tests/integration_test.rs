@@ -1,6 +1,7 @@
 #[tokio::test]
 async fn test_llvm() {
-    use std::{collections::HashMap, path::Path};
+    use std::collections::HashMap;
+    use std::path::Path;
 
     use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
@@ -23,10 +24,17 @@ async fn test_llvm() {
     use quill_type_deduce::check;
     use std::path::PathBuf;
 
-    let fs = PackageFileSystem::new(PathBuf::from("../../test_sources"));
+    let fs = PackageFileSystem::new({
+        let mut map = HashMap::new();
+        map.insert(
+            "test_project".to_string(),
+            PathBuf::from("../../test_sources"),
+        );
+        map
+    });
     for &fname in &["main", "primitive_types"] {
         let file_ident = SourceFileIdentifier {
-            module: vec![].into(),
+            module: vec!["test_project".into()].into(),
             file: fname.into(),
             file_type: SourceFileType::Quill,
         };
