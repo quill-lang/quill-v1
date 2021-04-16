@@ -10,6 +10,7 @@ quill_common = { path = "../quill_common" }
 quill_parser = { path = "../quill_parser" }
 quill_type = { path = "../quill_type" }
 quill_index = { path = "../quill_index" }
+multimap = "0.8.3"
 
 [dev-dependencies]
 quill_source_file = { path = "../quill_source_file" }

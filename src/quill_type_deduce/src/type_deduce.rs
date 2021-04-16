@@ -16,7 +16,7 @@ use crate::{
     },
     type_check::{
         AbstractionVariable, BoundVariable, Expression, ExpressionContents, ExpressionContentsT,
-        ExpressionT, ImmediateValue, TypeVariable, TypeVariablePrinter,
+        ExpressionT, ImmediateValue, TypeVariable, TypeVariablePrinter, VisibleNames,
     },
     type_resolve::TypeVariableId,
 };
@@ -165,6 +165,7 @@ enum ConstraintImplicitReason {}
 pub fn deduce_expr_type(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
     args: &HashMap<String, BoundVariable>,
     expr: ExprPatP,
     expected_type: Type,
@@ -173,6 +174,7 @@ pub fn deduce_expr_type(
     generate_constraints(
         source_file,
         project_index,
+        visible_names,
         args,
         HashMap::new(),
         HashMap::new(),
@@ -212,6 +214,7 @@ pub fn deduce_expr_type(
 fn generate_constraints(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
     args: &HashMap<String, BoundVariable>,
     mut lambda_variables: HashMap<String, AbstractionVariable>,
     mut let_variables: HashMap<String, AbstractionVariable>,
@@ -384,6 +387,7 @@ fn generate_constraints(
             generate_constraints(
                 source_file,
                 project_index,
+                visible_names,
                 args,
                 lambda_variables.clone(),
                 let_variables.clone(),
@@ -393,6 +397,7 @@ fn generate_constraints(
                 generate_constraints(
                     source_file,
                     project_index,
+                    visible_names,
                     args,
                     lambda_variables,
                     let_variables.clone(),
@@ -493,6 +498,7 @@ fn generate_constraints(
                     generate_constraints(
                         source_file,
                         project_index,
+                        visible_names,
                         args,
                         lambda_variables,
                         let_variables.clone(),
@@ -577,6 +583,7 @@ fn generate_constraints(
             generate_constraints(
                 source_file,
                 project_index,
+                visible_names,
                 args,
                 lambda_variables.clone(),
                 let_variables.clone(),
@@ -668,6 +675,7 @@ fn generate_constraints(
                 let (result, inner_messages) = generate_constraints(
                     source_file,
                     project_index,
+                    visible_names,
                     args,
                     lambda_variables.clone(),
                     let_variables.clone(),
@@ -753,7 +761,7 @@ fn generate_constraints(
             close_brace,
         } => {
             // Resolve the type constructor that was invoked.
-            resolve_type_constructor(source_file, &data_constructor, project_index).bind(
+            resolve_type_constructor(source_file, &data_constructor, visible_names).bind(
                 |type_constructor_invocation| {
                     // Generate a type variable for this data type.
                     let type_parameter_variables = (0..type_constructor_invocation.num_parameters)
@@ -768,10 +776,10 @@ fn generate_constraints(
                     };
 
                     // Find the type constructor.
-                    let (type_ctor, type_params) = match &project_index
-                        [&type_constructor_invocation.data_type.source_file]
-                        .types[&type_constructor_invocation.data_type.name]
-                        .decl_type
+                    let (type_ctor, type_params) = match &visible_names.types
+                        [type_constructor_invocation.data_type.name.as_str()]
+                    .decl
+                    .decl_type
                     {
                         TypeDeclarationTypeI::Data(datai) => (&datai.type_ctor, &datai.type_params),
                         TypeDeclarationTypeI::Enum(enumi) => (
@@ -811,6 +819,7 @@ fn generate_constraints(
                         let (result, inner_messages) = generate_constraints(
                             source_file,
                             project_index,
+                            visible_names,
                             args,
                             lambda_variables.clone(),
                             let_variables.clone(),
@@ -865,6 +874,7 @@ fn generate_constraints(
                         let (result, inner_messages) = generate_constraints(
                             source_file,
                             project_index,
+                            visible_names,
                             args,
                             lambda_variables.clone(),
                             let_variables.clone(),

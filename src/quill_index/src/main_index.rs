@@ -116,14 +116,15 @@ pub(crate) struct ForeignTypeDeclarationC<'a> {
 }
 
 pub struct UsedFile {
-    file: SourceFileIdentifier,
+    pub file: SourceFileIdentifier,
 }
 
 /// Produces a list of all the files (including itself) that are used in this file.
+/// `project_files` is a predicate saying whether the given file is in the project.
 pub fn compute_used_files(
     source_file: &SourceFileIdentifier,
     file_parsed: &FileP,
-    project_types: &ProjectTypesC,
+    project_files: impl Fn(&SourceFileIdentifier) -> bool,
 ) -> DiagnosticResult<Vec<UsedFile>> {
     let mut result = vec![UsedFile {
         file: source_file.clone(),
@@ -156,7 +157,7 @@ pub fn compute_used_files(
                 file: used_file_file.clone(),
                 file_type: SourceFileType::Quill,
             };
-            if project_types.contains_key(&used_file_id) {
+            if project_files(&used_file_id) {
                 result.push(UsedFile { file: used_file_id });
                 break;
             }
@@ -185,8 +186,10 @@ fn compute_visible_types<'a>(
     let mut visible_types = MultiMap::new();
     let mut messages = Vec::new();
 
-    let (used_files, more_messages) =
-        compute_used_files(source_file, file_parsed, project_types).destructure();
+    let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
+        project_types.contains_key(name)
+    })
+    .destructure();
     messages.extend(more_messages);
     for file in used_files.unwrap() {
         for (ty, decl) in &project_types[&file.file] {
@@ -206,7 +209,7 @@ fn compute_visible_types<'a>(
             Some((ty, decls.pop().unwrap()))
         } else {
             messages.push(ErrorMessage::new_with_many(
-                format!("type name `{}` was imported from multiple locations, which could cause ambiguity, so this name will not be usable in this file", ty),
+                format!("a type with name `{}` was imported from multiple locations, which could cause ambiguity, so this name will not be usable in this file", ty),
                 Severity::Warning,
                 Diagnostic::in_file(source_file),
                 decls.into_iter().map(|decl| HelpMessage {

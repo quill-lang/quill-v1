@@ -5,12 +5,16 @@ use std::{
     fmt::Display,
 };
 
+use multimap::MultiMap;
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{Location, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
+use quill_index::{
+    compute_used_files, DefinitionI, ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI,
+    TypeParameter,
+};
 use quill_parser::{DefinitionBodyP, DefinitionCaseP, ExprPatP, FileP, NameP};
 use quill_type::{PrimitiveType, Type};
 
@@ -831,12 +835,141 @@ pub type ExpressionContents = ExpressionContentsGeneric<Expression, Vec<Type>>;
 pub type ExpressionContentsT =
     ExpressionContentsGeneric<ExpressionT, HashMap<String, TypeVariable>>;
 
+/// Represents a declaration that may be in a different source file.
+pub struct ForeignDeclaration<T> {
+    pub source_file: SourceFileIdentifier,
+    pub decl: T,
+}
+
+pub struct VisibleNames<'a> {
+    pub types: HashMap<&'a str, ForeignDeclaration<&'a TypeDeclarationI>>,
+    pub enum_variants: HashMap<&'a str, ForeignDeclaration<&'a str>>,
+    pub definitions: HashMap<&'a str, ForeignDeclaration<&'a DefinitionI>>,
+}
+
+/// Work out what names are visible inside a file.
+/// This is the counterpart to `compute_visible_types` once we've got the full project index.
+fn compute_visible_names<'a>(
+    source_file: &'a SourceFileIdentifier,
+    file_parsed: &FileP,
+    project_index: &'a ProjectIndex,
+) -> DiagnosticResult<VisibleNames<'a>> {
+    let mut messages = Vec::new();
+    let mut visible_types = MultiMap::new();
+    let mut visible_enum_variants = MultiMap::new();
+    let mut visible_defs = MultiMap::new();
+
+    let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
+        project_index.contains_key(name)
+    })
+    .destructure();
+    assert!(
+        more_messages.is_empty(),
+        "should have errored in `compute_visible_types`"
+    );
+    for file in used_files.unwrap() {
+        let file_index = &project_index[&file.file];
+        for (ty, decl) in &file_index.types {
+            visible_types.insert(
+                ty.as_str(),
+                ForeignDeclaration {
+                    source_file: file.file.clone(),
+                    decl,
+                },
+            );
+        }
+        for (variant, ty) in &file_index.enum_variant_types {
+            visible_enum_variants.insert(
+                variant.as_str(),
+                ForeignDeclaration {
+                    source_file: file.file.clone(),
+                    decl: &file_index.types[ty],
+                },
+            );
+        }
+        for (name, def) in &file_index.definitions {
+            visible_defs.insert(
+                name.as_str(),
+                ForeignDeclaration {
+                    source_file: file.file.clone(),
+                    decl: def,
+                },
+            );
+        }
+    }
+
+    // Now generate error messages if the multimap contains any duplicate entries.
+    let types = visible_types
+        .into_iter()
+        .map(|(key, mut decls)| {
+            if decls.len() == 1 {
+                (key, decls.pop().unwrap())
+            } else {
+                unreachable!("should have errored in `compute_visible_types`")
+            }
+        })
+        .collect();
+    let enum_variants = visible_enum_variants.into_iter().filter_map(|(key, mut decls)| {
+        if decls.len() == 1 {
+            let decl = decls.pop().unwrap();
+            Some((key, ForeignDeclaration { source_file: decl.source_file, decl: decl.decl.name.name.as_str() }))
+        } else {
+            messages.push(ErrorMessage::new_with_many(
+                format!("an enum variant with name `{}` was imported from multiple locations, which could cause ambiguity, so this name will not be usable in this file", key),
+                Severity::Warning,
+                Diagnostic::in_file(source_file),
+                decls.into_iter().map(|decl| HelpMessage {
+                    message: format!("defined in {} here", decl.source_file),
+                    help_type: HelpType::Note,
+                    diagnostic: Diagnostic::at(&decl.source_file, &decl.decl.name.range),
+                }).collect()
+            ));
+            None
+        }
+    })
+        .collect();
+    let definitions = visible_defs.into_iter().filter_map(|(key, mut decls)| {
+        if decls.len() == 1 {
+            Some((key, decls.pop().unwrap()))
+        } else {
+            messages.push(ErrorMessage::new_with_many(
+                format!("a definition with name `{}` was imported from multiple locations, which could cause ambiguity, so this name will not be usable in this file", key),
+                Severity::Warning,
+                Diagnostic::in_file(source_file),
+                decls.into_iter().map(|decl| HelpMessage {
+                    message: format!("defined in {} here", decl.source_file),
+                    help_type: HelpType::Note,
+                    diagnostic: Diagnostic::at(&decl.source_file, &decl.decl.name.range),
+                }).collect()
+            ));
+            None
+        }
+    })
+        .collect();
+
+    DiagnosticResult::ok_with_many(
+        VisibleNames {
+            types,
+            enum_variants,
+            definitions,
+        },
+        messages,
+    )
+}
+
 impl<'a> TypeChecker<'a> {
     fn compute(
         mut self,
         project_index: &ProjectIndex,
         file_parsed: FileP,
     ) -> DiagnosticResult<SourceFileHIR> {
+        let visible_names = {
+            let (visible_names, more_messages) =
+                compute_visible_names(self.source_file, &file_parsed, project_index).destructure();
+            self.messages.extend(more_messages);
+            visible_names.unwrap()
+        };
+
         let mut definitions = HashMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
@@ -852,7 +985,7 @@ impl<'a> TypeChecker<'a> {
                     // Let's resolve each case's patterns and expressions.
                     let cases = cases
                         .into_iter()
-                        .map(|case| self.resolve_case(project_index, &def_name.name, case))
+                        .map(|case| self.resolve_case(&visible_names, &def_name.name, case))
                         .collect::<DiagnosticResult<_>>();
 
                     // Now we can check whether the patterns are valid.
@@ -861,6 +994,7 @@ impl<'a> TypeChecker<'a> {
                             .into_iter()
                             .map(|(range, args, replacement)| {
                                 self.validate_case(
+                                    &visible_names,
                                     &symbol_type,
                                     range,
                                     args,
@@ -944,12 +1078,12 @@ impl<'a> TypeChecker<'a> {
 
     fn resolve_case(
         &self,
-        project_index: &ProjectIndex,
+        visible_names: &VisibleNames,
         function_name: &str,
         case: DefinitionCaseP,
     ) -> DiagnosticResult<(Range, Vec<Pattern>, ExprPatP)> {
         let range = case.pattern.range();
-        let pattern = self.resolve_func_pattern(project_index, function_name, case.pattern);
+        let pattern = self.resolve_func_pattern(visible_names, function_name, case.pattern);
         let replacement = case.replacement;
         pattern.map(|pattern| (range, pattern, replacement))
     }
@@ -957,6 +1091,7 @@ impl<'a> TypeChecker<'a> {
     /// Verify that the given case exactly matches the required type, and also type check the expression given the arguments' types and the expected output type.
     fn validate_case(
         &self,
+        visible_names: &VisibleNames,
         symbol_type: &Type,
         range: Range,
         args: Vec<Pattern>,
@@ -979,7 +1114,9 @@ impl<'a> TypeChecker<'a> {
         let arg_vars = args
             .iter()
             .zip(symbol_args.into_iter())
-            .map(|(pattern, expected_type)| self.match_and_bind(pattern, expected_type))
+            .map(|(pattern, expected_type)| {
+                self.match_and_bind(visible_names, pattern, expected_type)
+            })
             .collect::<DiagnosticResult<_>>();
         // Collect the list of maps into a single map, ensuring that we don't have duplicate variable names.
         let arg_vars = arg_vars.bind(|arg_vars| collect_bound_vars(self.source_file, arg_vars));
@@ -990,6 +1127,7 @@ impl<'a> TypeChecker<'a> {
                 deduce_expr_type(
                     self.source_file,
                     self.project_index,
+                    visible_names,
                     &arg_vars,
                     replacement,
                     result,
@@ -1003,6 +1141,7 @@ impl<'a> TypeChecker<'a> {
     /// shows what variable names have what types.
     fn match_and_bind(
         &self,
+        visible_names: &VisibleNames,
         pattern: &Pattern,
         expected_type: Type,
     ) -> DiagnosticResult<HashMap<String, BoundVariable>> {
@@ -1027,8 +1166,8 @@ impl<'a> TypeChecker<'a> {
                     ..
                 } => {
                     // Find the data type declaration in the index.
-                    let data_type_decl = &self.project_index[&type_ctor.data_type.source_file]
-                        .types[&type_ctor.data_type.name];
+                    let data_type_decl =
+                        visible_names.types[type_ctor.data_type.name.as_str()].decl;
                     // Find the original list of named type parameters.
                     // For instance, in a data type `Foo[A]`, the named type parameter list is `[A]`.
                     // We can then create a bijective correspondence between the list of `concrete_type_parameters` given
@@ -1085,7 +1224,11 @@ impl<'a> TypeChecker<'a> {
                                 named_type_parameters,
                                 &concrete_type_parameters,
                             );
-                            bound_vars.push(self.match_and_bind(pattern, expected_type));
+                            bound_vars.push(self.match_and_bind(
+                                visible_names,
+                                pattern,
+                                expected_type,
+                            ));
                         }
                     }
                     DiagnosticResult::sequence(bound_vars)
@@ -1210,7 +1353,7 @@ impl<'a> TypeChecker<'a> {
     /// This function does not guarantee that the returned pattern is valid for the function.
     fn resolve_func_pattern(
         &self,
-        project_index: &ProjectIndex,
+        visible_names: &VisibleNames,
         function_name: &str,
         expression: ExprPatP,
     ) -> DiagnosticResult<Vec<Pattern>> {
@@ -1238,9 +1381,9 @@ impl<'a> TypeChecker<'a> {
             }
             ExprPatP::Apply(left, right) => {
                 // The left hand side should be a function pattern, and the right hand side should be a type pattern.
-                self.resolve_func_pattern(project_index, function_name, *left)
+                self.resolve_func_pattern(visible_names, function_name, *left)
                     .bind(|mut left| {
-                        self.resolve_type_pattern(project_index, *right)
+                        self.resolve_type_pattern(visible_names, *right)
                             .map(|right| {
                                 left.push(right);
                                 left
@@ -1288,7 +1431,7 @@ impl<'a> TypeChecker<'a> {
     /// Converts a pattern representing a type constructor into a pattern object.
     fn resolve_type_pattern(
         &self,
-        project_index: &ProjectIndex,
+        visible_names: &VisibleNames,
         expression: ExprPatP,
     ) -> DiagnosticResult<Pattern> {
         match expression {
@@ -1336,7 +1479,7 @@ impl<'a> TypeChecker<'a> {
                     .fields
                     .into_iter()
                     .map(|(field_name, field_pattern)| {
-                        self.resolve_type_pattern(project_index, field_pattern)
+                        self.resolve_type_pattern(visible_names, field_pattern)
                             .map(|pat| (field_name, pat))
                     })
                     .chain(fields.auto_fields.into_iter().map(|field_name| {
@@ -1344,52 +1487,17 @@ impl<'a> TypeChecker<'a> {
                     }))
                     .collect::<DiagnosticResult<_>>();
                 fields.bind(|fields| {
-                    resolve_type_constructor(
-                        self.source_file,
-                        &data_constructor,
-                        self.project_index,
-                    )
-                    .map(|type_ctor| {
-                        // Find the fields on the type, and cache their types.
-                        let decl = &project_index[&type_ctor.data_type.source_file].types
-                            [&type_ctor.data_type.name];
-                        match &decl.decl_type {
-                            TypeDeclarationTypeI::Data(datai) => Pattern::TypeConstructor {
-                                type_ctor,
-                                fields: fields
-                                    .into_iter()
-                                    .map(|(name, pat)| {
-                                        let ty = datai
-                                            .type_ctor
-                                            .fields
-                                            .iter()
-                                            .find_map(|(fname, ftype)| {
-                                                if *fname == name {
-                                                    Some(ftype.clone())
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .unwrap();
-                                        (name, ty, pat)
-                                    })
-                                    .collect(),
-                            },
-                            TypeDeclarationTypeI::Enum(enumi) => {
-                                let variant = enumi
-                                    .variants
-                                    .iter()
-                                    .find(|variant| {
-                                        &variant.name.name == type_ctor.variant.as_ref().unwrap()
-                                    })
-                                    .unwrap();
-
-                                Pattern::TypeConstructor {
+                    resolve_type_constructor(self.source_file, &data_constructor, visible_names)
+                        .map(|type_ctor| {
+                            // Find the fields on the type, and cache their types.
+                            let decl = visible_names.types[type_ctor.data_type.name.as_str()].decl;
+                            match &decl.decl_type {
+                                TypeDeclarationTypeI::Data(datai) => Pattern::TypeConstructor {
                                     type_ctor,
                                     fields: fields
                                         .into_iter()
                                         .map(|(name, pat)| {
-                                            let ty = variant
+                                            let ty = datai
                                                 .type_ctor
                                                 .fields
                                                 .iter()
@@ -1404,10 +1512,41 @@ impl<'a> TypeChecker<'a> {
                                             (name, ty, pat)
                                         })
                                         .collect(),
+                                },
+                                TypeDeclarationTypeI::Enum(enumi) => {
+                                    let variant = enumi
+                                        .variants
+                                        .iter()
+                                        .find(|variant| {
+                                            &variant.name.name
+                                                == type_ctor.variant.as_ref().unwrap()
+                                        })
+                                        .unwrap();
+
+                                    Pattern::TypeConstructor {
+                                        type_ctor,
+                                        fields: fields
+                                            .into_iter()
+                                            .map(|(name, pat)| {
+                                                let ty = variant
+                                                    .type_ctor
+                                                    .fields
+                                                    .iter()
+                                                    .find_map(|(fname, ftype)| {
+                                                        if *fname == name {
+                                                            Some(ftype.clone())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    })
+                                                    .unwrap();
+                                                (name, ty, pat)
+                                            })
+                                            .collect(),
+                                    }
                                 }
                             }
-                        }
-                    })
+                        })
                 })
             }
         }
