@@ -8,10 +8,13 @@ use lspower::jsonrpc;
 use lspower::lsp::*;
 use lspower::{Client, LanguageServer, LspService, Server};
 use multimap::MultiMap;
+use quill_common::diagnostic::DiagnosticResult;
+use quill_common::name::QualifiedName;
 use quill_common::{
     diagnostic::{ErrorMessage, Severity},
     location::{ModuleIdentifier, SourceFileIdentifier, SourceFileType},
 };
+use quill_mir::ProjectMIR;
 use quill_source_file::PackageFileSystem;
 use quillc_api::ProjectInfo;
 use tokio::sync::RwLock;
@@ -24,6 +27,9 @@ fn path_to_file(root_module: String, path: &Path) -> SourceFileIdentifier {
         _ => unreachable!(),
     };
 
+    let ext = path.extension();
+    let path = path.with_extension("");
+
     let mut components = path.components().collect::<Vec<_>>();
     let file = components.pop().unwrap();
     SourceFileIdentifier {
@@ -34,7 +40,16 @@ fn path_to_file(root_module: String, path: &Path) -> SourceFileIdentifier {
                 .collect(),
         },
         file: map(file).into(),
-        file_type: SourceFileType::Quill,
+        file_type: if let Some(ext) = ext {
+            let ext = ext.to_string_lossy().to_string();
+            match ext.as_str() {
+                "ql" => SourceFileType::Quill,
+                "toml" => SourceFileType::Toml,
+                _ => unreachable!("ext was {}", ext),
+            }
+        } else {
+            unreachable!()
+        },
     }
 }
 
@@ -47,7 +62,12 @@ fn file_to_url(project_roots: &HashMap<String, PathBuf>, file: SourceFileIdentif
     let project = iter.next().unwrap().0;
     let project_root = project_roots[&project].clone();
     let segments = iter.map(|segment| segment.0);
-    Url::from_file_path(segments.fold(project_root, |dir, segment| dir.join(segment))).unwrap()
+    Url::from_file_path(
+        segments
+            .fold(project_root, |dir, segment| dir.join(segment))
+            .with_extension(file.file_type.file_extension()),
+    )
+    .unwrap()
 }
 
 fn into_diagnostic(project_roots: &HashMap<String, PathBuf>, message: ErrorMessage) -> Diagnostic {
@@ -131,6 +151,14 @@ struct Backend {
     client: Client,
     /// A new file system is created for every potential root.
     root_file_systems: Arc<RwLock<RootFileSystems>>,
+    /// Maps project roots to the files in which diagnostics were emitted.
+    /// This allows us to clear the diagnostics before emitting more.
+    emitted_diagnostics_to: Arc<RwLock<HashMap<PathBuf, Vec<SourceFileIdentifier>>>>,
+}
+
+struct ProjectRoot {
+    dir: PathBuf,
+    project_name: String,
 }
 
 impl Backend {
@@ -138,6 +166,7 @@ impl Backend {
         Self {
             client,
             root_file_systems: Arc::new(RwLock::new(RootFileSystems::default())),
+            emitted_diagnostics_to: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -149,7 +178,7 @@ impl Backend {
     /// In particular, this checks parent URIs until a `quill.toml` file is found.
     /// If one is found, then that directory is added to `RootFileSystems` as a file
     /// system root.
-    pub async fn get_project_root(&self, url: Url) -> Option<(SourceFileIdentifier, PathBuf)> {
+    pub async fn get_project_root(&self, url: Url) -> Option<(SourceFileIdentifier, ProjectRoot)> {
         assert!(url.scheme() == "file");
         let path = url.to_file_path().unwrap();
 
@@ -158,7 +187,13 @@ impl Backend {
             let read = self.root_file_systems.read().await;
             for (k, (root_module, _)) in &read.file_systems {
                 if let Ok(relative) = path.strip_prefix(k) {
-                    return Some((path_to_file(root_module.clone(), relative), k.clone()));
+                    return Some((
+                        path_to_file(root_module.clone(), relative),
+                        ProjectRoot {
+                            dir: k.clone(),
+                            project_name: root_module.clone(),
+                        },
+                    ));
                 }
             }
         }
@@ -184,8 +219,14 @@ impl Backend {
                             .file_systems
                             .insert(new_path.clone(), (file_toml.name.clone(), fs));
                         return Some((
-                            path_to_file(file_toml.name, path.strip_prefix(&new_path).unwrap()),
-                            new_path,
+                            path_to_file(
+                                file_toml.name.clone(),
+                                path.strip_prefix(&new_path).unwrap(),
+                            ),
+                            ProjectRoot {
+                                dir: new_path,
+                                project_name: file_toml.name,
+                            },
                         ));
                     }
                 }
@@ -194,6 +235,45 @@ impl Backend {
             if !new_path.pop() {
                 return None;
             }
+        }
+    }
+
+    async fn emit_project_diagnostics(
+        &self,
+        project_root: PathBuf,
+        fs: &PackageFileSystem,
+        messages: impl IntoIterator<Item = ErrorMessage>,
+    ) {
+        let diagnostics_by_file = messages
+            .into_iter()
+            .map(|message| (message.diagnostic.source_file.clone(), message))
+            .collect::<MultiMap<_, _>>();
+
+        let mut emitted = self.emitted_diagnostics_to.write().await;
+        let emitted = emitted.entry(project_root).or_default();
+
+        for file in emitted.iter() {
+            self.client
+                .publish_diagnostics(
+                    file_to_url(&fs.project_directories, file.clone()),
+                    vec![],
+                    None,
+                )
+                .await;
+        }
+
+        emitted.clear();
+
+        for (file, diagnostics) in diagnostics_by_file {
+            emitted.push(file.clone());
+            let diags = diagnostics
+                .into_iter()
+                .map(|message| into_diagnostic(&fs.project_directories, message))
+                .collect();
+
+            self.client
+                .publish_diagnostics(file_to_url(&fs.project_directories, file), diags, None)
+                .await;
         }
     }
 }
@@ -253,11 +333,11 @@ impl LanguageServer for Backend {
             trace!(
                 "file {} in {} changed",
                 identifier,
-                project_root.to_string_lossy(),
+                project_root.dir.to_string_lossy(),
             );
             let contents = params.content_changes[0].text.clone();
             let guard = self.root_file_systems.read().await;
-            let (_, fs) = &guard.file_systems[&project_root];
+            let (_, fs) = &guard.file_systems[&project_root.dir];
             fs.overwrite_source_file(identifier.clone(), contents).await;
 
             // Parse the file and emit diagnostics.
@@ -283,7 +363,7 @@ impl LanguageServer for Backend {
         if let Some((identifier, project_root)) =
             self.get_project_root(params.text_document.uri).await
         {
-            self.root_file_systems.read().await.file_systems[&project_root]
+            self.root_file_systems.read().await.file_systems[&project_root.dir]
                 .1
                 .remove_cache(&identifier)
                 .await;
@@ -293,47 +373,91 @@ impl LanguageServer for Backend {
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         info!("saved file");
 
-        if let Some((file_ident, project_root)) =
+        if let Some((_file_ident, project_root)) =
             self.get_project_root(params.text_document.uri).await
         {
             // Create more detailed diagnostics by running the full Quill compiler
             // (at least, up to the MIR step) on this file's project root.
             let guard = self.root_file_systems.read().await;
-            let fs = &guard.file_systems[&project_root].1;
-            let lexed = quill_lexer::lex(&fs, &file_ident).await;
-            let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &file_ident));
+            let fs = &guard.file_systems[&project_root.dir].1;
+
+            // Find all the source files.
+            let source_files = quill_source_file::find_all_source_files(
+                ModuleIdentifier {
+                    segments: vec![project_root.project_name.clone().into()],
+                },
+                &project_root.dir,
+            )
+            .await;
+
+            let lexed = {
+                let mut results = Vec::new();
+                for file_ident in source_files.iter() {
+                    results.push(
+                        quill_lexer::lex(&fs, &file_ident)
+                            .await
+                            .map(|lexed| (file_ident.clone(), lexed)),
+                    );
+                }
+                DiagnosticResult::sequence_unfail(results)
+                    .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                    .deny()
+            };
+
+            let parsed = lexed.bind(|lexed| {
+                DiagnosticResult::sequence_unfail(lexed.into_iter().map(|(file, lexed)| {
+                    quill_parser::parse(lexed, &file).map(|parsed| (file, parsed))
+                }))
+                .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                .deny()
+            });
+
             let mir = parsed
                 .bind(|parsed| {
-                    quill_index::index_single_file(&file_ident, &parsed).bind(|index| {
-                        let mut project_index = quill_index::ProjectIndex::new();
-                        project_index.insert(file_ident.clone(), index);
-                        quill_type_deduce::check(&file_ident, &project_index, parsed)
-                            .deny()
-                            .bind(|typeck| quill_mir::to_mir(&project_index, typeck))
-                            .deny()
-                            .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
-                            .map(|result| (result, project_index))
+                    quill_index::index_project(&parsed).bind(|index| {
+                        // Now that we have the index, run type deduction and MIR generation.
+                        DiagnosticResult::sequence_unfail(parsed.into_iter().map(
+                            |(file_ident, parsed)| {
+                                quill_type_deduce::check(&file_ident, &index, parsed)
+                                    .deny()
+                                    .bind(|typeck| quill_mir::to_mir(&index, typeck))
+                                    .deny()
+                                    .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
+                                    .map(|mir| (file_ident, mir))
+                            },
+                        ))
+                        .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                        .deny()
+                        .map(|result| (result, index))
                     })
                 })
-                .deny();
+                .deny()
+                .map(|(mir, index)| ProjectMIR {
+                    files: mir,
+                    entry_point: QualifiedName {
+                        source_file: SourceFileIdentifier {
+                            module: ModuleIdentifier {
+                                segments: vec![project_root.project_name.clone().into()],
+                            },
+                            file: "main".to_string().into(),
+                            file_type: SourceFileType::Quill,
+                        },
+                        name: "main".to_string(),
+                        range: quill_common::location::Location { line: 0, col: 0 }.into(),
+                    },
+                    index,
+                });
 
             let (_, messages) = mir.destructure();
 
-            let diagnostics_by_file = messages
-                .into_iter()
-                .map(|message| (message.diagnostic.source_file.clone(), message))
-                .collect::<MultiMap<_, _>>();
+            info!(
+                "compiled {:?} with {} messages",
+                source_files,
+                messages.len()
+            );
 
-            for (file, diagnostics) in diagnostics_by_file {
-                let diags = diagnostics
-                    .into_iter()
-                    .map(|message| into_diagnostic(&fs.project_directories, message))
-                    .collect();
-
-                self.client
-                    .publish_diagnostics(file_to_url(&fs.project_directories, file), diags, None)
-                    .await;
-            }
+            self.emit_project_diagnostics(project_root.dir, fs, messages)
+                .await;
         }
     }
 

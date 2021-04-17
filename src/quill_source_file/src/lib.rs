@@ -1,13 +1,15 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::Debug,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::SystemTime,
 };
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpType, Severity},
-    location::{ModuleIdentifier, SourceFileIdentifier, SourceFileIdentifierSegment},
+    location::{
+        ModuleIdentifier, SourceFileIdentifier, SourceFileIdentifierSegment, SourceFileType,
+    },
 };
 use tokio::{fs::File, io::BufReader, sync::RwLock};
 
@@ -127,15 +129,18 @@ impl PackageFileSystem {
 
     /// Overwrites the truth of this source file with new contents.
     pub async fn overwrite_source_file(&self, identifier: SourceFileIdentifier, contents: String) {
+        eprintln!("overwriting {}", identifier);
         let module_identifier = &identifier.module;
         let file_identifier = identifier.file.0;
         self.with_module(module_identifier, |module| {
             match module.source_files.entry(file_identifier) {
                 Entry::Occupied(mut occupied) => {
+                    eprintln!("source was {:?}", occupied.get());
                     *occupied.get_mut() = Ok(SourceFile {
                         contents,
                         modified_time: SystemTime::now(),
                     });
+                    eprintln!("source now {:?}", occupied.get());
                 }
                 Entry::Vacant(vacant) => {
                     vacant.insert(Ok(SourceFile {
@@ -415,4 +420,46 @@ impl<'fs> ErrorEmitter<'fs> {
         }
         self.has_emitted_error
     }
+}
+
+#[async_recursion::async_recursion]
+pub async fn find_all_source_files(
+    root_module: ModuleIdentifier,
+    code_folder: &Path,
+) -> Vec<SourceFileIdentifier> {
+    let mut result = Vec::new();
+    let mut read_dir = tokio::fs::read_dir(code_folder).await.unwrap();
+    while let Some(entry) = read_dir.next_entry().await.unwrap() {
+        let metadata = entry.metadata().await.unwrap();
+        if metadata.is_file() {
+            let os_fname = entry.file_name();
+            let fname = os_fname.to_string_lossy();
+            if let Some(fname) = fname.strip_suffix(".ql") {
+                result.push(SourceFileIdentifier {
+                    module: root_module.clone(),
+                    file: fname.to_string().into(),
+                    file_type: SourceFileType::Quill,
+                })
+            }
+        } else if metadata.is_dir() {
+            let os_folder_name = entry.file_name();
+            let folder_name = os_folder_name.to_string_lossy();
+            // TODO: check if this is a valid folder name.
+            result.extend(
+                find_all_source_files(
+                    ModuleIdentifier {
+                        segments: root_module
+                            .segments
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(folder_name.into()))
+                            .collect(),
+                    },
+                    &entry.path(),
+                )
+                .await,
+            );
+        }
+    }
+    result
 }

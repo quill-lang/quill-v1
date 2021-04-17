@@ -9,3 +9,4 @@ description = "Manages contents of file resources while compiling"
 quill_common = { path = "../quill_common" }
 tokio = { version = "^1.0", features = ["fs", "sync", "io-util"] }
 console = "^0.14"
+async-recursion = "0.3.2"

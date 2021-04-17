@@ -9,4 +9,3 @@ def print_list: List[int] -> unit {
     )
     print_list _ = unit
 }
-

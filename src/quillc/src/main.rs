@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
@@ -6,7 +6,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_mir::ProjectMIR;
-use quill_source_file::{ErrorEmitter, PackageFileSystem};
+use quill_source_file::{find_all_source_files, ErrorEmitter, PackageFileSystem};
 use quill_type::{PrimitiveType, Type};
 use quillc_api::{ProjectInfo, QuillcInvocation};
 
@@ -39,48 +39,6 @@ fn validate(mir: &ProjectMIR) -> DiagnosticResult<()> {
             Diagnostic::in_file(&mir.entry_point.source_file),
         ))
     }
-}
-
-#[async_recursion::async_recursion]
-async fn find_all_source_files(
-    root_module: ModuleIdentifier,
-    code_folder: &Path,
-) -> Vec<SourceFileIdentifier> {
-    let mut result = Vec::new();
-    let mut read_dir = tokio::fs::read_dir(code_folder).await.unwrap();
-    while let Some(entry) = read_dir.next_entry().await.unwrap() {
-        let metadata = entry.metadata().await.unwrap();
-        if metadata.is_file() {
-            let os_fname = entry.file_name();
-            let fname = os_fname.to_string_lossy();
-            if let Some(fname) = fname.strip_suffix(".ql") {
-                result.push(SourceFileIdentifier {
-                    module: root_module.clone(),
-                    file: fname.to_string().into(),
-                    file_type: SourceFileType::Quill,
-                })
-            }
-        } else if metadata.is_dir() {
-            let os_folder_name = entry.file_name();
-            let folder_name = os_folder_name.to_string_lossy();
-            // TODO: check if this is a valid folder name.
-            result.extend(
-                find_all_source_files(
-                    ModuleIdentifier {
-                        segments: root_module
-                            .segments
-                            .iter()
-                            .cloned()
-                            .chain(std::iter::once(folder_name.into()))
-                            .collect(),
-                    },
-                    &entry.path(),
-                )
-                .await,
-            );
-        }
-    }
-    result
 }
 
 /// The `quillc` compiler is not intended to be used as a CLI.
