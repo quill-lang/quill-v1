@@ -14,6 +14,7 @@ def main: unit {
 }
 
 // "error: could not resolve definition" ?
+// This should be a more helpful message!
 // def or: Bool -> Bool -> Bool {
 //     or False {} False {} = False {}
 //     or _ _ = True {}
