@@ -989,6 +989,27 @@ fn create_real_func_body_intrinsic<'ctx>(
                 .build_call(putchar, &[arg0_i32.into()], "call_putchar");
             ctx.codegen.builder.build_return(None);
         }
+        "add_int_unchecked" => {
+            // add_int_unchecked : int -> int -> int
+            let arg0 = ctx
+                .codegen
+                .builder
+                .build_load(
+                    ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
+                    "arg0",
+                )
+                .into_int_value();
+            let arg1 = ctx
+                .codegen
+                .builder
+                .build_load(
+                    ctx.locals[&LocalVariableName::Argument(ArgumentIndex(1))],
+                    "arg1",
+                )
+                .into_int_value();
+            let result = ctx.codegen.builder.build_int_add(arg0, arg1, "result");
+            ctx.codegen.builder.build_return(Some(&result));
+        }
         _ => {
             panic!("intrinsic {} is not defined by the compiler", ctx.func.func)
         }

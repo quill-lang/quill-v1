@@ -2,7 +2,7 @@ use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Location, Range, Ranged, SourceFileIdentifier},
+    location::{Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
@@ -1220,9 +1220,25 @@ fn process_constraint_reason(
             }];
             (expr, messages)
         }
+        ConstraintEqualityReason::Field {
+            expr,
+            data_type,
+            field,
+            ..
+        } => {
+            let messages = vec![HelpMessage {
+                message: format!(
+                    "error was raised because of the use of this expression in field {} of data type {}",
+                    field,
+                    data_type,
+                ),
+                help_type: HelpType::Note,
+                diagnostic: Diagnostic::at(source_file, &expr),
+            }];
+            (expr, messages)
+        }
         _ => {
-            println!("Could not print error message reason {:#?}", reason);
-            (Location { line: 0, col: 0 }.into(), Vec::new())
+            panic!("Could not print error message reason {:#?}", reason);
         }
     }
 }
