@@ -8,12 +8,42 @@
             "name": "(Windows) Launch",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/test_sources/build/test_quill_project.exe",
+            "program": "${workspaceFolder}/stdlib/core/build/core.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
             "console": "externalTerminal"
+        },
+        {
+            "type": "extensionHost",
+            "request": "launch",
+            "name": "Launch Client",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceRoot}"
+            ],
+            "outFiles": [
+                "${workspaceRoot}/quill_vscode/client/out/**/*.js"
+            ],
+            /*"preLaunchTask": {
+                "type": "npm",
+                "script": "watch"
+            }*/
+        },
+        {
+            "name": "Language Server E2E Test",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceRoot}/quill_vscode",
+                "--extensionTestsPath=${workspaceRoot}/quill_vscode/client/out/test/index",
+                "${workspaceRoot}/quill_vscode/client/testFixture"
+            ],
+            "outFiles": [
+                "${workspaceRoot}/quill_vscode/client/out/test/**/*.js"
+            ]
         }
     ]
 }

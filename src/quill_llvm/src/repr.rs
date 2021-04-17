@@ -373,6 +373,7 @@ pub fn source_file_debug_info<'ctx>(
                 .module
                 .segments
                 .iter()
+                .skip(1)
                 .map(|seg| seg.0.as_str())
                 .fold(codegen.project_root.clone(), |acc, segment| {
                     acc.join(segment)
