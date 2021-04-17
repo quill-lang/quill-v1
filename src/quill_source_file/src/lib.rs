@@ -129,7 +129,7 @@ impl PackageFileSystem {
 
     /// Overwrites the truth of this source file with new contents.
     pub async fn overwrite_source_file(&self, identifier: SourceFileIdentifier, contents: String) {
-        eprintln!("overwriting {}", identifier);
+        // eprintln!("overwriting {}", identifier);
         let module_identifier = &identifier.module;
         let file_identifier = identifier.file.0;
         self.with_module(module_identifier, |module| {

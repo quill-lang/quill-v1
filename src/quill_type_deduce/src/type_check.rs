@@ -1049,7 +1049,7 @@ impl<'a> TypeChecker<'a> {
                         );
                     }
                 }
-                DefinitionBodyP::CompilerIntrinsic => {
+                DefinitionBodyP::CompilerIntrinsic(_) => {
                     // There's no type checking to be done for a compiler intrinsic.
                     // All compiler intrinsics have the maximal possible arity.
                     let (arg_types, return_type) = get_args_of_type(symbol_type);

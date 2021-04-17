@@ -372,7 +372,7 @@ pub enum DefinitionBodyP {
     PatternMatch(Vec<DefinitionCaseP>),
     /// The body of the function is not written in Quill, it is an intrinsic and will be replaced
     /// by hand-written LLVM IR code.
-    CompilerIntrinsic,
+    CompilerIntrinsic(Range),
 }
 
 #[derive(Debug, Clone)]
@@ -428,11 +428,9 @@ impl<'input> Parser<'input> {
 
     /// `def_body ::= 'compiler_intrinsic' | def_body_pattern_matched`
     fn parse_def_body(&mut self) -> DiagnosticResult<DefinitionBodyP> {
-        if self
-            .parse_token_maybe(|ty| matches!(ty, TokenType::CompilerIntrinsic))
-            .is_some()
+        if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::CompilerIntrinsic))
         {
-            DiagnosticResult::ok(DefinitionBodyP::CompilerIntrinsic)
+            DiagnosticResult::ok(DefinitionBodyP::CompilerIntrinsic(token.range))
         } else {
             self.parse_def_body_pattern_matched()
                 .map(DefinitionBodyP::PatternMatch)

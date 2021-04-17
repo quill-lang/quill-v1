@@ -8,8 +8,8 @@ use lspower::jsonrpc;
 use lspower::lsp::*;
 use lspower::{Client, LanguageServer, LspService, Server};
 use multimap::MultiMap;
-use quill_common::diagnostic::DiagnosticResult;
 use quill_common::name::QualifiedName;
+use quill_common::{diagnostic::DiagnosticResult, location::Ranged};
 use quill_common::{
     diagnostic::{ErrorMessage, Severity},
     location::{ModuleIdentifier, SourceFileIdentifier, SourceFileType},
@@ -514,7 +514,7 @@ impl LanguageServer for Backend {
 
 lazy_static::lazy_static! {
     static ref SEMANTIC_TOKEN_LEGEND_VEC: Vec<SemanticTokenType> = {
-        vec![SemanticTokenType::FUNCTION]
+        vec![SemanticTokenType::FUNCTION, SemanticTokenType::VARIABLE, SemanticTokenType::TYPE, SemanticTokenType::TYPE_PARAMETER, SemanticTokenType::MACRO]
     };
     static ref SEMANTIC_TOKEN_LEGEND: HashMap<SemanticTokenType, u32> = {
         let mut m = HashMap::new();
@@ -525,6 +525,7 @@ lazy_static::lazy_static! {
     };
 }
 
+#[derive(Debug)]
 struct RawSemanticToken {
     pub line: u32,
     pub col: u32,
@@ -537,6 +538,14 @@ struct SemanticTokenGenerator {
     tokens: Vec<RawSemanticToken>,
 }
 
+#[derive(Default, Clone)]
+struct SemanticExprConditions {
+    /// A list of all the known named parameters.
+    parameters: Vec<String>,
+    /// Is this expression a function or a function application?
+    is_function: bool,
+}
+
 impl SemanticTokenGenerator {
     fn finish(mut self) -> Vec<SemanticToken> {
         self.tokens
@@ -545,6 +554,9 @@ impl SemanticTokenGenerator {
         let mut line = 0;
         let mut col = 0;
         for token in self.tokens {
+            if line != token.line {
+                col = 0;
+            }
             result.push(SemanticToken {
                 delta_line: token.line - line,
                 delta_start: token.col - col,
@@ -552,12 +564,8 @@ impl SemanticTokenGenerator {
                 token_type: token.token_type,
                 token_modifiers_bitset: token.token_modifiers_bitset,
             });
-            if line == token.line {
-                col = token.col;
-            } else {
-                line = token.line;
-                col = 0;
-            }
+            line = token.line;
+            col = token.col;
         }
         result
     }
@@ -598,6 +606,102 @@ impl SemanticTokenGenerator {
                 SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION],
                 0,
             );
+            for param in def.type_parameters {
+                self.gen_type_parameter(param);
+            }
+            self.gen_type(def.definition_type);
+            match def.body {
+                quill_parser::DefinitionBodyP::PatternMatch(pm) => {
+                    for case in pm {
+                        self.gen_expr(
+                            case.pattern,
+                            SemanticExprConditions {
+                                is_function: true,
+                                ..Default::default()
+                            },
+                        );
+                        self.gen_expr(case.replacement, SemanticExprConditions::default());
+                    }
+                }
+                quill_parser::DefinitionBodyP::CompilerIntrinsic(range) => {
+                    self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::MACRO], 0);
+                }
+            }
+        }
+    }
+
+    fn gen_type_parameter(&mut self, param: quill_parser::TypeParameterP) {
+        self.push_token(
+            param.name.range,
+            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE_PARAMETER],
+            0,
+        );
+    }
+
+    fn gen_type(&mut self, ty: quill_parser::TypeP) {
+        match ty {
+            quill_parser::TypeP::Named { identifier, params } => {
+                self.push_token(
+                    identifier.range(),
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE],
+                    0,
+                );
+                for param in params {
+                    self.gen_type(param);
+                }
+            }
+            quill_parser::TypeP::Function(l, r) => {
+                self.gen_type(*l);
+                self.gen_type(*r);
+            }
+        }
+    }
+
+    fn gen_expr(&mut self, expr: quill_parser::ExprPatP, conditions: SemanticExprConditions) {
+        match expr {
+            quill_parser::ExprPatP::Variable(variable) => {
+                self.push_token(
+                    variable.range(),
+                    if conditions.is_function {
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION]
+                    } else {
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::VARIABLE]
+                    },
+                    0,
+                );
+            }
+            quill_parser::ExprPatP::Apply(l, r) => {
+                self.gen_expr(*l, conditions.clone());
+                self.gen_expr(
+                    *r,
+                    SemanticExprConditions {
+                        is_function: false,
+                        ..conditions
+                    },
+                );
+            }
+            quill_parser::ExprPatP::Lambda {
+                lambda_token,
+                params,
+                expr,
+            } => {}
+            quill_parser::ExprPatP::Let {
+                let_token,
+                name,
+                expr,
+            } => {}
+            quill_parser::ExprPatP::Block {
+                open_bracket,
+                close_bracket,
+                statements,
+            } => {}
+            quill_parser::ExprPatP::ConstructData {
+                data_constructor,
+                open_brace,
+                close_brace,
+                fields,
+            } => {}
+            quill_parser::ExprPatP::Unknown(_) => {}
         }
     }
 }

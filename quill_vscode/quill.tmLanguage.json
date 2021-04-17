@@ -10,9 +10,6 @@
         },
         {
             "include": "#keywords"
-        },
-        {
-            "include": "#types"
         }
     ],
     "repository": {
@@ -36,15 +33,6 @@
                     "comment": "basic item-level keywords",
                     "name": "keyword.other.quill",
                     "match": "\\b(pub|def|data|enum|use)\\b"
-                }
-            ]
-        },
-        "types": {
-            "patterns": [
-                {
-                    "comment": "primitive types",
-                    "name": "entity.name.type.primitive.quill",
-                    "match": "\\b(int|unit)\\b"
                 }
             ]
         }

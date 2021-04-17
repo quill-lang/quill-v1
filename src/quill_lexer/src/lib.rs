@@ -245,7 +245,7 @@ async fn tokenise(
     source_file: &SourceFileIdentifier,
 ) -> DiagnosticResult<Vec<Token>> {
     fs.with_source_file(source_file, |source| match source {
-        Ok(source) => dbg!(source)
+        Ok(source) => source
             .get_contents()
             .lines()
             .enumerate()
