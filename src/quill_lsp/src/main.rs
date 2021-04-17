@@ -290,6 +290,19 @@ impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> jsonrpc::Result<InitializeResult> {
         let capabilities = ServerCapabilities {
             text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::Full)),
+            semantic_tokens_provider: Some(
+                SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                    legend: SemanticTokensLegend {
+                        token_types: SEMANTIC_TOKEN_LEGEND_VEC.clone(),
+                        token_modifiers: vec![SemanticTokenModifier::DEFINITION],
+                    },
+                    range: None,
+                    full: Some(SemanticTokensFullOptions::Bool(true)),
+                }),
+            ),
             ..Default::default()
         };
 
@@ -322,6 +335,39 @@ impl LanguageServer for Backend {
             }],
         })
         .await;
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> jsonrpc::Result<Option<SemanticTokensResult>> {
+        if let Some((identifier, project_root)) = self
+            .get_project_root(params.text_document.uri.clone())
+            .await
+        {
+            let guard = self.root_file_systems.read().await;
+            let (_, fs) = &guard.file_systems[&project_root.dir];
+
+            // Parse the file and emit semantic tokens based on the parse.
+            let lexed = quill_lexer::lex(fs, &identifier).await;
+            let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &identifier));
+            let (parsed, _) = parsed.destructure();
+
+            let tokens = if let Some(parsed) = parsed {
+                create_semantic_tokens(parsed)
+            } else {
+                Vec::new()
+            };
+
+            let semantic_tokens = SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: tokens,
+            });
+
+            Ok(Some(semantic_tokens))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -464,6 +510,102 @@ impl LanguageServer for Backend {
     async fn shutdown(&self) -> jsonrpc::Result<()> {
         Ok(())
     }
+}
+
+lazy_static::lazy_static! {
+    static ref SEMANTIC_TOKEN_LEGEND_VEC: Vec<SemanticTokenType> = {
+        vec![SemanticTokenType::FUNCTION]
+    };
+    static ref SEMANTIC_TOKEN_LEGEND: HashMap<SemanticTokenType, u32> = {
+        let mut m = HashMap::new();
+        for (i, value) in SEMANTIC_TOKEN_LEGEND_VEC.iter().enumerate() {
+            m.insert(value.clone(), i as u32);
+        }
+        m
+    };
+}
+
+struct RawSemanticToken {
+    pub line: u32,
+    pub col: u32,
+    pub length: u32,
+    pub token_type: u32,
+    pub token_modifiers_bitset: u32,
+}
+
+struct SemanticTokenGenerator {
+    tokens: Vec<RawSemanticToken>,
+}
+
+impl SemanticTokenGenerator {
+    fn finish(mut self) -> Vec<SemanticToken> {
+        self.tokens
+            .sort_by(|l, r| u32::cmp(&l.line, &r.line).then(u32::cmp(&l.col, &r.col)));
+        let mut result = Vec::new();
+        let mut line = 0;
+        let mut col = 0;
+        for token in self.tokens {
+            result.push(SemanticToken {
+                delta_line: token.line - line,
+                delta_start: token.col - col,
+                length: token.length,
+                token_type: token.token_type,
+                token_modifiers_bitset: token.token_modifiers_bitset,
+            });
+            if line == token.line {
+                col = token.col;
+            } else {
+                line = token.line;
+                col = 0;
+            }
+        }
+        result
+    }
+
+    fn push_token(
+        &mut self,
+        range: quill_common::location::Range,
+        token_type: u32,
+        token_modifiers_bitset: u32,
+    ) {
+        for line in range.start.line..=range.end.line {
+            let col = if line == range.start.line {
+                range.start.col
+            } else {
+                0
+            };
+            let final_col = if line == range.end.line {
+                range.end.col
+            } else {
+                10000
+            };
+            let length = final_col - col;
+
+            self.tokens.push(RawSemanticToken {
+                line,
+                col,
+                length,
+                token_type,
+                token_modifiers_bitset,
+            });
+        }
+    }
+
+    fn gen(&mut self, file: quill_parser::FileP) {
+        for def in file.definitions {
+            self.push_token(
+                def.name.range,
+                SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION],
+                0,
+            );
+        }
+    }
+}
+
+fn create_semantic_tokens(parsed: quill_parser::FileP) -> Vec<SemanticToken> {
+    let mut gen = SemanticTokenGenerator { tokens: Vec::new() };
+    gen.gen(parsed);
+    gen.finish()
 }
 
 #[tokio::main]

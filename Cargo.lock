@@ -1245,6 +1245,7 @@ dependencies = [
 name = "quill_lsp"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "lspower",
  "multimap",
  "quill_borrow_check",
