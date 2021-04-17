@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
@@ -10,7 +10,7 @@ use lspower::{Client, LanguageServer, LspService, Server};
 use multimap::MultiMap;
 use quill_common::{
     diagnostic::{ErrorMessage, Severity},
-    location::SourceFileIdentifier,
+    location::{ModuleIdentifier, SourceFileIdentifier, SourceFileType},
 };
 use quill_source_file::PackageFileSystem;
 use quillc_api::ProjectInfo;
@@ -18,16 +18,39 @@ use tokio::sync::RwLock;
 use tracing::{info, trace, Level};
 
 /// Takes a relativised path and converts it to a source file identifier.
-fn path_to_file(_root_module: String, _path: &Path) -> SourceFileIdentifier {
-    unimplemented!()
+fn path_to_file(root_module: String, path: &Path) -> SourceFileIdentifier {
+    let map = |component| match component {
+        Component::Normal(component) => component.to_string_lossy().to_string(),
+        _ => unreachable!(),
+    };
+
+    let mut components = path.components().collect::<Vec<_>>();
+    let file = components.pop().unwrap();
+    SourceFileIdentifier {
+        module: ModuleIdentifier {
+            segments: std::iter::once(root_module)
+                .chain(components.into_iter().map(map))
+                .map(|str| str.into())
+                .collect(),
+        },
+        file: map(file).into(),
+        file_type: SourceFileType::Quill,
+    }
 }
 
-fn file_to_url(_project_root: &Path, _file: SourceFileIdentifier) -> Url {
-    unimplemented!()
-    //Url::from_file_path(project_root.join(file_to_path(file))).unwrap()
+fn file_to_url(project_roots: &HashMap<String, PathBuf>, file: SourceFileIdentifier) -> Url {
+    let mut iter = file
+        .module
+        .segments
+        .into_iter()
+        .chain(std::iter::once(file.file));
+    let project = iter.next().unwrap().0;
+    let project_root = project_roots[&project].clone();
+    let segments = iter.map(|segment| segment.0);
+    Url::from_file_path(segments.fold(project_root, |dir, segment| dir.join(segment))).unwrap()
 }
 
-fn into_diagnostic(project_root: &Path, message: ErrorMessage) -> Diagnostic {
+fn into_diagnostic(project_roots: &HashMap<String, PathBuf>, message: ErrorMessage) -> Diagnostic {
     let related_information = if message.help.is_empty() {
         None
     } else {
@@ -37,7 +60,7 @@ fn into_diagnostic(project_root: &Path, message: ErrorMessage) -> Diagnostic {
                 .into_iter()
                 .map(|help| DiagnosticRelatedInformation {
                     location: Location {
-                        uri: file_to_url(project_root, help.diagnostic.source_file),
+                        uri: file_to_url(project_roots, help.diagnostic.source_file),
                         range: help.diagnostic.range.map_or(
                             Range {
                                 start: Position {
@@ -244,7 +267,7 @@ impl LanguageServer for Backend {
 
             let diags = messages
                 .into_iter()
-                .map(|message| into_diagnostic(&project_root, message))
+                .map(|message| into_diagnostic(&fs.project_directories, message))
                 .collect();
 
             self.client
@@ -304,11 +327,11 @@ impl LanguageServer for Backend {
             for (file, diagnostics) in diagnostics_by_file {
                 let diags = diagnostics
                     .into_iter()
-                    .map(|message| into_diagnostic(&project_root, message))
+                    .map(|message| into_diagnostic(&fs.project_directories, message))
                     .collect();
 
                 self.client
-                    .publish_diagnostics(file_to_url(&project_root, file), diags, None)
+                    .publish_diagnostics(file_to_url(&fs.project_directories, file), diags, None)
                     .await;
             }
         }
