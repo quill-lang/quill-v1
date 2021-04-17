@@ -30,9 +30,9 @@
         "keywords": {
             "patterns": [
                 {
-                    "comment": "basic item-level keywords",
+                    "comment": "basic keywords",
                     "name": "keyword.other.quill",
-                    "match": "\\b(pub|def|data|enum|use)\\b"
+                    "match": "\\b(pub|def|data|enum|use|let)\\b"
                 }
             ]
         }

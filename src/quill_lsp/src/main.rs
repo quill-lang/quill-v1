@@ -514,7 +514,16 @@ impl LanguageServer for Backend {
 
 lazy_static::lazy_static! {
     static ref SEMANTIC_TOKEN_LEGEND_VEC: Vec<SemanticTokenType> = {
-        vec![SemanticTokenType::FUNCTION, SemanticTokenType::VARIABLE, SemanticTokenType::TYPE, SemanticTokenType::TYPE_PARAMETER, SemanticTokenType::MACRO]
+        vec![
+            SemanticTokenType::FUNCTION,
+            SemanticTokenType::VARIABLE,
+            SemanticTokenType::TYPE,
+            SemanticTokenType::TYPE_PARAMETER,
+            SemanticTokenType::MACRO,
+            SemanticTokenType::PROPERTY,
+            SemanticTokenType::PARAMETER,
+            SemanticTokenType::NUMBER,
+        ]
     };
     static ref SEMANTIC_TOKEN_LEGEND: HashMap<SemanticTokenType, u32> = {
         let mut m = HashMap::new();
@@ -613,14 +622,21 @@ impl SemanticTokenGenerator {
             match def.body {
                 quill_parser::DefinitionBodyP::PatternMatch(pm) => {
                     for case in pm {
+                        let parameters = get_named_parameters(&case.pattern, true);
                         self.gen_expr(
                             case.pattern,
                             SemanticExprConditions {
                                 is_function: true,
+                                parameters: parameters.clone(),
+                            },
+                        );
+                        self.gen_expr(
+                            case.replacement,
+                            SemanticExprConditions {
+                                parameters,
                                 ..Default::default()
                             },
                         );
-                        self.gen_expr(case.replacement, SemanticExprConditions::default());
                     }
                 }
                 quill_parser::DefinitionBodyP::CompilerIntrinsic(range) => {
@@ -664,6 +680,14 @@ impl SemanticTokenGenerator {
                     variable.range(),
                     if conditions.is_function {
                         SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION]
+                    } else if variable.segments.len() == 1
+                        && conditions.parameters.contains(&variable.segments[0].name)
+                    {
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PARAMETER]
+                    } else if variable.segments.len() == 1
+                        && variable.segments[0].name.chars().all(|ch| ch.is_numeric())
+                    {
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER]
                     } else {
                         SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::VARIABLE]
                     },
@@ -671,7 +695,13 @@ impl SemanticTokenGenerator {
                 );
             }
             quill_parser::ExprPatP::Apply(l, r) => {
-                self.gen_expr(*l, conditions.clone());
+                self.gen_expr(
+                    *l,
+                    SemanticExprConditions {
+                        is_function: true,
+                        ..conditions.clone()
+                    },
+                );
                 self.gen_expr(
                     *r,
                     SemanticExprConditions {
@@ -680,29 +710,91 @@ impl SemanticTokenGenerator {
                     },
                 );
             }
-            quill_parser::ExprPatP::Lambda {
-                lambda_token,
-                params,
-                expr,
-            } => {}
-            quill_parser::ExprPatP::Let {
-                let_token,
-                name,
-                expr,
-            } => {}
-            quill_parser::ExprPatP::Block {
-                open_bracket,
-                close_bracket,
-                statements,
-            } => {}
+            quill_parser::ExprPatP::Lambda { params, expr, .. } => {
+                let mut conditions = conditions;
+                for param in params {
+                    self.push_token(
+                        param.range,
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PARAMETER],
+                        0,
+                    );
+                    conditions.parameters.push(param.name);
+                }
+                self.gen_expr(*expr, conditions);
+            }
+            quill_parser::ExprPatP::Let { name, expr, .. } => {
+                self.push_token(
+                    name.range,
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::VARIABLE],
+                    0,
+                );
+                self.gen_expr(*expr, conditions);
+            }
+            quill_parser::ExprPatP::Block { statements, .. } => {
+                for stmt in statements {
+                    self.gen_expr(stmt, conditions.clone());
+                }
+            }
             quill_parser::ExprPatP::ConstructData {
                 data_constructor,
-                open_brace,
-                close_brace,
                 fields,
-            } => {}
+                ..
+            } => {
+                self.push_token(
+                    data_constructor.range(),
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE],
+                    0,
+                );
+                for (name, pat) in fields.fields {
+                    self.push_token(
+                        name.range,
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PROPERTY],
+                        0,
+                    );
+                    self.gen_expr(pat, conditions.clone());
+                }
+                for name in fields.auto_fields {
+                    self.push_token(
+                        name.range,
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PROPERTY],
+                        0,
+                    );
+                }
+            }
             quill_parser::ExprPatP::Unknown(_) => {}
         }
+    }
+}
+
+/// `is_main_pattern` is true if this contains the function name.
+fn get_named_parameters(pattern: &quill_parser::ExprPatP, is_main_pattern: bool) -> Vec<String> {
+    match pattern {
+        quill_parser::ExprPatP::Variable(variable) => {
+            if variable.segments.len() == 1 {
+                vec![variable.segments[0].name.clone()]
+            } else {
+                Vec::new()
+            }
+        }
+        quill_parser::ExprPatP::Apply(l, r) => {
+            let mut result = get_named_parameters(&*l, is_main_pattern);
+            result.extend(get_named_parameters(&*r, false));
+            result
+        }
+        quill_parser::ExprPatP::Lambda { .. } => unreachable!(),
+        quill_parser::ExprPatP::Let { .. } => unreachable!(),
+        quill_parser::ExprPatP::Block { .. } => unreachable!(),
+        quill_parser::ExprPatP::ConstructData { fields, .. } => {
+            let mut result = Vec::new();
+            for (_, pat) in &fields.fields {
+                result.extend(get_named_parameters(pat, false));
+            }
+            for name in &fields.auto_fields {
+                result.push(name.name.clone());
+            }
+            result
+        }
+        quill_parser::ExprPatP::Unknown(_) => Vec::new(),
     }
 }
 
