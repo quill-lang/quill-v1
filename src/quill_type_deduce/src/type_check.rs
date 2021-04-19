@@ -788,6 +788,7 @@ pub enum ExpressionContentsGeneric<E, T> {
 #[derive(Debug, Clone, Copy)]
 pub enum ImmediateValue {
     Unit,
+    Bool(bool),
     Int(i64),
 }
 
@@ -795,6 +796,7 @@ impl Display for ImmediateValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ImmediateValue::Unit => write!(f, "unit"),
+            ImmediateValue::Bool(value) => write!(f, "bool {}", value),
             ImmediateValue::Int(value) => write!(f, "int {}", value),
         }
     }

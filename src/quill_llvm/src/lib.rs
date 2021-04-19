@@ -1,5 +1,3 @@
-#![feature(iter_intersperse)]
-
 use codegen::CodeGenContext;
 use func::compile_function;
 use inkwell::targets::{InitializationConfig, Target};

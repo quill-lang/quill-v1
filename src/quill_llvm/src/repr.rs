@@ -1124,12 +1124,21 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 Some(self.general_func_obj_ty)
             }
             Type::Primitive(PrimitiveType::Unit) => None,
+            Type::Primitive(PrimitiveType::Bool) => Some(AnyTypeRepresentation::new(
+                self.codegen,
+                BasicTypeEnum::IntType(self.codegen.context.bool_type()),
+                self.codegen
+                    .di_builder
+                    .create_basic_type("Bool", 1, 5, DIFlagsConstants::PUBLIC)
+                    .unwrap()
+                    .as_type(),
+            )),
             Type::Primitive(PrimitiveType::Int) => Some(AnyTypeRepresentation::new(
                 self.codegen,
                 BasicTypeEnum::IntType(self.codegen.context.i64_type()),
                 self.codegen
                     .di_builder
-                    .create_basic_type("int", 64, 5, DIFlagsConstants::PUBLIC)
+                    .create_basic_type("Int", 64, 5, DIFlagsConstants::PUBLIC)
                     .unwrap()
                     .as_type(),
             )),

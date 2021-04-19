@@ -14,3 +14,4 @@
 - If the `quillc` build fails, don't run the executable anyway.
 - Make primitive types declarable and defined with compiler intrinsics, so that a primitive type behaves just like any other type as far as the type system is concerned.
 - You can currently create objects without all required fields.
+- Make primitive constants usable in patterns.

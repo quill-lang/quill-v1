@@ -28,6 +28,8 @@ pub enum PrimitiveType {
     /// The unit type. This does not represent any particular value,
     /// and is defined to take zero memory to represent.
     Unit,
+    /// A 1-bit boolean type.
+    Bool,
     /// A 64-bit signed integer type.
     Int,
 }
@@ -35,8 +37,9 @@ pub enum PrimitiveType {
 impl Debug for PrimitiveType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PrimitiveType::Unit => write!(f, "unit"),
-            PrimitiveType::Int => write!(f, "int"),
+            PrimitiveType::Unit => write!(f, "Unit"),
+            PrimitiveType::Bool => write!(f, "Bool"),
+            PrimitiveType::Int => write!(f, "Int"),
         }
     }
 }

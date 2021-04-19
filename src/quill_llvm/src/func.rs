@@ -4,7 +4,7 @@ use inkwell::{
     basic_block::BasicBlock,
     debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIScope},
     types::BasicTypeEnum,
-    values::{FunctionValue, PointerValue},
+    values::{BasicValue, FunctionValue, IntValue, PointerValue},
     AddressSpace,
 };
 use quill_common::location::Range;
@@ -959,56 +959,27 @@ fn create_real_func_body_intrinsic<'ctx>(
 
     match ctx.func.func.name.as_str() {
         "putchar" => {
-            // This is the `putchar` intrinsic.
-            // putchar : int -> unit
-            let putchar = ctx.codegen.module.add_function(
-                "putchar",
-                ctx.codegen
-                    .context
-                    .i32_type()
-                    .fn_type(&[ctx.codegen.context.i32_type().into()], false),
-                None,
-            );
-
-            let arg0 = ctx
-                .codegen
-                .builder
-                .build_load(
-                    ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
-                    "arg0",
-                )
-                .into_int_value();
-            let arg0_i32 = ctx.codegen.builder.build_int_cast(
-                arg0,
-                ctx.codegen.context.i32_type(),
-                "arg0_i32",
-            );
-
-            ctx.codegen
-                .builder
-                .build_call(putchar, &[arg0_i32.into()], "call_putchar");
-            ctx.codegen.builder.build_return(None);
+            putchar(&ctx);
         }
         "add_int_unchecked" => {
-            // add_int_unchecked : int -> int -> int
-            let arg0 = ctx
-                .codegen
-                .builder
-                .build_load(
-                    ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
-                    "arg0",
-                )
-                .into_int_value();
-            let arg1 = ctx
-                .codegen
-                .builder
-                .build_load(
-                    ctx.locals[&LocalVariableName::Argument(ArgumentIndex(1))],
-                    "arg1",
-                )
-                .into_int_value();
-            let result = ctx.codegen.builder.build_int_add(arg0, arg1, "result");
-            ctx.codegen.builder.build_return(Some(&result));
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_add(lhs, rhs, "result")
+            });
+        }
+        "sub_int_unchecked" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_sub(lhs, rhs, "result")
+            });
+        }
+        "mul_int_unchecked" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_mul(lhs, rhs, "result")
+            });
+        }
+        "div_int_unchecked" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_signed_div(lhs, rhs, "result")
+            });
         }
         _ => {
             panic!("intrinsic {} is not defined by the compiler", ctx.func.func)
@@ -1016,6 +987,57 @@ fn create_real_func_body_intrinsic<'ctx>(
     }
 
     block
+}
+
+fn putchar(ctx: &BodyCreationContext) {
+    let putchar = ctx.codegen.module.add_function(
+        "putchar",
+        ctx.codegen
+            .context
+            .i32_type()
+            .fn_type(&[ctx.codegen.context.i32_type().into()], false),
+        None,
+    );
+    let arg0 = ctx
+        .codegen
+        .builder
+        .build_load(
+            ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
+            "arg0",
+        )
+        .into_int_value();
+    let arg0_i32 =
+        ctx.codegen
+            .builder
+            .build_int_cast(arg0, ctx.codegen.context.i32_type(), "arg0_i32");
+    ctx.codegen
+        .builder
+        .build_call(putchar, &[arg0_i32.into()], "call_putchar");
+    ctx.codegen.builder.build_return(None);
+}
+
+fn int_binop<'ctx, F, V>(ctx: &BodyCreationContext<'_, 'ctx>, op: F)
+where
+    F: FnOnce(IntValue<'ctx>, IntValue<'ctx>) -> V,
+    V: BasicValue<'ctx>,
+{
+    let arg0 = ctx
+        .codegen
+        .builder
+        .build_load(
+            ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
+            "arg0",
+        )
+        .into_int_value();
+    let arg1 = ctx
+        .codegen
+        .builder
+        .build_load(
+            ctx.locals[&LocalVariableName::Argument(ArgumentIndex(1))],
+            "arg1",
+        )
+        .into_int_value();
+    ctx.codegen.builder.build_return(Some(&op(arg0, arg1)));
 }
 
 /// Returns None if the rvalue had no representation.
@@ -1145,6 +1167,19 @@ fn get_pointer_to_rvalue<'ctx>(
             // Alloca the constant, then make a pointer to it.
             match constant {
                 ImmediateValue::Unit => unreachable!(),
+                ImmediateValue::Bool(value) => {
+                    let mem = codegen
+                        .builder
+                        .build_alloca(codegen.context.bool_type(), "constant");
+                    codegen.builder.build_store(
+                        mem,
+                        codegen
+                            .context
+                            .bool_type()
+                            .const_int(if *value { 1 } else { 0 }, true),
+                    );
+                    Some(mem)
+                }
                 ImmediateValue::Int(value) => {
                     let mem = codegen
                         .builder

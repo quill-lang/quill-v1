@@ -324,6 +324,10 @@ fn generate_constraints(
                         if identifier.segments[0].name == "unit" {
                             // This is a unit literal.
                             Some(ImmediateValue::Unit)
+                        } else if identifier.segments[0].name == "false" {
+                            Some(ImmediateValue::Bool(false))
+                        } else if identifier.segments[0].name == "true" {
+                            Some(ImmediateValue::Bool(true))
                         } else if identifier.segments[0]
                             .name
                             .chars()
@@ -351,6 +355,20 @@ fn generate_constraints(
                                 type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
                                 contents: ExpressionContentsT::ImmediateValue {
                                     value: ImmediateValue::Unit,
+                                    range: identifier.range(),
+                                },
+                            },
+                            type_variable_definition_ranges: HashMap::new(),
+                            assumptions: Assumptions::default(),
+                            constraints: Constraints::default(),
+                            let_variables,
+                            new_variables: None,
+                        }),
+                        Some(ImmediateValue::Bool(value)) => DiagnosticResult::ok(ExprTypeCheck {
+                            expr: ExpressionT {
+                                type_variable: TypeVariable::Primitive(PrimitiveType::Bool),
+                                contents: ExpressionContentsT::ImmediateValue {
+                                    value: ImmediateValue::Bool(value),
                                     range: identifier.range(),
                                 },
                             },

@@ -72,8 +72,9 @@ pub(crate) fn resolve_type_identifier(
     // First, check if this identifier matches a primitive type. These are always searched first.
     if identifier.segments.len() == 1 {
         if let Some(primitive_type) = match identifier.segments[0].name.as_str() {
-            "unit" => Some(PrimitiveType::Unit),
-            "int" => Some(PrimitiveType::Int),
+            "Unit" => Some(PrimitiveType::Unit),
+            "Bool" => Some(PrimitiveType::Bool),
+            "Int" => Some(PrimitiveType::Int),
             _ => None,
         } {
             if parameters.is_empty() {
