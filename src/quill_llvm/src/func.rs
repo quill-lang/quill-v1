@@ -1,12 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use inkwell::{
-    basic_block::BasicBlock,
-    debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIScope},
-    types::BasicTypeEnum,
-    values::{BasicValue, FunctionValue, IntValue, PointerValue},
-    AddressSpace,
-};
+use inkwell::{AddressSpace, IntPredicate, basic_block::BasicBlock, debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIScope}, types::BasicTypeEnum, values::{BasicValue, FunctionValue, IntValue, PointerValue}};
 use quill_common::location::Range;
 use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
 use quill_mir::{
@@ -1026,6 +1020,36 @@ fn create_real_func_body_intrinsic<'ctx>(
         "div_int_unchecked" => {
             int_binop(&ctx, |lhs, rhs| {
                 ctx.codegen.builder.build_int_signed_div(lhs, rhs, "result")
+            });
+        }
+        "gt_int" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_compare(IntPredicate::SGT, lhs, rhs, "result")
+            });
+        }
+        "ge_int" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_compare(IntPredicate::SGE, lhs, rhs, "result")
+            });
+        }
+        "lt_int" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_compare(IntPredicate::SLT, lhs, rhs, "result")
+            });
+        }
+        "le_int" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_compare(IntPredicate::SLE, lhs, rhs, "result")
+            });
+        }
+        "eq_int" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_compare(IntPredicate::EQ, lhs, rhs, "result")
+            });
+        }
+        "ne_int" => {
+            int_binop(&ctx, |lhs, rhs| {
+                ctx.codegen.builder.build_int_compare(IntPredicate::NE, lhs, rhs, "result")
             });
         }
         _ => {

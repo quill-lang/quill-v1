@@ -1,4 +1,5 @@
 use list
+use int
 
 def putchar: Int -> Unit { compiler_intrinsic }
 

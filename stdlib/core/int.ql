@@ -2,8 +2,9 @@ def add_int_unchecked: Int -> Int -> Int { compiler_intrinsic }
 def sub_int_unchecked: Int -> Int -> Int { compiler_intrinsic }
 def mul_int_unchecked: Int -> Int -> Int { compiler_intrinsic }
 def div_int_unchecked: Int -> Int -> Int { compiler_intrinsic }
-
-def is_zero: Int -> Bool {
-    is_zero 0 = true
-    is_zero _ = false
-}
+def gt_int: Int -> Int -> Bool { compiler_intrinsic }
+def ge_int: Int -> Int -> Bool { compiler_intrinsic }
+def lt_int: Int -> Int -> Bool { compiler_intrinsic }
+def le_int: Int -> Int -> Bool { compiler_intrinsic }
+def eq_int: Int -> Int -> Bool { compiler_intrinsic }
+def ne_int: Int -> Int -> Bool { compiler_intrinsic }
