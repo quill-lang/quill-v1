@@ -6,7 +6,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
-use quill_parser::{ExprPatP, IdentifierP, NameP};
+use quill_parser::{ExprPatP, IdentifierP, ConstantValue, NameP};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
     },
     type_check::{
         AbstractionVariable, BoundVariable, Expression, ExpressionContents, ExpressionContentsT,
-        ExpressionT, ImmediateValue, TypeVariable, TypeVariablePrinter, VisibleNames,
+        ExpressionT, TypeVariable, TypeVariablePrinter, VisibleNames,
     },
     type_resolve::TypeVariableId,
 };
@@ -320,87 +320,66 @@ fn generate_constraints(
                 // If None, we couldn't find a symbol in scope.
                 None => {
                     // Now, check to see if this is an immediate variable like `unit`, which always produces a value.
-                    let immediate = if identifier.segments.len() == 1 {
-                        if identifier.segments[0].name == "unit" {
-                            // This is a unit literal.
-                            Some(ImmediateValue::Unit)
-                        } else if identifier.segments[0].name == "false" {
-                            Some(ImmediateValue::Bool(false))
-                        } else if identifier.segments[0].name == "true" {
-                            Some(ImmediateValue::Bool(true))
-                        } else if identifier.segments[0]
-                            .name
-                            .chars()
-                            .all(|c| ('0'..='9').contains(&c))
-                        {
-                            // This is an integer literal.
-                            match identifier.segments[0].name.parse::<i64>() {
-                                Ok(integer) => Some(ImmediateValue::Int(integer)),
-                                Err(_) => return DiagnosticResult::fail(ErrorMessage::new(
-                                    "integer literal was out of range (expected between -2^64 and 2^64-1)".to_string(),
-                                    Severity::Error,
-                                    Diagnostic::at(source_file, &identifier),
-                                )),
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
 
-                    match immediate {
-                        Some(ImmediateValue::Unit) => DiagnosticResult::ok(ExprTypeCheck {
-                            expr: ExpressionT {
-                                type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
-                                contents: ExpressionContentsT::ImmediateValue {
-                                    value: ImmediateValue::Unit,
-                                    range: identifier.range(),
-                                },
-                            },
-                            type_variable_definition_ranges: HashMap::new(),
-                            assumptions: Assumptions::default(),
-                            constraints: Constraints::default(),
-                            let_variables,
-                            new_variables: None,
-                        }),
-                        Some(ImmediateValue::Bool(value)) => DiagnosticResult::ok(ExprTypeCheck {
-                            expr: ExpressionT {
-                                type_variable: TypeVariable::Primitive(PrimitiveType::Bool),
-                                contents: ExpressionContentsT::ImmediateValue {
-                                    value: ImmediateValue::Bool(value),
-                                    range: identifier.range(),
-                                },
-                            },
-                            type_variable_definition_ranges: HashMap::new(),
-                            assumptions: Assumptions::default(),
-                            constraints: Constraints::default(),
-                            let_variables,
-                            new_variables: None,
-                        }),
-                        Some(ImmediateValue::Int(integer)) => DiagnosticResult::ok(ExprTypeCheck {
-                            expr: ExpressionT {
-                                type_variable: TypeVariable::Primitive(PrimitiveType::Int),
-                                contents: ExpressionContentsT::ImmediateValue {
-                                    value: ImmediateValue::Int(integer),
-                                    range: identifier.range(),
-                                },
-                            },
-                            type_variable_definition_ranges: HashMap::new(),
-                            assumptions: Assumptions::default(),
-                            constraints: Constraints::default(),
-                            let_variables,
-                            new_variables: None,
-                        }),
-                        None => DiagnosticResult::fail(ErrorMessage::new(
-                            format!("variable `{}` not recognised", identifier),
-                            Severity::Error,
-                            Diagnostic::at(source_file, &identifier),
-                        )),
-                    }
+                    DiagnosticResult::fail(ErrorMessage::new(
+                        format!("variable `{}` not recognised", identifier),
+                        Severity::Error,
+                        Diagnostic::at(source_file, &identifier),
+                    ))
                 }
             }
         }
+        ExprPatP::Immediate {
+            range,
+            value: ConstantValue::Unit,
+        } => DiagnosticResult::ok(ExprTypeCheck {
+            expr: ExpressionT {
+                type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
+                contents: ExpressionContentsT::ImmediateValue {
+                    range,
+                    value: ConstantValue::Unit,
+                },
+            },
+            type_variable_definition_ranges: HashMap::new(),
+            assumptions: Assumptions::default(),
+            constraints: Constraints::default(),
+            let_variables,
+            new_variables: None,
+        }),
+        ExprPatP::Immediate {
+            range,
+            value: ConstantValue::Bool(value),
+        } => DiagnosticResult::ok(ExprTypeCheck {
+            expr: ExpressionT {
+                type_variable: TypeVariable::Primitive(PrimitiveType::Bool),
+                contents: ExpressionContentsT::ImmediateValue {
+                    range,
+                    value: ConstantValue::Bool(value),
+                },
+            },
+            type_variable_definition_ranges: HashMap::new(),
+            assumptions: Assumptions::default(),
+            constraints: Constraints::default(),
+            let_variables,
+            new_variables: None,
+        }),
+        ExprPatP::Immediate {
+            range,
+            value: ConstantValue::Int(value),
+        } => DiagnosticResult::ok(ExprTypeCheck {
+            expr: ExpressionT {
+                type_variable: TypeVariable::Primitive(PrimitiveType::Int),
+                contents: ExpressionContentsT::ImmediateValue {
+                    range,
+                    value: ConstantValue::Int(value),
+                },
+            },
+            type_variable_definition_ranges: HashMap::new(),
+            assumptions: Assumptions::default(),
+            constraints: Constraints::default(),
+            let_variables,
+            new_variables: None,
+        }),
         ExprPatP::Apply(left, right) => {
             generate_constraints(
                 source_file,
@@ -689,6 +668,7 @@ fn generate_constraints(
             let mut constraints = Constraints::default();
             // The list of new variables is updated whenever we introduce a `let` statement in this block.
             let mut new_variables = Vec::<LetStatementNewVariables>::new();
+            println!("Statements: {:#?}", statements);
             for statement in statements {
                 let (result, inner_messages) = generate_constraints(
                     source_file,
@@ -745,6 +725,11 @@ fn generate_constraints(
                         new_variables.push(more_new_variables);
                     }
                 }
+            }
+
+            if statements_with_constraints.is_empty() {
+                // We can't deduce the block's type so we have to fail early.
+                return DiagnosticResult::fail_many(messages);
             }
 
             // Work out what the type of the block is. Typically, this is just the type of the last statement in the block,

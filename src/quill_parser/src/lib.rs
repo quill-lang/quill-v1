@@ -648,6 +648,8 @@ impl<'input> Parser<'input> {
 pub enum ExprPatP {
     /// A named variable e.g. `x` or `+`.
     Variable(IdentifierP),
+    /// A primitive constant such as `14` or `false`.
+    Immediate { range: Range, value: ConstantValue },
     /// Apply the left hand side to the right hand side, e.g. `a b`.
     /// More complicated expressions e.g. `a b c d` can be desugared into `((a b) c) d`.
     Apply(Box<ExprPatP>, Box<ExprPatP>),
@@ -683,6 +685,23 @@ pub enum ExprPatP {
     Unknown(Range),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConstantValue {
+    Unit,
+    Bool(bool),
+    Int(i64),
+}
+
+impl Display for ConstantValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstantValue::Unit => write!(f, "unit"),
+            ConstantValue::Bool(value) => write!(f, "bool {}", value),
+            ConstantValue::Int(value) => write!(f, "int {}", value),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ConstructDataFields {
     /// Fields that have been assigned values, e.g. `foo = 1`.
@@ -696,6 +715,7 @@ impl Ranged for ExprPatP {
     fn range(&self) -> Range {
         match self {
             ExprPatP::Variable(identifier) => identifier.range(),
+            ExprPatP::Immediate { range, .. } => *range,
             ExprPatP::Apply(left, right) => left.range().union(right.range()),
             ExprPatP::Unknown(range) => *range,
             ExprPatP::Lambda {
@@ -833,26 +853,57 @@ impl<'input> Parser<'input> {
         {
             // This is an unknown in a pattern.
             Some(DiagnosticResult::ok(ExprPatP::Unknown(token.range)))
-        } else if let Some(identifier) = self.parse_identifier_maybe() {
-            // If this is followed by a brace bracket, we are trying to construct an instance of a data type.
-            if let Some(tree) = self.parse_tree(BracketType::Brace) {
-                // We are constructing a data type.
-                Some(identifier.bind(|identifier| {
-                    let open_brace = tree.open;
-                    let close_brace = tree.close;
-                    self.parse_in_tree(tree, |parser| parser.parse_construct_data_body())
-                        .map(|fields| ExprPatP::ConstructData {
-                            data_constructor: identifier,
-                            open_brace,
-                            close_brace,
-                            fields,
-                        })
-                }))
-            } else {
-                Some(identifier.map(ExprPatP::Variable))
-            }
         } else {
-            None
+            self.parse_identifier_maybe().map(|identifier| identifier.bind(|identifier| {
+                let immediate = if identifier.segments.len() == 1 {
+                    if identifier.segments[0].name == "unit" {
+                        // This is a unit literal.
+                        Some(ConstantValue::Unit)
+                    } else if identifier.segments[0].name == "false" {
+                        Some(ConstantValue::Bool(false))
+                    } else if identifier.segments[0].name == "true" {
+                        Some(ConstantValue::Bool(true))
+                    } else if identifier.segments[0]
+                        .name
+                        .chars()
+                        .all(|c| ('0'..='9').contains(&c))
+                    {
+                        // This is an integer literal.
+                        match identifier.segments[0].name.parse::<i64>() {
+                            Ok(integer) => Some(ConstantValue::Int(integer)),
+                            Err(_) => return DiagnosticResult::fail(ErrorMessage::new(
+                                "integer literal was out of range (expected between -2^64 and 2^64-1)".to_string(),
+                                Severity::Error,
+                                Diagnostic::at(self.source_file, &identifier),
+                            )),
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(value) = immediate {
+                    DiagnosticResult::ok(ExprPatP::Immediate { range: identifier.range(), value })
+                } else {
+                    // If this is followed by a brace bracket, we are trying to construct an instance of a data type.
+                    if let Some(tree) = self.parse_tree(BracketType::Brace) {
+                        // We are constructing a data type.
+                        let open_brace = tree.open;
+                        let close_brace = tree.close;
+                        self.parse_in_tree(tree, |parser| parser.parse_construct_data_body())
+                            .map(|fields| ExprPatP::ConstructData {
+                                data_constructor: identifier,
+                                open_brace,
+                                close_brace,
+                                fields,
+                            })
+                    } else {
+                        DiagnosticResult::ok(ExprPatP::Variable(identifier))
+                    }
+                }
+            }))
         }
     }
 

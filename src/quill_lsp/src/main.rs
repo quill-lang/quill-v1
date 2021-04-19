@@ -694,6 +694,13 @@ impl SemanticTokenGenerator {
                     0,
                 );
             }
+            quill_parser::ExprPatP::Immediate { range, .. } => {
+                self.push_token(
+                    range,
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER],
+                    0,
+                );
+            }
             quill_parser::ExprPatP::Apply(l, r) => {
                 self.gen_expr(
                     *l,
@@ -776,6 +783,7 @@ fn get_named_parameters(pattern: &quill_parser::ExprPatP, is_main_pattern: bool)
                 Vec::new()
             }
         }
+        quill_parser::ExprPatP::Immediate { .. } => Vec::new(),
         quill_parser::ExprPatP::Apply(l, r) => {
             let mut result = get_named_parameters(&*l, is_main_pattern);
             result.extend(get_named_parameters(&*r, false));

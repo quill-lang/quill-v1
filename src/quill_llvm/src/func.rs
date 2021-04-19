@@ -13,8 +13,9 @@ use quill_mir::{
     ArgumentIndex, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo,
     LocalVariableName, Operand, PlaceSegment, ProjectMIR, Rvalue, StatementKind, TerminatorKind,
 };
+use quill_parser::ConstantValue;
 use quill_type::{PrimitiveType, Type};
-use quill_type_deduce::{replace_type_variables, type_check::ImmediateValue};
+use quill_type_deduce::replace_type_variables;
 
 use crate::{
     codegen::CodeGenContext,
@@ -929,6 +930,52 @@ fn create_real_func_body_cfg<'ctx>(
                     .builder
                     .build_switch(discriminant, else_block, &cases);
             }
+            TerminatorKind::SwitchConstant {
+                place,
+                cases,
+                default,
+            } => {
+                let value_ptr = get_pointer_to_rvalue(
+                    ctx.codegen,
+                    ctx.index,
+                    ctx.reprs,
+                    &ctx.locals,
+                    &local_variable_names,
+                    &Rvalue::Use(Operand::Copy(place.clone())),
+                )
+                .unwrap();
+                let value = ctx
+                    .codegen
+                    .builder
+                    .build_load(value_ptr, "value")
+                    .into_int_value();
+                let else_block = blocks[default];
+                let cases = cases
+                    .iter()
+                    .map(|(value, block_id)| {
+                        (
+                            match value {
+                                ConstantValue::Bool(value) => ctx
+                                .codegen
+                                .context
+                                .bool_type()
+                                .const_int(if *value { 1 } else { 0 }, false),
+                                ConstantValue::Int(value) => {
+                                    ctx.codegen.context.i64_type().const_int(
+                                        unsafe { std::mem::transmute::<i64, u64>(*value) },
+                                        false,
+                                    )
+                                }
+                                ConstantValue::Unit => {
+                                    unreachable!()
+                                }
+                            },
+                            blocks[block_id],
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                ctx.codegen.builder.build_switch(value, else_block, &cases);
+            }
             TerminatorKind::Invalid => unreachable!(),
             TerminatorKind::Return { value } => {
                 if let Some(ptr) = ctx.locals.get(value) {
@@ -1166,8 +1213,8 @@ fn get_pointer_to_rvalue<'ctx>(
         Rvalue::Use(Operand::Constant(constant)) => {
             // Alloca the constant, then make a pointer to it.
             match constant {
-                ImmediateValue::Unit => unreachable!(),
-                ImmediateValue::Bool(value) => {
+                ConstantValue::Unit => unreachable!(),
+                ConstantValue::Bool(value) => {
                     let mem = codegen
                         .builder
                         .build_alloca(codegen.context.bool_type(), "constant");
@@ -1180,7 +1227,7 @@ fn get_pointer_to_rvalue<'ctx>(
                     );
                     Some(mem)
                 }
-                ImmediateValue::Int(value) => {
+                ConstantValue::Int(value) => {
                     let mem = codegen
                         .builder
                         .build_alloca(codegen.context.i64_type(), "constant");

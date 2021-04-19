@@ -6,19 +6,20 @@ use std::{
     fmt::Display,
 };
 
+use multimap::MultiMap;
 use quill_common::{
     diagnostic::DiagnosticResult,
     location::{Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
-use quill_parser::NameP;
+use quill_parser::{ConstantValue, NameP};
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::{
     replace_type_variables,
     type_check::{
-        Definition, DefinitionBody, DefinitionCase, Expression, ExpressionContentsGeneric,
-        ImmediateValue, Pattern, SourceFileHIR,
+        Definition, DefinitionBody, DefinitionCase, Expression, ExpressionContentsGeneric, Pattern,
+        SourceFileHIR,
     },
     TypeConstructorInvocation,
 };
@@ -228,7 +229,6 @@ impl ControlFlowGraph {
     /// Returns the new entry point.
     fn reorder(&mut self) {
         // We use a topological sort (Kahn's algorithm) to reorder basic blocks.
-        // println!("Reordering: {}", self);
 
         // Cache some things about each block.
         // In particular, we need to know which other blocks a block can end up jumping to.
@@ -244,6 +244,12 @@ impl ControlFlowGraph {
                     for target in cases.values() {
                         block_target_blocks.insert(*target);
                     }
+                }
+                TerminatorKind::SwitchConstant { cases, default, .. } => {
+                    for target in cases.values() {
+                        block_target_blocks.insert(*target);
+                    }
+                    block_target_blocks.insert(*default);
                 }
                 TerminatorKind::Invalid => unreachable!(),
                 TerminatorKind::Return { .. } => {}
@@ -275,6 +281,8 @@ impl ControlFlowGraph {
             }
         }
 
+        // If this assert fails, then some blocks in the CFG are never reached from the entry point.
+        // This could happen if the MIR generation does not correctly represent the HIR's control flow.
         assert!(edges.is_empty());
 
         // Now, reorder the basic block IDs according to this new order in `l`.
@@ -299,6 +307,12 @@ impl ControlFlowGraph {
                     for target in cases.values_mut() {
                         *target = block_id_map[&target];
                     }
+                }
+                TerminatorKind::SwitchConstant { cases, default, .. } => {
+                    for target in cases.values_mut() {
+                        *target = block_id_map[&target];
+                    }
+                    *default = block_id_map[&default];
                 }
                 TerminatorKind::Invalid => unreachable!(),
                 TerminatorKind::Return { .. } => {}
@@ -602,7 +616,7 @@ impl Display for Rvalue {
 pub enum Operand {
     Copy(Place),
     Move(Place),
-    Constant(ImmediateValue),
+    Constant(ConstantValue),
 }
 
 impl Display for Operand {
@@ -643,6 +657,16 @@ pub enum TerminatorKind {
         /// This map must exhaustively cover every possible enum discriminant.
         cases: HashMap<String, BasicBlockId>,
     },
+    /// Works out which value a given local variable has.
+    SwitchConstant {
+        /// Where is this value stored?
+        place: Place,
+        /// Maps the names of constant values to the basic block ID to jump to.
+        /// If the constant is a boolean, this must be exhaustive. Otherwise,
+        /// there should be a default case to cover missed possibilities.
+        cases: HashMap<ConstantValue, BasicBlockId>,
+        default: BasicBlockId,
+    },
     /// Used in intermediate steps, when we do not know the terminator of a block.
     /// This should never be translated into LLVM IR, the compiler should instead panic.
     Invalid,
@@ -664,6 +688,18 @@ impl Display for TerminatorKind {
                 for (case, id) in cases {
                     write!(f, " {} -> {},", case, id)?;
                 }
+                write!(f, " }}")
+            }
+            TerminatorKind::SwitchConstant {
+                place,
+                cases,
+                default,
+            } => {
+                write!(f, "switch {} {{", place)?;
+                for (case, id) in cases {
+                    write!(f, " {} -> {},", case, id)?;
+                }
+                write!(f, " default {}", default)?;
                 write!(f, " }}")
             }
             TerminatorKind::Invalid => write!(f, "invalid"),
@@ -904,7 +940,13 @@ enum PatternMismatchReason {
         enum_parameters: Vec<Type>,
         /// Maps enum discriminant names to the indices of the patterns that are matched by this discriminant.
         /// If a case is valid for any discriminant, it is put in *every* case.
-        cases: HashMap<String, Vec<usize>>,
+        cases: MultiMap<String, usize>,
+    },
+    Constant {
+        /// Maps constant values to the indices of the patterns that are matched by this discriminant.
+        /// If a case is valid for any value, it is put in *every* case, and also the `default` list.
+        cases: MultiMap<ConstantValue, usize>,
+        default: Vec<usize>,
     },
 }
 
@@ -981,29 +1023,28 @@ fn first_difference(
                 unreachable!()
             };
 
-            let mut cases = if let TypeDeclarationTypeI::Enum(enumi) =
+            let all_variants = if let TypeDeclarationTypeI::Enum(enumi) =
                 &project_index[&enum_name.source_file].types[&enum_name.name].decl_type
             {
                 enumi
                     .variants
                     .iter()
-                    .map(|variant| (variant.name.name.clone(), Vec::new()))
-                    .collect::<HashMap<_, _>>()
+                    .map(|variant| variant.name.name.clone())
+                    .collect::<Vec<_>>()
             } else {
                 unreachable!()
             };
 
+            let mut cases = MultiMap::new();
+
             for (i, pat) in patterns.iter().enumerate() {
                 if let Pattern::TypeConstructor { type_ctor, .. } = pat {
                     // This case applies to exactly one discriminant.
-                    cases
-                        .get_mut(type_ctor.variant.as_ref().unwrap())
-                        .unwrap()
-                        .push(i);
+                    cases.insert(type_ctor.variant.as_ref().unwrap().clone(), i);
                 } else {
                     // This case applies to all discriminants.
-                    for (_, case) in cases.iter_mut() {
-                        case.push(i);
+                    for variant in &all_variants {
+                        cases.insert(variant.clone(), i);
                     }
                 }
             }
@@ -1094,8 +1135,66 @@ fn first_difference(
             None
         }
     } else {
-        // No patterns are probing inside this variable, so we must assume that they all match.
-        None
+        // No patterns are probing inside this variable.
+        // Now, check if any pattern is a primitive constant.
+        let immediate_value = patterns.iter().find_map(|pat| {
+            if let Pattern::Constant { value, .. } = pat {
+                if !matches!(value, ConstantValue::Unit) {
+                    Some(*value)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        if let Some(immediate_value) = immediate_value {
+            // We may need to switch on this value.
+            let needs_switch = patterns.iter().any(|pat| {
+                if let Pattern::Constant { value, .. } = pat {
+                    *value != immediate_value
+                } else {
+                    true
+                }
+            });
+
+            if needs_switch {
+                // There was a mismatch. We need to switch on this value.
+                let mut cases = MultiMap::new();
+                let mut default = Vec::new();
+
+                for (i, pat) in patterns.iter().enumerate() {
+                    if let Pattern::Constant { value, .. } = pat {
+                        // This case applies to exactly one value.
+                        cases.insert(*value, i);
+                    } else {
+                        // This case applies to all values.
+                        default.push(i);
+                    }
+                }
+
+                // Add default values to all cases.
+                let keys = cases.keys().copied().collect::<Vec<_>>();
+                for item in &default {
+                    for value in &keys {
+                        cases.insert(*value, *item);
+                    }
+                }
+
+                Some(PatternMismatch {
+                    place: var,
+                    reason: PatternMismatchReason::Constant { cases, default },
+                })
+            } else {
+                // The variable's value was referenced,
+                // but no switch was required since all branches required the same value.
+                None
+            }
+        } else {
+            // The patterns did not reference an immediate value. No mismatch was detected.
+            None
+        }
     }
 }
 
@@ -1127,7 +1226,7 @@ fn first_difference_function(
 /// If any of these reference the given place, replace the pattern with the given replacement.
 /// This allows us to constrain `_` or named patterns to the known variant
 /// after we've switched on the discriminant, so that we don't get infinite recursion.
-fn reference_discriminant_function(
+fn reference_place_function(
     place: Place,
     replacement: Pattern,
     mut arg_patterns: Vec<Pattern>,
@@ -1138,22 +1237,22 @@ fn reference_discriminant_function(
         unreachable!();
     };
 
-    arg_patterns[i] =
-        reference_discriminant(place.projection, replacement, arg_patterns[i].clone());
+    arg_patterns[i] = reference_place(place.projection, replacement, arg_patterns[i].clone());
     arg_patterns
 }
 
 /// If this pattern references the given place relative to the root of the pattern,
-/// replace the pattern with one that matches the given variant.
-fn reference_discriminant(
+/// replace the pattern the given replacement.
+fn reference_place(
     mut place_segments: Vec<PlaceSegment>,
     replacement: Pattern,
     pattern: Pattern,
 ) -> Pattern {
     if place_segments.is_empty() {
-        // Check if this pattern is "named" or "unknown". If so, replace it with a blank pattern representing this enum variant.
+        // Check if this pattern is "named" or "unknown". If so, replace it with the replacement.
         let should_replace = match pattern {
             Pattern::Named(_) => true,
+            Pattern::Constant { .. } => false,
             Pattern::TypeConstructor { .. } => false,
             Pattern::Function { .. } => unreachable!(),
             Pattern::Unknown(_) => true,
@@ -1175,11 +1274,8 @@ fn reference_discriminant(
                 {
                     for (field_name, _field_type, field_pat) in &mut fields {
                         if field_name.name == field {
-                            *field_pat = reference_discriminant(
-                                place_segments,
-                                replacement,
-                                field_pat.clone(),
-                            );
+                            *field_pat =
+                                reference_place(place_segments, replacement, field_pat.clone());
                             break;
                         }
                     }
@@ -1196,11 +1292,8 @@ fn reference_discriminant(
                 {
                     for (field_name, _field_type, field_pat) in &mut fields {
                         if field_name.name == field {
-                            *field_pat = reference_discriminant(
-                                place_segments,
-                                replacement,
-                                field_pat.clone(),
-                            );
+                            *field_pat =
+                                reference_place(place_segments, replacement, field_pat.clone());
                             break;
                         }
                     }
@@ -1227,8 +1320,10 @@ fn perform_match_function(
     cases: Vec<(Vec<Pattern>, BasicBlockId)>,
 ) -> BasicBlockId {
     // Recursively find the first difference between patterns, until each case has its own branch.
+    // println!("Cases: {:#?}", cases);
     let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
     if let Some(diff) = first_difference_function(project_index, arg_types.clone(), &patterns) {
+        // println!("Diff: {:#?}", diff);
         // There was a difference that lets us distinguish some of the patterns into different branches.
         let diff_reason = diff.reason;
         let diff_place = diff.place;
@@ -1293,7 +1388,7 @@ fn perform_match_function(
                                 };
 
                                 (
-                                    reference_discriminant_function(
+                                    reference_place_function(
                                         diff_place.clone(),
                                         replacement,
                                         patterns[id].clone(),
@@ -1326,6 +1421,68 @@ fn perform_match_function(
                             enum_parameters,
                             enum_place: diff_place,
                             cases: cases_matched,
+                        },
+                    },
+                })
+            }
+            PatternMismatchReason::Constant { cases, default } => {
+                // Create a match operation for each value.
+                // If a pattern for a given case does not reference the value, we'll
+                // replace it with a dummy pattern that requires the value we just matched.
+                let cases_matched = cases
+                    .into_iter()
+                    .map(|(value, cases)| {
+                        let new_cases = cases
+                            .into_iter()
+                            .map(|id| {
+                                let replacement = Pattern::Constant { range, value };
+
+                                (
+                                    reference_place_function(
+                                        diff_place.clone(),
+                                        replacement,
+                                        patterns[id].clone(),
+                                    ),
+                                    blocks[id],
+                                )
+                            })
+                            .collect();
+                        (
+                            value,
+                            perform_match_function(
+                                project_index,
+                                ctx,
+                                range,
+                                arg_types.clone(),
+                                new_cases,
+                            ),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+
+                let default = {
+                    if default.is_empty() {
+                        // LLVM requires an else block.
+                        *cases_matched.values().next().unwrap()
+                    } else {
+                        let new_cases = default
+                            .into_iter()
+                            .map(|id| (patterns[id].clone(), blocks[id]))
+                            .collect();
+                        perform_match_function(project_index, ctx, range, arg_types, new_cases)
+                    }
+                };
+
+                // Now, each case has been successfully pattern matched to its entirety.
+                // Finally, construct the switch statement to switch between the given cases.
+                ctx.control_flow_graph.new_basic_block(BasicBlock {
+                    statements: Vec::new(),
+                    terminator: Terminator {
+                        range,
+                        kind: TerminatorKind::SwitchConstant {
+                            place: diff_place,
+                            cases: cases_matched,
+                            default,
                         },
                     },
                 })
@@ -1418,6 +1575,7 @@ fn bind_pattern_variables(
 
             vec![assign]
         }
+        Pattern::Constant { .. } => Vec::new(),
         Pattern::TypeConstructor { type_ctor, fields } => {
             // Bind each field individually, then chain all the blocks together.
             // First work out the type parameters used for this type.
@@ -1731,7 +1889,7 @@ fn generate_expr(
                 range,
                 kind: StatementKind::Assign {
                     target: LocalVariableName::Local(ret),
-                    source: Rvalue::Use(Operand::Constant(ImmediateValue::Unit)),
+                    source: Rvalue::Use(Operand::Constant(ConstantValue::Unit)),
                 },
             });
 
@@ -1816,7 +1974,7 @@ fn generate_expr(
                     range,
                     kind: StatementKind::Assign {
                         target: LocalVariableName::Local(variable),
-                        source: Rvalue::Use(Operand::Constant(ImmediateValue::Unit)),
+                        source: Rvalue::Use(Operand::Constant(ConstantValue::Unit)),
                     },
                 };
 
