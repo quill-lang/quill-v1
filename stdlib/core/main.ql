@@ -12,6 +12,7 @@ def main: Unit {
         let world = Cons { value = 119, list = Cons { value = 111, list = Cons { value = 114, list = Cons { value = 108, list = Cons { value = 100, list = Cons { value = 33, list = Empty {} } } } } } }
         let hello_world = concat (concat hello punctuation) world
         print_list hello_world
+        print_int 123456
     )
 }
 

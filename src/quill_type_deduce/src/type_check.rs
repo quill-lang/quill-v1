@@ -15,7 +15,7 @@ use quill_index::{
     compute_used_files, DefinitionI, ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI,
     TypeParameter,
 };
-use quill_parser::{DefinitionBodyP, DefinitionCaseP, ExprPatP, FileP, ConstantValue, NameP};
+use quill_parser::{ConstantValue, DefinitionBodyP, DefinitionCaseP, ExprPatP, FileP, NameP};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
@@ -239,6 +239,10 @@ pub enum TypeVariable {
     },
     /// A primitive type, built in to the core of the type system.
     Primitive(PrimitiveType),
+    /// Borrow conditions are checked later.
+    Borrow {
+        ty: Box<TypeVariable>,
+    },
 }
 
 /// A utility for printing type variables to screen.
@@ -302,6 +306,9 @@ impl TypeVariablePrinter {
                 result
             }
             TypeVariable::Primitive(prim) => format!("{}", prim),
+            TypeVariable::Borrow { ty } => {
+                format!("&{}", self.print(*ty))
+            }
         }
     }
 
@@ -410,7 +417,9 @@ pub enum ExpressionContentsGeneric<E, T> {
         close_brace: Range,
     },
     /// A raw value, such as a string literal, the `unit` keyword, or an integer literal.
-    ImmediateValue { value: ConstantValue, range: Range },
+    ConstantValue { value: ConstantValue, range: Range },
+    /// A borrowed value.
+    Borrow { borrow_token: Range, expr: Box<E> },
 }
 
 impl<E, T> Ranged for ExpressionContentsGeneric<E, T>
@@ -439,7 +448,10 @@ where
                 close_bracket,
                 ..
             } => open_bracket.union(*close_bracket),
-            ExpressionContentsGeneric::ImmediateValue { range, .. } => *range,
+            ExpressionContentsGeneric::ConstantValue { range, .. } => *range,
+            ExpressionContentsGeneric::Borrow {
+                borrow_token, expr, ..
+            } => borrow_token.union(expr.range()),
         }
     }
 }
@@ -878,6 +890,24 @@ impl<'a> TypeChecker<'a> {
                     Severity::Error,
                     Diagnostic::at(self.source_file, &type_ctor.range),
                 )),
+                Type::Borrow { ty, borrow } => {
+                    // Add the lifetime to the types inside this borrow.
+                    self.match_and_bind(visible_names, pattern, *ty)
+                        .map(|mut variables| {
+                            for v in variables.values_mut() {
+                                // Mutate the value by replacing it temporarily.
+                                let ty = std::mem::replace(
+                                    &mut v.var_type,
+                                    Type::Primitive(PrimitiveType::Unit),
+                                );
+                                v.var_type = Type::Borrow {
+                                    ty: Box::new(ty),
+                                    borrow: borrow.clone(),
+                                };
+                            }
+                            variables
+                        })
+                }
             },
             Pattern::Unknown(_) => DiagnosticResult::ok(HashMap::new()),
             Pattern::Function { .. } => unimplemented!(),
@@ -953,6 +983,11 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &open_bracket),
             )),
+            ExprPatP::Borrow { borrow_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("borrows are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &borrow_token),
+            )),
             ExprPatP::ConstructData {
                 data_constructor, ..
             } => DiagnosticResult::fail(ErrorMessage::new(
@@ -1007,6 +1042,11 @@ impl<'a> TypeChecker<'a> {
                 String::from("blocks are not allowed in patterns"),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &open_bracket),
+            )),
+            ExprPatP::Borrow { borrow_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("borrows are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &borrow_token),
             )),
             ExprPatP::ConstructData {
                 data_constructor,
@@ -1128,14 +1168,12 @@ fn collect_bound_vars(
 /// If this is not a function, then it is treated as a zero-argument function.
 fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
     match symbol_type {
-        Type::Named { .. } => (Vec::new(), symbol_type.clone()),
         Type::Function(left, right) => {
             let (mut args, out) = get_args_of_type(&right);
             args.insert(0, *left.clone());
             (args, out)
         }
-        Type::Variable { .. } => (Vec::new(), symbol_type.clone()),
-        Type::Primitive(_) => (Vec::new(), symbol_type.clone()),
+        _ => (Vec::new(), symbol_type.clone()),
     }
 }
 

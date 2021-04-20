@@ -601,12 +601,17 @@ impl Display for PlaceSegment {
 pub enum Rvalue {
     /// Either a copy or a move, depending on the type.
     Use(Operand),
+    /// Creates a borrow of a local variable.
+    /// Borrowing more complicated things is only an emergent behaviour created by functions.
+    /// The borrow's lifetime will be managed later in the borrow checker.
+    Borrow(LocalVariableName),
 }
 
 impl Display for Rvalue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Rvalue::Use(operand) => write!(f, "use {}", operand),
+            Rvalue::Borrow(place) => write!(f, "borrow {}", place),
         }
     }
 }
@@ -614,8 +619,11 @@ impl Display for Rvalue {
 /// A value that we can read from.
 #[derive(Debug, Clone)]
 pub enum Operand {
+    /// We will copy data from this place without dropping it.
     Copy(Place),
+    /// We will move data out of this place, possibly dropping and freeing it.
     Move(Place),
+    /// Generates a new constant value.
     Constant(ConstantValue),
 }
 
@@ -1676,7 +1684,8 @@ fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
                 initialise_expr(ctx, expr);
             }
         }
-        ExpressionContentsGeneric::ImmediateValue { .. } => {}
+        ExpressionContentsGeneric::ConstantValue { .. } => {}
+        ExpressionContentsGeneric::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
     }
 }
 
@@ -2073,7 +2082,7 @@ fn generate_expr(
                 locals_to_drop: chain.locals_to_drop,
             }
         }
-        ExpressionContentsGeneric::ImmediateValue { value, range } => {
+        ExpressionContentsGeneric::ConstantValue { value, range } => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
                 ty,
@@ -2098,6 +2107,46 @@ fn generate_expr(
                 block: initialise_variable,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+            }
+        }
+        ExpressionContentsGeneric::Borrow { borrow_token, expr } => {
+            let variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty: Type::Borrow {
+                    ty: Box::new(expr.ty.clone()),
+                    borrow: None,
+                },
+                name: None,
+            });
+            let terminator_range = terminator.range;
+            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: Vec::new(),
+                terminator,
+            });
+            let inner = generate_expr(
+                ctx,
+                *expr,
+                Terminator {
+                    range: terminator_range,
+                    kind: TerminatorKind::Goto(block),
+                },
+            );
+            ctx.control_flow_graph
+                .basic_blocks
+                .get_mut(&block)
+                .unwrap()
+                .statements
+                .push(Statement {
+                    range: borrow_token,
+                    kind: StatementKind::Assign {
+                        target: LocalVariableName::Local(variable),
+                        source: Rvalue::Borrow(inner.variable),
+                    },
+                });
+            ExprGeneratedM {
+                block: inner.block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: inner.locals_to_drop,
             }
         }
     }

@@ -670,6 +670,9 @@ impl SemanticTokenGenerator {
                 self.gen_type(*l);
                 self.gen_type(*r);
             }
+            quill_parser::TypeP::Borrow { ty, .. } => {
+                self.gen_type(*ty);
+            }
         }
     }
 
@@ -695,11 +698,7 @@ impl SemanticTokenGenerator {
                 );
             }
             quill_parser::ExprPatP::Immediate { range, .. } => {
-                self.push_token(
-                    range,
-                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER],
-                    0,
-                );
+                self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER], 0);
             }
             quill_parser::ExprPatP::Apply(l, r) => {
                 self.gen_expr(
@@ -769,6 +768,7 @@ impl SemanticTokenGenerator {
                 }
             }
             quill_parser::ExprPatP::Unknown(_) => {}
+            quill_parser::ExprPatP::Borrow { expr, .. } => self.gen_expr(*expr, conditions),
         }
     }
 }
@@ -803,6 +803,7 @@ fn get_named_parameters(pattern: &quill_parser::ExprPatP, is_main_pattern: bool)
             result
         }
         quill_parser::ExprPatP::Unknown(_) => Vec::new(),
+        quill_parser::ExprPatP::Borrow { .. } => unreachable!(),
     }
 }
 

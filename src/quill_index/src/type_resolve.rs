@@ -12,7 +12,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_parser::{IdentifierP, TypeP};
-use quill_type::{PrimitiveType, Type};
+use quill_type::{BorrowCondition, Lifetime, PrimitiveType, Type};
 
 use crate::ForeignTypeDeclarationC;
 
@@ -58,6 +58,16 @@ pub(crate) fn resolve_typep(
             resolve_typep(source_file, &left, type_params, visible_types).bind(|left| {
                 resolve_typep(source_file, &right, type_params, visible_types)
                     .map(|right| Type::Function(Box::new(left), Box::new(right)))
+            })
+        }
+        TypeP::Borrow { ty, borrow } => {
+            resolve_typep(source_file, &*ty, type_params, visible_types).map(|ty| Type::Borrow {
+                ty: Box::new(ty),
+                borrow: Some(BorrowCondition {
+                    lifetime: Lifetime {
+                        name: borrow.lifetime.name.name.clone(),
+                    },
+                }),
             })
         }
     }

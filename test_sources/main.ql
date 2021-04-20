@@ -48,15 +48,15 @@ def main: unit {
     )
 }
 
-def make_unit: unit {
+def make_unit: Unit {
     make_unit = unit
 }
 
-def drop[T]: T -> unit {
+def drop[T]: T -> Unit {
     drop _ = unit
 }
 
-def putchar: int -> unit { compiler_intrinsic }
+def putchar: Int -> Unit { compiler_intrinsic }
 
 enum List[T] = Cons { value: T, list: List[T] } | Empty {}
 
@@ -65,7 +65,7 @@ def map_first[T]: (T -> T) -> (List[T] -> List[T]) {
     map_first _ Empty {}             = Empty {}
 }
 
-def print_list: List[int] -> unit {
+def print_list: List[Int] -> Unit {
     print_list Cons { value, list } = (
         putchar value
         print_list list

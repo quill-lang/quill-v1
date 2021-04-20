@@ -375,6 +375,19 @@ pub enum DefinitionBodyP {
     CompilerIntrinsic(Range),
 }
 
+/// Represents the loan conditions of a borrowed value.
+#[derive(Debug, Clone)]
+pub struct TypeBorrowP {
+    pub borrow_token: Range,
+    pub lifetime: LifetimeP,
+}
+
+/// Either the definition or use of a lifetime parameter.
+#[derive(Debug, Clone)]
+pub struct LifetimeP {
+    pub name: NameP,
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeParameterP {
     pub name: NameP,
@@ -491,6 +504,8 @@ pub enum TypeP {
     /// Functions with more arguments, e.g. `a -> b -> c` are represented as
     /// curried functions, e.g. `a -> (b -> c)`.
     Function(Box<TypeP>, Box<TypeP>),
+    /// A borrowed type.
+    Borrow { ty: Box<TypeP>, borrow: TypeBorrowP },
 }
 
 impl Ranged for TypeP {
@@ -503,70 +518,109 @@ impl Ranged for TypeP {
                 .iter()
                 .fold(identifier.range(), |acc, i| acc.union(i.range())),
             TypeP::Function(left, right) => left.range().union(right.range()),
+            TypeP::Borrow { ty, borrow } => ty.range().union(borrow.borrow_token),
         }
     }
 }
 
 impl<'input> Parser<'input> {
-    /// `type ::= (type_name type_args | "(" type ")") ("->" type)?`
+    /// `type ::= type_borrow* (type_name type_args | "(" type ")") ("->" type)?`
     fn parse_type(&mut self) -> DiagnosticResult<TypeP> {
-        let initial_type = match self.tokens.peek() {
-            Some(TokenTree::Tree { .. }) => {
-                if let TokenTree::Tree(tree) = self.tokens.next().unwrap() {
-                    // This is either a parenthesised type, or a list/array type (a type surrounded with square brackets).
-                    match tree.bracket_type {
-                        BracketType::Parentheses => {
-                            // This is a parenthesised type.
-                            self.parse_in_tree(tree, |inner| inner.parse_type())
+        self.parse_type_borrow().bind(|borrow| {
+            if let Some(borrow) = borrow {
+                self.parse_type().map(|ty| TypeP::Borrow {
+                    ty: Box::new(ty),
+                    borrow,
+                })
+            } else {
+                let initial_type = match self.tokens.peek() {
+                    Some(TokenTree::Tree { .. }) => {
+                        if let TokenTree::Tree(tree) = self.tokens.next().unwrap() {
+                            // This is either a parenthesised type, or a list/array type (a type surrounded with square brackets).
+                            match tree.bracket_type {
+                                BracketType::Parentheses => {
+                                    // This is a parenthesised type.
+                                    self.parse_in_tree(tree, |inner| inner.parse_type())
+                                }
+                                BracketType::Square => {
+                                    // TODO This is a list/array type.
+                                    // Currently, these are not implemented.
+                                    DiagnosticResult::fail(ErrorMessage::new(
+                                        "expected a type, but found a square bracket".to_string(),
+                                        Severity::Error,
+                                        Diagnostic::at(self.source_file, &tree.range()),
+                                    ))
+                                }
+                                BracketType::Brace => DiagnosticResult::fail(ErrorMessage::new(
+                                    "expected a type, but found a brace bracket".to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(self.source_file, &tree.range()),
+                                )),
+                            }
+                        } else {
+                            unreachable!()
                         }
-                        BracketType::Square => {
-                            // TODO This is a list/array type.
-                            // Currently, these are not implemented.
-                            DiagnosticResult::fail(ErrorMessage::new(
-                                "expected a type, but found a square bracket".to_string(),
-                                Severity::Error,
-                                Diagnostic::at(self.source_file, &tree.range()),
-                            ))
-                        }
-                        BracketType::Brace => DiagnosticResult::fail(ErrorMessage::new(
-                            "expected a type, but found a brace bracket".to_string(),
-                            Severity::Error,
-                            Diagnostic::at(self.source_file, &tree.range()),
-                        )),
                     }
-                } else {
-                    unreachable!()
-                }
-            }
-            _ => {
-                self.parse_identifier().bind(|identifier| {
-                    // If we have a square bracket token tree, they are type parameters.
-                    if let Some(tree) = self.parse_tree(BracketType::Square) {
-                        // Parse each type parameter inside this tree.
-                        let type_parameters =
-                            self.parse_in_tree(tree, |inner| inner.parse_type_params());
-                        type_parameters.map(|params| TypeP::Named { identifier, params })
-                    } else {
-                        DiagnosticResult::ok(TypeP::Named {
-                            identifier,
-                            params: Vec::new(),
+                    _ => {
+                        self.parse_identifier().bind(|identifier| {
+                            // If we have a square bracket token tree, they are type parameters.
+                            if let Some(tree) = self.parse_tree(BracketType::Square) {
+                                // Parse each type parameter inside this tree.
+                                let type_parameters =
+                                    self.parse_in_tree(tree, |inner| inner.parse_type_params());
+                                type_parameters.map(|params| TypeP::Named { identifier, params })
+                            } else {
+                                DiagnosticResult::ok(TypeP::Named {
+                                    identifier,
+                                    params: Vec::new(),
+                                })
+                            }
                         })
+                    }
+                };
+
+                initial_type.bind(|parsed_type| {
+                    if self
+                        .parse_token_maybe(|ty| matches!(ty, TokenType::Arrow))
+                        .is_some()
+                    {
+                        self.parse_type().map(|rhs_type| {
+                            TypeP::Function(Box::new(parsed_type), Box::new(rhs_type))
+                        })
+                    } else {
+                        DiagnosticResult::ok(parsed_type)
                     }
                 })
             }
-        };
-
-        initial_type.bind(|parsed_type| {
-            if self
-                .parse_token_maybe(|ty| matches!(ty, TokenType::Arrow))
-                .is_some()
-            {
-                self.parse_type()
-                    .map(|rhs_type| TypeP::Function(Box::new(parsed_type), Box::new(rhs_type)))
-            } else {
-                DiagnosticResult::ok(parsed_type)
-            }
         })
+    }
+
+    /// Parses a borrow, if the next token is a "&".
+    /// `type_borrow ::= "&" lifetime
+    fn parse_type_borrow(&mut self) -> DiagnosticResult<Option<TypeBorrowP>> {
+        if let Some(borrow) = self.parse_token_maybe(|token| matches!(token, TokenType::Borrow)) {
+            self.parse_token(
+                |ty| matches!(ty, TokenType::Lifetime(_)),
+                "expected lifetime",
+            )
+            .map(|lifetime| {
+                if let TokenType::Lifetime(lifetime_name) = lifetime.token_type {
+                    Some(TypeBorrowP {
+                        borrow_token: borrow.range,
+                        lifetime: LifetimeP {
+                            name: NameP {
+                                name: lifetime_name,
+                                range: lifetime.range,
+                            },
+                        },
+                    })
+                } else {
+                    unreachable!()
+                }
+            })
+        } else {
+            DiagnosticResult::ok(None)
+        }
     }
 
     /// Parses a list of names for type parameters, e.g. [A, B, C[_]] but not something like [bool] because that is a type not a type parameter name.
@@ -673,6 +727,11 @@ pub enum ExprPatP {
         close_bracket: Range,
         statements: Vec<ExprPatP>,
     },
+    /// Borrow some data for a duration less than its full lifetime.
+    Borrow {
+        borrow_token: Range,
+        expr: Box<ExprPatP>,
+    },
     /// The name of a data type, followed by brace brackets containing the data structure's fields.
     ConstructData {
         data_constructor: IdentifierP,
@@ -729,6 +788,7 @@ impl Ranged for ExprPatP {
                 close_bracket,
                 ..
             } => open_bracket.union(*close_bracket),
+            ExprPatP::Borrow { borrow_token, expr } => borrow_token.union(expr.range()),
             ExprPatP::ConstructData {
                 data_constructor,
                 close_brace,
@@ -835,6 +895,7 @@ impl<'input> Parser<'input> {
     }
 
     /// Parses a single term from an expression by consuming either zero or one token trees from the input.
+    /// If the token tree is exactly the symbol `&`, it may consume an additional token tree to see what is being borrowed.
     /// If the following token did not constitute an expression, nothing is consumed.
     fn parse_expr_term(&mut self) -> Option<DiagnosticResult<ExprPatP>> {
         if let Some(tree) = self.parse_tree(BracketType::Parentheses) {
@@ -853,6 +914,22 @@ impl<'input> Parser<'input> {
         {
             // This is an unknown in a pattern.
             Some(DiagnosticResult::ok(ExprPatP::Unknown(token.range)))
+        } else if let Some(borrow_token) =
+            self.parse_token_maybe(|ty| matches!(ty, TokenType::Borrow))
+        {
+            // This is a borrow of a value.
+            if let Some(expr) = self.parse_expr_term() {
+                Some(expr.map(|expr| ExprPatP::Borrow {
+                    borrow_token: borrow_token.range,
+                    expr: Box::new(expr),
+                }))
+            } else {
+                Some(DiagnosticResult::fail(ErrorMessage::new(
+                    "expected expression after borrow symbol".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &borrow_token),
+                )))
+            }
         } else {
             self.parse_identifier_maybe().map(|identifier| identifier.bind(|identifier| {
                 let immediate = if identifier.segments.len() == 1 {

@@ -30,6 +30,8 @@ pub enum TokenType {
     EndOfLine {
         explicit: bool,
     },
+    /// &
+    Borrow,
 
     LeftParenthesis,
     RightParenthesis,
@@ -45,9 +47,12 @@ pub enum TokenType {
     Def,
     Let,
     Use,
+    /// TODO convert the `copy` keyword into a function in a `Copy` trait
+    Copy,
     CompilerIntrinsic,
 
     Identifier(String),
+    Lifetime(String),
 }
 
 /// A single token such as an identifier or special character.
@@ -431,6 +436,37 @@ fn parse_token(
                 .into(),
             )
         }
+        '\'' => {
+            // This is either a lifetime or a character literal.
+            chars.next();
+            let (nextcol, nextch) = if let Some(ch) = chars.peek() {
+                *ch
+            } else {
+                return DiagnosticResult::fail(ErrorMessage::new(
+                    "expected a character or a lifetime".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &Range::from(Location { line, col })),
+                ));
+            };
+            if nextch.is_alphanumeric() {
+                let (lifetime, range) = consume_predicate_one(line, col, nextch, chars, |c| {
+                    c.is_alphanumeric() || c == '_'
+                });
+                DiagnosticResult::ok(
+                    Token {
+                        token_type: TokenType::Lifetime(lifetime),
+                        range,
+                    }
+                    .into(),
+                )
+            } else {
+                DiagnosticResult::fail(ErrorMessage::new(
+                    "lifetime must be made of alphanumeric characters only".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &Range::from(Location { line, col: nextcol })),
+                ))
+            }
+        }
         _ => {
             chars.next();
             if ch == '/' && matches!(chars.peek(), Some((_, '/'))) {
@@ -469,6 +505,7 @@ fn token_type_alphabetic(s: String) -> TokenType {
         "def" => TokenType::Def,
         "let" => TokenType::Let,
         "use" => TokenType::Use,
+        "copy" => TokenType::Copy,
         "compiler_intrinsic" => TokenType::CompilerIntrinsic,
         _ => TokenType::Identifier(s),
     }
@@ -488,6 +525,7 @@ fn token_type_symbol(s: String) -> TokenType {
         "|" => TokenType::TypeOr,
         "\\" => TokenType::Lambda,
         "," => TokenType::EndOfLine { explicit: true },
+        "&" => TokenType::Borrow,
         _ => TokenType::Identifier(s),
     }
 }

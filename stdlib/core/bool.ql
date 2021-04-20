@@ -9,6 +9,11 @@ def if[T]: Bool -> T -> T -> T {
     if false _ value = value
 }
 
+def if_lazy[T]: Bool -> (Unit -> T) -> (Unit -> T) -> T {
+    if_lazy true value _ = value unit
+    if_lazy false _ value = value unit
+}
+
 def true2: Bool {
     true2 = true
 }

@@ -289,7 +289,9 @@ fn check_ownership_walk(
             *statuses = collate_statuses(terminator_range, branch_statuses);
         }
         TerminatorKind::SwitchConstant {
-            place, cases, default
+            place,
+            cases,
+            default,
         } => {
             // Ensure that the enum place is OK to use.
             make_used(
@@ -303,7 +305,11 @@ fn check_ownership_walk(
 
             // Now, walk on each branch and collate the results.
             // Clippy thinks I can elide the collect, but there's a lifetime issue if I do.
-            let branches = cases.values().copied().chain(std::iter::once(*default)).collect::<Vec<_>>();
+            let branches = cases
+                .values()
+                .copied()
+                .chain(std::iter::once(*default))
+                .collect::<Vec<_>>();
             let branch_statuses = branches
                 .into_iter()
                 .map(|target_block| {
@@ -464,6 +470,14 @@ fn make_rvalue_used(
             UseType::Reference,
         ),
         Rvalue::Use(Operand::Constant(_)) => {}
+        Rvalue::Borrow(local) => make_used(
+            source_file,
+            messages,
+            statuses,
+            range,
+            local,
+            UseType::Reference,
+        ),
     }
 }
 

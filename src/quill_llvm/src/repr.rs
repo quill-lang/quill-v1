@@ -8,7 +8,7 @@ use std::{
 
 use inkwell::{
     debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIType},
-    types::{BasicTypeEnum, FunctionType, StructType},
+    types::{BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{BasicValue, PointerValue},
     AddressSpace,
 };
@@ -1142,6 +1142,14 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     .unwrap()
                     .as_type(),
             )),
+            Type::Borrow { ty, .. } => self.repr(*ty).map(|repr| {
+                AnyTypeRepresentation::new(
+                    self.codegen,
+                    repr.llvm_type.ptr_type(AddressSpace::Generic).into(),
+                    // TODO manage this pointer type
+                    repr.di_type,
+                )
+            }),
         }
     }
 
@@ -1200,6 +1208,9 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             }
             Type::Primitive(_) => {
                 // No operation is required.
+            }
+            Type::Borrow { .. } => {
+                // Dropping a borrow does nothing. No operation is required.
             }
         }
     }

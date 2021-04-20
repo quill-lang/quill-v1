@@ -136,6 +136,14 @@ pub fn replace_type_variables(
             }
         }
         Type::Primitive(prim) => Type::Primitive(prim),
+        Type::Borrow { ty, borrow } => Type::Borrow {
+            ty: Box::new(replace_type_variables(
+                *ty,
+                named_type_parameters,
+                concrete_type_parameters,
+            )),
+            borrow,
+        },
     }
 }
 
@@ -206,6 +214,9 @@ pub fn instantiate_with(
             }
         }
         Type::Primitive(prim) => TypeVariable::Primitive(*prim),
+        Type::Borrow { ty, .. } => TypeVariable::Borrow {
+            ty: Box::new(instantiate_with(&*ty, ids, higher_kinded_ids)),
+        },
     }
 }
 
@@ -237,6 +248,9 @@ pub fn as_variable(ty: &Type) -> TypeVariable {
                 .collect::<Vec<_>>(),
         },
         Type::Primitive(prim) => TypeVariable::Primitive(*prim),
+        Type::Borrow { ty, .. } => TypeVariable::Borrow {
+            ty: Box::new(as_variable(&*ty)),
+        },
     }
 }
 

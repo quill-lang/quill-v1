@@ -1,6 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 
-use inkwell::{AddressSpace, IntPredicate, basic_block::BasicBlock, debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIScope}, types::BasicTypeEnum, values::{BasicValue, FunctionValue, IntValue, PointerValue}};
+use inkwell::{
+    basic_block::BasicBlock,
+    debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIScope},
+    types::BasicTypeEnum,
+    values::{BasicValue, FunctionValue, IntValue, PointerValue},
+    AddressSpace, IntPredicate,
+};
 use quill_common::location::Range;
 use quill_index::{ProjectIndex, TypeDeclarationTypeI, TypeParameter};
 use quill_mir::{
@@ -950,10 +956,10 @@ fn create_real_func_body_cfg<'ctx>(
                         (
                             match value {
                                 ConstantValue::Bool(value) => ctx
-                                .codegen
-                                .context
-                                .bool_type()
-                                .const_int(if *value { 1 } else { 0 }, false),
+                                    .codegen
+                                    .context
+                                    .bool_type()
+                                    .const_int(if *value { 1 } else { 0 }, false),
                                 ConstantValue::Int(value) => {
                                     ctx.codegen.context.i64_type().const_int(
                                         unsafe { std::mem::transmute::<i64, u64>(*value) },
@@ -1024,32 +1030,44 @@ fn create_real_func_body_intrinsic<'ctx>(
         }
         "gt_int" => {
             int_binop(&ctx, |lhs, rhs| {
-                ctx.codegen.builder.build_int_compare(IntPredicate::SGT, lhs, rhs, "result")
+                ctx.codegen
+                    .builder
+                    .build_int_compare(IntPredicate::SGT, lhs, rhs, "result")
             });
         }
         "ge_int" => {
             int_binop(&ctx, |lhs, rhs| {
-                ctx.codegen.builder.build_int_compare(IntPredicate::SGE, lhs, rhs, "result")
+                ctx.codegen
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, lhs, rhs, "result")
             });
         }
         "lt_int" => {
             int_binop(&ctx, |lhs, rhs| {
-                ctx.codegen.builder.build_int_compare(IntPredicate::SLT, lhs, rhs, "result")
+                ctx.codegen
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, lhs, rhs, "result")
             });
         }
         "le_int" => {
             int_binop(&ctx, |lhs, rhs| {
-                ctx.codegen.builder.build_int_compare(IntPredicate::SLE, lhs, rhs, "result")
+                ctx.codegen
+                    .builder
+                    .build_int_compare(IntPredicate::SLE, lhs, rhs, "result")
             });
         }
         "eq_int" => {
             int_binop(&ctx, |lhs, rhs| {
-                ctx.codegen.builder.build_int_compare(IntPredicate::EQ, lhs, rhs, "result")
+                ctx.codegen
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, lhs, rhs, "result")
             });
         }
         "ne_int" => {
             int_binop(&ctx, |lhs, rhs| {
-                ctx.codegen.builder.build_int_compare(IntPredicate::NE, lhs, rhs, "result")
+                ctx.codegen
+                    .builder
+                    .build_int_compare(IntPredicate::NE, lhs, rhs, "result")
             });
         }
         _ => {
@@ -1233,6 +1251,10 @@ fn get_pointer_to_rvalue<'ctx>(
             } else {
                 None
             }
+        }
+        Rvalue::Borrow(local) => {
+            // Return a pointer to the given local variable.
+            Some(locals[local])
         }
         Rvalue::Use(Operand::Constant(constant)) => {
             // Alloca the constant, then make a pointer to it.

@@ -6,7 +6,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
-use quill_parser::{ExprPatP, IdentifierP, ConstantValue, NameP};
+use quill_parser::{ConstantValue, ExprPatP, IdentifierP, NameP};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
@@ -335,7 +335,7 @@ fn generate_constraints(
         } => DiagnosticResult::ok(ExprTypeCheck {
             expr: ExpressionT {
                 type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
-                contents: ExpressionContentsT::ImmediateValue {
+                contents: ExpressionContentsT::ConstantValue {
                     range,
                     value: ConstantValue::Unit,
                 },
@@ -352,7 +352,7 @@ fn generate_constraints(
         } => DiagnosticResult::ok(ExprTypeCheck {
             expr: ExpressionT {
                 type_variable: TypeVariable::Primitive(PrimitiveType::Bool),
-                contents: ExpressionContentsT::ImmediateValue {
+                contents: ExpressionContentsT::ConstantValue {
                     range,
                     value: ConstantValue::Bool(value),
                 },
@@ -369,7 +369,7 @@ fn generate_constraints(
         } => DiagnosticResult::ok(ExprTypeCheck {
             expr: ExpressionT {
                 type_variable: TypeVariable::Primitive(PrimitiveType::Int),
-                contents: ExpressionContentsT::ImmediateValue {
+                contents: ExpressionContentsT::ConstantValue {
                     range,
                     value: ConstantValue::Int(value),
                 },
@@ -946,6 +946,28 @@ fn generate_constraints(
                 },
             )
         }
+        ExprPatP::Borrow { borrow_token, expr } => generate_constraints(
+            source_file,
+            project_index,
+            visible_names,
+            args,
+            lambda_variables,
+            let_variables,
+            *expr,
+        )
+        .map(|mut expr| {
+            let type_variable = TypeVariable::Unknown {
+                id: TypeVariableId::default(),
+            };
+            expr.expr = ExpressionT {
+                type_variable,
+                contents: ExpressionContentsT::Borrow {
+                    borrow_token,
+                    expr: Box::new(expr.expr),
+                },
+            };
+            expr
+        }),
     }
 }
 
@@ -1143,6 +1165,7 @@ fn contains_id(v: &TypeVariable, id: &TypeVariableId) -> bool {
         TypeVariable::Variable { parameters, .. } => parameters.iter().any(|v| contains_id(v, id)),
         TypeVariable::Unknown { id: other_id } => other_id == id,
         TypeVariable::Primitive(_) => false,
+        TypeVariable::Borrow { ty, .. } => contains_id(&*ty, id),
     }
 }
 
@@ -1421,12 +1444,12 @@ fn most_general_unifier(
                         variable,
                     })
                 }
-                prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
+                actual => Err(UnificationError::ExpectedDifferent {
                     expected: TypeVariable::Named {
                         name: left_name,
                         parameters: left_parameters,
                     },
-                    actual: prim,
+                    actual,
                 }),
             }
         }
@@ -1437,12 +1460,6 @@ fn most_general_unifier(
         }
         TypeVariable::Function(left_param, left_result) => {
             match actual {
-                TypeVariable::Named { name, parameters } => {
-                    Err(UnificationError::ExpectedDifferent {
-                        expected: TypeVariable::Function(left_param, left_result),
-                        actual: TypeVariable::Named { name, parameters },
-                    })
-                }
                 TypeVariable::Function(right_param, right_result) => {
                     // Both were functions. Unify both the parameters and the results.
                     let mgu1 = most_general_unifier(project_index, *left_param, *right_param)?;
@@ -1460,9 +1477,9 @@ fn most_general_unifier(
                         variable,
                     })
                 }
-                prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedDifferent {
+                actual => Err(UnificationError::ExpectedDifferent {
                     expected: TypeVariable::Function(left_param, left_result),
-                    actual: prim,
+                    actual,
                 }),
             }
         }
@@ -1470,14 +1487,6 @@ fn most_general_unifier(
             variable,
             parameters: left_parameters,
         } => match actual {
-            named_ty @ TypeVariable::Named { .. } => Err(UnificationError::ExpectedVariable {
-                actual: named_ty,
-                variable,
-            }),
-            func_ty @ TypeVariable::Function(_, _) => Err(UnificationError::ExpectedVariable {
-                actual: func_ty,
-                variable,
-            }),
             TypeVariable::Variable {
                 variable: other_variable,
                 ..
@@ -1502,24 +1511,9 @@ fn most_general_unifier(
                 );
                 Ok(map)
             }
-            prim @ TypeVariable::Primitive(_) => Err(UnificationError::ExpectedVariable {
-                actual: prim,
-                variable,
-            }),
+            actual => Err(UnificationError::ExpectedVariable { actual, variable }),
         },
         TypeVariable::Primitive(prim) => match actual {
-            named @ TypeVariable::Named { .. } => Err(UnificationError::ExpectedDifferent {
-                expected: TypeVariable::Primitive(prim),
-                actual: named,
-            }),
-            func @ TypeVariable::Function(_, _) => Err(UnificationError::ExpectedDifferent {
-                expected: TypeVariable::Primitive(prim),
-                actual: func,
-            }),
-            variable @ TypeVariable::Variable { .. } => Err(UnificationError::ExpectedDifferent {
-                expected: TypeVariable::Primitive(prim),
-                actual: variable,
-            }),
             TypeVariable::Unknown { id } => {
                 let mut map = HashMap::new();
                 map.insert(id, TypeVariable::Primitive(prim));
@@ -1535,6 +1529,24 @@ fn most_general_unifier(
                     })
                 }
             }
+            actual => Err(UnificationError::ExpectedDifferent {
+                expected: TypeVariable::Primitive(prim),
+                actual,
+            }),
+        },
+        TypeVariable::Borrow { ty } => match actual {
+            TypeVariable::Unknown { id } => {
+                let mut map = HashMap::new();
+                map.insert(id, TypeVariable::Borrow { ty });
+                Ok(map)
+            }
+            TypeVariable::Borrow { ty: other_ty } => {
+                most_general_unifier(project_index, *ty, *other_ty)
+            }
+            actual => Err(UnificationError::ExpectedDifferent {
+                expected: TypeVariable::Borrow { ty },
+                actual,
+            }),
         },
     }
 }
@@ -1693,8 +1705,14 @@ fn substitute_contents(
                 open_brace,
                 close_brace,
             }),
-        ExpressionContentsT::ImmediateValue { value, range } => {
-            DiagnosticResult::ok(ExpressionContents::ImmediateValue { value, range })
+        ExpressionContentsT::ConstantValue { value, range } => {
+            DiagnosticResult::ok(ExpressionContents::ConstantValue { value, range })
+        }
+        ExpressionContentsT::Borrow { borrow_token, expr } => {
+            substitute(substitution, *expr, source_file).map(|expr| ExpressionContents::Borrow {
+                borrow_token,
+                expr: Box::new(expr),
+            })
         }
     }
 }
@@ -1754,5 +1772,7 @@ fn substitute_type(
                 parameters,
             }),
         TypeVariable::Primitive(prim) => DiagnosticResult::ok(Type::Primitive(prim)),
+        TypeVariable::Borrow { ty } => substitute_type(substitution, *ty, source_file, range)
+            .map(|ty| Type::Borrow { ty: Box::new(ty), borrow: None }),
     }
 }

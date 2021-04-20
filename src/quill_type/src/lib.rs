@@ -20,6 +20,34 @@ pub enum Type {
     Function(Box<Type>, Box<Type>),
     /// A primitive type, built in to the core of the type system.
     Primitive(PrimitiveType),
+    Borrow {
+        ty: Box<Type>,
+        /// If we know the borrow condition, give it here.
+        borrow: Option<BorrowCondition>,
+    },
+}
+
+/// Represents the loan conditions of a borrowed value.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BorrowCondition {
+    pub lifetime: Lifetime,
+}
+
+impl Display for BorrowCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "&{}", self.lifetime)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Lifetime {
+    pub name: String,
+}
+
+impl Display for Lifetime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "'{}", self.name)
+    }
 }
 
 /// The list of all core types, that are trivially supported by any LLVM output platform.
@@ -96,6 +124,13 @@ impl Type {
                 }
             }
             Type::Primitive(prim) => write!(f, "{:?}", prim)?,
+            Type::Borrow { ty, borrow } => {
+                if let Some(borrow) = borrow {
+                    write!(f, "{} {}", borrow, ty)?;
+                } else {
+                    write!(f, "&{}", ty)?;
+                }
+            }
         };
         if parenthesise {
             write!(f, ")")?;
