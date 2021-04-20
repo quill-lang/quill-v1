@@ -1686,6 +1686,7 @@ fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
         }
         ExpressionContentsGeneric::ConstantValue { .. } => {}
         ExpressionContentsGeneric::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
+        ExpressionContentsGeneric::Copy { expr, .. } => initialise_expr(ctx, &*expr),
     }
 }
 
@@ -2141,6 +2142,49 @@ fn generate_expr(
                     kind: StatementKind::Assign {
                         target: LocalVariableName::Local(variable),
                         source: Rvalue::Borrow(inner.variable),
+                    },
+                });
+            ExprGeneratedM {
+                block: inner.block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: inner.locals_to_drop,
+            }
+        }
+        ExpressionContentsGeneric::Copy { copy_token, expr } => {
+            let variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty: Type::Borrow {
+                    ty: Box::new(expr.ty.clone()),
+                    borrow: None,
+                },
+                name: None,
+            });
+            let terminator_range = terminator.range;
+            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: Vec::new(),
+                terminator,
+            });
+            let inner = generate_expr(
+                ctx,
+                *expr,
+                Terminator {
+                    range: terminator_range,
+                    kind: TerminatorKind::Goto(block),
+                },
+            );
+            ctx.control_flow_graph
+                .basic_blocks
+                .get_mut(&block)
+                .unwrap()
+                .statements
+                .push(Statement {
+                    range: copy_token,
+                    kind: StatementKind::Assign {
+                        target: LocalVariableName::Local(variable),
+                        source: Rvalue::Use(Operand::Copy(Place {
+                            local: inner.variable,
+                            projection: Vec::new(),
+                        })),
                     },
                 });
             ExprGeneratedM {

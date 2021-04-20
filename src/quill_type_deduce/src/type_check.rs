@@ -420,6 +420,8 @@ pub enum ExpressionContentsGeneric<E, T> {
     ConstantValue { value: ConstantValue, range: Range },
     /// A borrowed value.
     Borrow { borrow_token: Range, expr: Box<E> },
+    /// A copy of a borrowed value.
+    Copy { copy_token: Range, expr: Box<E> },
 }
 
 impl<E, T> Ranged for ExpressionContentsGeneric<E, T>
@@ -452,6 +454,9 @@ where
             ExpressionContentsGeneric::Borrow {
                 borrow_token, expr, ..
             } => borrow_token.union(expr.range()),
+            ExpressionContentsGeneric::Copy {
+                copy_token, expr, ..
+            } => copy_token.union(expr.range()),
         }
     }
 }
@@ -988,6 +993,11 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &borrow_token),
             )),
+            ExprPatP::Copy { copy_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("copies are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &copy_token),
+            )),
             ExprPatP::ConstructData {
                 data_constructor, ..
             } => DiagnosticResult::fail(ErrorMessage::new(
@@ -1047,6 +1057,11 @@ impl<'a> TypeChecker<'a> {
                 String::from("borrows are not allowed in patterns"),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &borrow_token),
+            )),
+            ExprPatP::Copy { copy_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("copies are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &copy_token),
             )),
             ExprPatP::ConstructData {
                 data_constructor,

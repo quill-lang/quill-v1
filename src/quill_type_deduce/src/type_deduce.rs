@@ -154,13 +154,11 @@ enum ConstraintEqualityReason {
         /// The token `let` that we're using the variable from.
         let_token: Range,
     },
+    /// A variable was borrowed.
+    Borrow { expr: Range, borrow_token: Range },
+    /// A variable was copied.
+    Copy { expr: Range, copy_token: Range },
 }
-
-#[derive(Debug)]
-enum ConstraintExplicitReason {}
-
-#[derive(Debug)]
-enum ConstraintImplicitReason {}
 
 pub fn deduce_expr_type(
     source_file: &SourceFileIdentifier,
@@ -668,7 +666,7 @@ fn generate_constraints(
             let mut constraints = Constraints::default();
             // The list of new variables is updated whenever we introduce a `let` statement in this block.
             let mut new_variables = Vec::<LetStatementNewVariables>::new();
-            println!("Statements: {:#?}", statements);
+            // println!("Statements: {:#?}", statements);
             for statement in statements {
                 let (result, inner_messages) = generate_constraints(
                     source_file,
@@ -959,10 +957,58 @@ fn generate_constraints(
             let type_variable = TypeVariable::Unknown {
                 id: TypeVariableId::default(),
             };
+            let expr_range = expr.expr.range();
+            expr.constraints.0.push((
+                type_variable.clone(),
+                Constraint::Equality {
+                    ty: TypeVariable::Borrow {
+                        ty: Box::new(expr.expr.type_variable.clone()),
+                    },
+                    reason: ConstraintEqualityReason::Borrow {
+                        expr: expr_range,
+                        borrow_token,
+                    },
+                },
+            ));
             expr.expr = ExpressionT {
                 type_variable,
                 contents: ExpressionContentsT::Borrow {
                     borrow_token,
+                    expr: Box::new(expr.expr),
+                },
+            };
+            expr
+        }),
+        ExprPatP::Copy { copy_token, expr } => generate_constraints(
+            source_file,
+            project_index,
+            visible_names,
+            args,
+            lambda_variables,
+            let_variables,
+            *expr,
+        )
+        .map(|mut expr| {
+            let type_variable = TypeVariable::Unknown {
+                id: TypeVariableId::default(),
+            };
+            let expr_range = expr.expr.range();
+            expr.constraints.0.push((
+                expr.expr.type_variable.clone(),
+                Constraint::Equality {
+                    ty: TypeVariable::Borrow {
+                        ty: Box::new(type_variable.clone()),
+                    },
+                    reason: ConstraintEqualityReason::Copy {
+                        expr: expr_range,
+                        copy_token,
+                    },
+                },
+            ));
+            expr.expr = ExpressionT {
+                type_variable,
+                contents: ExpressionContentsT::Copy {
+                    copy_token,
                     expr: Box::new(expr.expr),
                 },
             };
@@ -1714,6 +1760,12 @@ fn substitute_contents(
                 expr: Box::new(expr),
             })
         }
+        ExpressionContentsT::Copy { copy_token, expr } => {
+            substitute(substitution, *expr, source_file).map(|expr| ExpressionContents::Copy {
+                copy_token,
+                expr: Box::new(expr),
+            })
+        }
     }
 }
 
@@ -1772,7 +1824,11 @@ fn substitute_type(
                 parameters,
             }),
         TypeVariable::Primitive(prim) => DiagnosticResult::ok(Type::Primitive(prim)),
-        TypeVariable::Borrow { ty } => substitute_type(substitution, *ty, source_file, range)
-            .map(|ty| Type::Borrow { ty: Box::new(ty), borrow: None }),
+        TypeVariable::Borrow { ty } => {
+            substitute_type(substitution, *ty, source_file, range).map(|ty| Type::Borrow {
+                ty: Box::new(ty),
+                borrow: None,
+            })
+        }
     }
 }

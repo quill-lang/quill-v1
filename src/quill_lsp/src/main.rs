@@ -769,6 +769,7 @@ impl SemanticTokenGenerator {
             }
             quill_parser::ExprPatP::Unknown(_) => {}
             quill_parser::ExprPatP::Borrow { expr, .. } => self.gen_expr(*expr, conditions),
+            quill_parser::ExprPatP::Copy { expr, .. } => self.gen_expr(*expr, conditions),
         }
     }
 }
@@ -804,6 +805,7 @@ fn get_named_parameters(pattern: &quill_parser::ExprPatP, is_main_pattern: bool)
         }
         quill_parser::ExprPatP::Unknown(_) => Vec::new(),
         quill_parser::ExprPatP::Borrow { .. } => unreachable!(),
+        quill_parser::ExprPatP::Copy { .. } => unreachable!(),
     }
 }
 

@@ -732,6 +732,11 @@ pub enum ExprPatP {
         borrow_token: Range,
         expr: Box<ExprPatP>,
     },
+    /// Copy some data behind a borrow.
+    Copy {
+        copy_token: Range,
+        expr: Box<ExprPatP>,
+    },
     /// The name of a data type, followed by brace brackets containing the data structure's fields.
     ConstructData {
         data_constructor: IdentifierP,
@@ -789,6 +794,7 @@ impl Ranged for ExprPatP {
                 ..
             } => open_bracket.union(*close_bracket),
             ExprPatP::Borrow { borrow_token, expr } => borrow_token.union(expr.range()),
+            ExprPatP::Copy { copy_token, expr } => copy_token.union(expr.range()),
             ExprPatP::ConstructData {
                 data_constructor,
                 close_brace,
@@ -813,6 +819,7 @@ impl<'input> Parser<'input> {
         // - abstraction: a lambda abstraction beginning with the `\` lambda symbol
         // - let: a `let` statement
         // - block: a block of statements followed by a returned value
+        // - copy: copy the primitive value behind a reference
         // Any expressions we add to the language in the future must reduce to one of these basic
         // expression types, so that we can apply a Hindley-Milner-like type system solver.
         if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Lambda)) {
@@ -821,6 +828,12 @@ impl<'input> Parser<'input> {
         } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Let)) {
             // This is a let statement.
             self.parse_expr_let(tk.range)
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Copy)) {
+            // This is a copy expression.
+            self.parse_expr().map(|expr| ExprPatP::Copy {
+                copy_token: tk.range,
+                expr: Box::new(expr),
+            })
         } else {
             // Default to a variable or application expression, since this will show a decent error message.
             self.parse_expr_app()
