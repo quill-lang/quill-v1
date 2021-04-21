@@ -128,9 +128,9 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
 
     let pm = PassManager::<Module>::create(&());
     pm.add_verifier_pass();
-    println!("Verifying...");
+    // println!("Verifying...");
     pm.run_on(&codegen.module);
-    println!("Done.");
+    // println!("Done.");
 
     // println!("Compiling to target machine...");
 
@@ -162,9 +162,9 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     // opt.add_demote_memory_to_register_pass();
     opt.add_memcpy_optimize_pass();
     opt.add_function_attrs_pass();
-    println!("Optimising...");
+    // println!("Optimising...");
     opt.run_on(&codegen.module);
-    println!("Writing bitcode, assembly, and object file...");
+    // println!("Writing bitcode, assembly, and object file...");
 
     codegen.module.write_bitcode_to_path(&bc_opt_path);
     codegen

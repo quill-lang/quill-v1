@@ -19,7 +19,7 @@ pub fn borrow_check(
 ) -> DiagnosticResult<SourceFileMIR> {
     let mut messages = Vec::new();
     for (_def_name, def) in mir.definitions.iter_mut() {
-        println!("dn {}", _def_name);
+        // println!("dn {}", _def_name);
         borrow_check_def(source_file, def, &mut messages);
     }
     DiagnosticResult::ok_with_many(mir, messages)
@@ -89,7 +89,7 @@ fn check_ownership(
     def: &mut DefinitionM,
     messages: &mut Vec<ErrorMessage>,
 ) {
-    println!("{}", def);
+    // println!("{}", def);
     let range = def.range;
 
     let mut statuses = OwnershipStatuses {
