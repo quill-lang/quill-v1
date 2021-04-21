@@ -1515,7 +1515,7 @@ struct ChainGeneratedM {
 }
 
 /// Generates a chain of expressions, with the given terminator.
-/// Returns the basic block that can be invoked in order to invoke the chain, along ith the variables
+/// Returns the basic block that can be invoked in order to invoke the chain, along with the variables
 /// produced by each expression.
 fn generate_chain_with_terminator(
     ctx: &mut DefinitionTranslationContext,
@@ -1955,6 +1955,7 @@ fn generate_expr(
                     },
                 );
                 chain.locals_to_drop.extend(chain.variables);
+                chain.locals_to_drop.extend(final_expr.locals_to_drop);
                 ctx.control_flow_graph
                     .basic_blocks
                     .get_mut(&drop_block)
@@ -2124,7 +2125,7 @@ fn generate_expr(
                 statements: Vec::new(),
                 terminator,
             });
-            let inner = generate_expr(
+            let mut inner = generate_expr(
                 ctx,
                 *expr,
                 Terminator {
@@ -2144,6 +2145,9 @@ fn generate_expr(
                         source: Rvalue::Borrow(inner.variable),
                     },
                 });
+            inner
+                .locals_to_drop
+                .push(LocalVariableName::Local(variable));
             ExprGeneratedM {
                 block: inner.block,
                 variable: LocalVariableName::Local(variable),

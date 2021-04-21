@@ -18,14 +18,14 @@ def print_list: List[Int] -> Unit {
 // }
 
 def print_int: Int -> Unit {
-    print_int n = if_lazy (ge_int 10 (copy &n)) (print_int_large (copy &n)) (print_int_small n)
+    print_int n = if_lazy (ge_int (copy &n) 10) (print_int_large (copy &n)) (print_int_small n)
 }
 
 def print_int_large: Int -> Unit -> Unit {
     print_int_large n _ = (
         let quot = div_int_unchecked (copy &n) 10
         let rem = sub_int_unchecked n (mul_int_unchecked (copy &quot) 10)
-        print_int_large quot unit
+        print_int quot
         print_int_small rem unit
     )
 }
