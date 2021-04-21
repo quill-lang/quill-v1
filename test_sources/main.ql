@@ -1,7 +1,5 @@
 pub enum Either[T, U] = Left { value: T } | Right { value: U }
 
-pub data Unit {}
-
 pub def create_either[T]: T -> Either[T, Unit] {
     create_either t = Left { value = t }
     //create_either a = Right { value = a }
@@ -16,7 +14,7 @@ pub def unwrap_or[T]: T -> Option[T] -> T {
 
 pub def block: Option[Option[Unit]] {
     block = (
-        let inner = Unit {}
+        let inner = unit
         let next = Some { value = inner }
         Some { value = next }
     )
@@ -29,9 +27,9 @@ pub def block: Option[Option[Unit]] {
 //     or _ = \a -> False {}
 // }
 
-def main: unit {
+def main: Unit {
     main = (
-        // unwrap_or Some { value = Unit {} } block
+        // unwrap_or Some { value = Unit } block
         // create_either 104
         // drop make_unit
         // drop Some { value = 100 }
