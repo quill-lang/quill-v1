@@ -2153,9 +2153,10 @@ fn generate_expr(
         ExpressionContentsGeneric::Copy { copy_token, expr } => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
-                ty: Type::Borrow {
-                    ty: Box::new(expr.ty.clone()),
-                    borrow: None,
+                ty: if let Type::Borrow { ty, .. } = expr.ty.clone() {
+                    *ty
+                } else {
+                    unreachable!()
                 },
                 name: None,
             });
