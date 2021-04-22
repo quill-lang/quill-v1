@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use inkwell::{
     basic_block::BasicBlock,
     debug_info::{AsDIScope, DIFile, DIFlagsConstants, DIScope},
-    types::BasicTypeEnum,
+    types::{BasicType, BasicTypeEnum},
     values::{BasicValue, FunctionValue, IntValue, PointerValue},
     AddressSpace, IntPredicate,
 };
@@ -531,7 +531,9 @@ fn create_real_func_body_cfg<'ctx>(
                                 rvalue,
                             )
                             .unwrap();
-                            ctx.codegen.builder.build_load(ptr, &format!("arg{}", i))
+                            ctx.codegen
+                                .builder
+                                .build_load(ptr, &format!("if/{}_{}arg", mono_func, i))
                         })
                         .collect::<Vec<_>>();
 
@@ -596,7 +598,9 @@ fn create_real_func_body_cfg<'ctx>(
                                 rvalue,
                             )
                             .unwrap();
-                            ctx.codegen.builder.build_load(ptr, &format!("arg{}", i))
+                            ctx.codegen
+                                .builder
+                                .build_load(ptr, &format!("c/{}_{}arg", mono_func, i))
                         })
                         .collect::<Vec<_>>();
 
@@ -686,7 +690,7 @@ fn create_real_func_body_cfg<'ctx>(
                         "fobj_bitcast",
                     )];
                     for (i, arg) in additional_arguments.iter().enumerate() {
-                        if let Some(ptr) = get_pointer_to_rvalue(
+                        if let Some(ptr) = get_pointer_to_rvalue_arg(
                             ctx.codegen,
                             ctx.index,
                             ctx.reprs,
@@ -694,7 +698,7 @@ fn create_real_func_body_cfg<'ctx>(
                             &local_variable_names,
                             arg,
                         ) {
-                            args.push(ctx.codegen.builder.build_load(ptr, &format!("arg{}", i)))
+                            args.push(ctx.codegen.builder.build_load(ptr, &format!("io/{}arg", i)))
                         }
                     }
 
@@ -1288,6 +1292,149 @@ fn get_pointer_to_rvalue<'ctx>(
                 }
             }
         }
+    }
+}
+
+/// Returns the type of the given rvalue.
+fn get_type_of_rvalue(
+    index: &ProjectIndex,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    rvalue: &Rvalue,
+) -> Type {
+    match rvalue {
+        Rvalue::Use(Operand::Move(place)) | Rvalue::Use(Operand::Copy(place)) => {
+            let mut rvalue_ty = local_variable_names[&place.local].ty.clone();
+
+            for segment in place.projection.clone() {
+                match segment {
+                    PlaceSegment::DataField { field } => {
+                        // rvalue_ty is a data type.
+                        if let Type::Named { name, parameters } = rvalue_ty {
+                            let decl = &index[&name.source_file].types[&name.name];
+                            if let TypeDeclarationTypeI::Data(datai) = &decl.decl_type {
+                                rvalue_ty = datai
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .find_map(|(field_name, field_type)| {
+                                        if field_name.name == field {
+                                            Some(replace_type_variables(
+                                                field_type.clone(),
+                                                &datai.type_params,
+                                                &parameters,
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap();
+                            } else {
+                                unreachable!()
+                            }
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    PlaceSegment::EnumField { variant, field } => {
+                        // rvalue_ty is an enum type.
+                        if let Type::Named { name, parameters } = rvalue_ty {
+                            let decl = &index[&name.source_file].types[&name.name];
+                            if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
+                                rvalue_ty = enumi
+                                    .variants
+                                    .iter()
+                                    .find(|the_variant| the_variant.name.name == variant)
+                                    .unwrap()
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .find_map(|(field_name, field_type)| {
+                                        if field_name.name == field {
+                                            Some(replace_type_variables(
+                                                field_type.clone(),
+                                                &enumi.type_params,
+                                                &parameters,
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap();
+                            } else {
+                                unreachable!()
+                            }
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    PlaceSegment::EnumDiscriminant => {
+                        // rvalue_ty is an enum type.
+                        if let Type::Named { .. } = rvalue_ty {
+                            rvalue_ty = Type::Primitive(PrimitiveType::Int);
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                }
+            }
+
+            rvalue_ty
+        }
+        Rvalue::Borrow(local) => {
+            // Return a pointer to the given local variable.
+            Type::Borrow {
+                ty: Box::new(local_variable_names[local].ty.clone()),
+                borrow: None,
+            }
+        }
+        Rvalue::Use(Operand::Constant(constant)) => {
+            // Alloca the constant, then make a pointer to it.
+            match constant {
+                ConstantValue::Unit => Type::Primitive(PrimitiveType::Unit),
+                ConstantValue::Bool(_) => Type::Primitive(PrimitiveType::Bool),
+                ConstantValue::Int(_) => Type::Primitive(PrimitiveType::Int),
+            }
+        }
+    }
+}
+
+/// Sometimes a value is unacceptable in its current form to be used as a function argument.
+/// For instance, a function object may have a specific known type, but it must be first "anonymised"
+/// into the `fobj*` type in order to then be passed into a function.
+/// This function gets the rvalue, then bitcasts it to the correct type if required.
+fn get_pointer_to_rvalue_arg<'ctx>(
+    codegen: &CodeGenContext<'ctx>,
+    index: &ProjectIndex,
+    reprs: &Representations<'_, 'ctx>,
+    locals: &HashMap<LocalVariableName, PointerValue<'ctx>>,
+    local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
+    rvalue: &Rvalue,
+) -> Option<PointerValue<'ctx>> {
+    if let Some(ptr) =
+        get_pointer_to_rvalue(codegen, index, reprs, locals, local_variable_names, rvalue)
+    {
+        let ty = get_type_of_rvalue(index, local_variable_names, rvalue);
+        if let Type::Function(_, _) = ty {
+            // This is a function object, so we need to bitcast it to a generic `fobj**`.
+            // The double pointer is expected; we want to return a *pointer* to an rvalue.
+            Some(
+                codegen
+                    .builder
+                    .build_bitcast(
+                        ptr,
+                        reprs
+                            .general_func_obj_ty
+                            .llvm_type
+                            .ptr_type(AddressSpace::Generic),
+                        "as_fobj",
+                    )
+                    .into_pointer_value(),
+            )
+        } else {
+            Some(ptr)
+        }
+    } else {
+        None
     }
 }
 
