@@ -16,10 +16,8 @@ def print_list: List[Int] -> Unit {
     print_list _ = unit
 }
 
-// Compiler bug: 0local not moved or dropped
 def print_int: Int -> Unit {
-    print_int n = unit
-    // print_int n = if_lazy (ge_int (copy &n) 10) (print_int_large (copy &n)) (print_int_small n)
+    print_int n = if_lazy (ge_int (copy &n) 10) (print_int_large (copy &n)) (print_int_small n)
 }
 
 def print_int_large: Int -> Unit -> Unit {

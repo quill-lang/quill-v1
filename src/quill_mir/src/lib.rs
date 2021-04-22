@@ -844,7 +844,7 @@ fn create_cfg(
         .into_iter()
         .map(|case| {
             // Create a local variable for each bound variable in the pattern.
-            let unwrap_patterns_blocks = case
+            let all_bound_pattern_variables = case
                 .arg_patterns
                 .iter()
                 .zip(&arg_types)
@@ -858,8 +858,14 @@ fn create_cfg(
                         arg_type.clone(),
                     )
                 })
-                .flatten()
-                .collect::<Vec<_>>();
+                .map(|result| (result.statements, result.bound_variables));
+
+            let mut unwrap_patterns_blocks = Vec::new();
+            let mut bound_variables = Vec::new();
+            for (more_statements, more_bound_variables) in all_bound_pattern_variables {
+                unwrap_patterns_blocks.extend(more_statements);
+                bound_variables.extend(more_bound_variables);
+            }
 
             let unwrap_patterns_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
                 statements: unwrap_patterns_blocks,
@@ -889,20 +895,41 @@ fn create_cfg(
                 },
             );
 
-            // Now, replace the terminator with a custom terminator that returns `function_variable` from the function.
+            // Before we return `func.variable` from our function, we first need to drop any locals that have not yet
+            // been dropped. We will simply accomplish this by moving the return value into a "protected" variable,
+            // and then drop every other variable that could possibly be alive at this point.
+            let protected_return_value = ctx.new_local_variable(LocalVariableInfo {
+                range: ctx.local_variable_names[&func.variable].range,
+                ty: ctx.local_variable_names[&func.variable].ty.clone(),
+                name: Some("return value".to_string()),
+            });
+            // Move the return value into this protected slot.
             let return_block = ctx
                 .control_flow_graph
                 .basic_blocks
                 .get_mut(&return_block)
                 .unwrap();
-            return_block.terminator = Terminator {
+            return_block.statements.push(Statement {
                 range,
-                kind: TerminatorKind::Return {
-                    value: func.variable,
+                kind: StatementKind::Assign {
+                    target: LocalVariableName::Local(protected_return_value),
+                    source: Rvalue::Use(Operand::Move(Place {
+                        local: func.variable,
+                        projection: Vec::new(),
+                    })),
                 },
-            };
-            // Further, we need to drop the function's arguments (if they're still alive) in this return block, and all of the block's undropped temporaries.
+            });
+
+            // Further, we need to drop the function's arguments (if they're still alive) in this return block.
+            // Variables bound using patterns may not have been dropped at this point.
+            // We drop these before dropping arguments.
             for temp in func.locals_to_drop {
+                return_block.statements.push(Statement {
+                    range,
+                    kind: StatementKind::DropIfAlive { variable: temp },
+                })
+            }
+            for temp in bound_variables {
                 return_block.statements.push(Statement {
                     range,
                     kind: StatementKind::DropIfAlive { variable: temp },
@@ -916,6 +943,13 @@ fn create_cfg(
                     },
                 })
             }
+            // Now, replace the terminator with a custom terminator that returns the real protected return value from the function.
+            return_block.terminator = Terminator {
+                range,
+                kind: TerminatorKind::Return {
+                    value: LocalVariableName::Local(protected_return_value),
+                },
+            };
 
             ctx.control_flow_graph
                 .basic_blocks
@@ -1553,6 +1587,13 @@ fn generate_chain_with_terminator(
     }
 }
 
+struct BoundPatternVariables {
+    /// A list of statements that will initialise the pattern variables.
+    statements: Vec<Statement>,
+    /// The list of actual variables that we bind.
+    bound_variables: Vec<LocalVariableName>,
+}
+
 /// Creates a local variable for each bound variable in a pattern, assuming that the given value
 /// has the given pattern, and the given type.
 /// Returns statements that will initialise these variables.
@@ -1563,7 +1604,7 @@ fn bind_pattern_variables(
     value: Place,
     pat: &Pattern,
     ty: Type,
-) -> Vec<Statement> {
+) -> BoundPatternVariables {
     match pat {
         Pattern::Named(name) => {
             let var = ctx.new_local_variable(LocalVariableInfo {
@@ -1581,9 +1622,15 @@ fn bind_pattern_variables(
                 },
             };
 
-            vec![assign]
+            BoundPatternVariables {
+                statements: vec![assign],
+                bound_variables: vec![LocalVariableName::Local(var)],
+            }
         }
-        Pattern::Constant { .. } => Vec::new(),
+        Pattern::Constant { .. } => BoundPatternVariables {
+            statements: Vec::new(),
+            bound_variables: Vec::new(),
+        },
         Pattern::TypeConstructor { type_ctor, fields } => {
             // Bind each field individually, then chain all the blocks together.
             // First work out the type parameters used for this type.
@@ -1598,7 +1645,7 @@ fn bind_pattern_variables(
                 unreachable!()
             };
 
-            fields
+            let results = fields
                 .iter()
                 .map(|(field_name, ty, pat)| {
                     bind_pattern_variables(
@@ -1624,8 +1671,20 @@ fn bind_pattern_variables(
                         ),
                     )
                 })
-                .flatten()
-                .collect()
+                .map(|result| (result.statements, result.bound_variables))
+                .collect::<Vec<_>>();
+
+            let mut statements = Vec::new();
+            let mut bound_variables = Vec::new();
+            for (more_statements, more_bound_variables) in results {
+                statements.extend(more_statements);
+                bound_variables.extend(more_bound_variables);
+            }
+
+            BoundPatternVariables {
+                statements,
+                bound_variables,
+            }
         }
         Pattern::Function { .. } => {
             unreachable!("functions are forbidden in arg patterns")
@@ -1651,7 +1710,10 @@ fn bind_pattern_variables(
                     variable: LocalVariableName::Local(local),
                 },
             };
-            vec![move_stmt, drop_stmt]
+            BoundPatternVariables {
+                statements: vec![move_stmt, drop_stmt],
+                bound_variables: Vec::new(),
+            }
         }
     }
 }
