@@ -93,7 +93,7 @@ impl Display for MonomorphisedFunction {
             }
             write!(f, "]")?;
         }
-        write!(f, "{:?}", self.curry_steps)?;
+        write!(f, "/{:?}", self.curry_steps)?;
         if self.direct {
             write!(f, "d")
         } else {
