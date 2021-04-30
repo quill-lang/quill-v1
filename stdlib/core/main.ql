@@ -3,6 +3,22 @@ use list
 use bool
 use int
 
+def + : Int -> Int -> Int {
+    + = add_int_unchecked
+}
+
+def - : Int -> Int -> Int {
+    i - = sub_int_unchecked i
+}
+
+def :-[T]: T -> List[T] -> List[T] {
+    x :- xs = Cons { value = x, list = xs }
+}
+
+def empty[T]: List[T] {
+    empty = Empty {}
+}
+
 def main: Unit {
     main = (
         // "Hello, world!" in Unicode code points is
@@ -13,6 +29,9 @@ def main: Unit {
         // let hello_world = concat (concat hello punctuation) world
         // print_list hello_world
         // newline unit
+
+        print_list (72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty)
+        newline unit
 
         print_factorials 0 20
     )
@@ -35,6 +54,6 @@ def print_factorials_inner: Int -> Int -> Unit -> Unit {
         putchar 32
         print_int (factorial (copy &low))
         newline unit
-        print_factorials (add_int_unchecked low 1) high
+        print_factorials (low + 1) high
     )
 }

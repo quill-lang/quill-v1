@@ -51,7 +51,7 @@ pub enum TokenType {
     Copy,
     CompilerIntrinsic,
 
-    Identifier(String),
+    Name(String),
     Lifetime(String),
 }
 
@@ -333,7 +333,7 @@ fn tokenise_line(
 fn should_insert_semicolon_after(ty: &TokenType) -> bool {
     matches!(
         ty,
-        TokenType::Identifier(_)
+        TokenType::Name(_)
             | TokenType::RightBrace
             | TokenType::RightParenthesis
             | TokenType::RightSquare
@@ -507,7 +507,7 @@ fn token_type_alphabetic(s: String) -> TokenType {
         "use" => TokenType::Use,
         "copy" => TokenType::Copy,
         "compiler_intrinsic" => TokenType::CompilerIntrinsic,
-        _ => TokenType::Identifier(s),
+        _ => TokenType::Name(s),
     }
 }
 
@@ -526,7 +526,7 @@ fn token_type_symbol(s: String) -> TokenType {
         "\\" => TokenType::Lambda,
         "," => TokenType::EndOfLine { explicit: true },
         "&" => TokenType::Borrow,
-        _ => TokenType::Identifier(s),
+        _ => TokenType::Name(s),
     }
 }
 

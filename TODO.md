@@ -15,3 +15,4 @@
 - You can currently create objects without all required fields.
 - Refactor large files.
 - Implement pattern exhaustiveness check *in MIR*.
+- Try using symbol names `+, -` etc in weird places e.g. type parameters, to see what breaks.

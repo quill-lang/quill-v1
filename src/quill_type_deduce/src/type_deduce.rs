@@ -464,7 +464,7 @@ fn generate_constraints(
             let mut type_variable_definition_ranges = HashMap::new();
 
             for param in &params {
-                let NameP { name, range } = param;
+                let NameP { name, range, .. } = param;
                 match lambda_variables.entry(name.clone()) {
                     Entry::Occupied(occupied) => {
                         messages.push(already_defined(source_file, *range, occupied.get().range));

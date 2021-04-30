@@ -262,8 +262,8 @@ impl<'input> Parser<'input> {
 
     /// `type_ctor_body ::= (field (',' type_ctor_body)?)?`
     fn parse_type_ctor_body(&mut self) -> DiagnosticResult<Vec<FieldP>> {
-        if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Identifier(_))) {
-            if let TokenType::Identifier(name) = token.token_type {
+        if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Name { .. })) {
+            if let TokenType::Name(name) = token.token_type {
                 self.parse_field(NameP {
                     name,
                     range: token.range,
@@ -855,21 +855,14 @@ impl<'input> Parser<'input> {
             ));
         }
 
-        DiagnosticResult::sequence(terms).map(|terms| {
-            let mut terms = terms.into_iter();
-            let first = terms.next().unwrap();
-            terms
-                .into_iter()
-                .fold(first, |acc, i| ExprPatP::Apply(Box::new(acc), Box::new(i)))
-        })
+        DiagnosticResult::sequence(terms).bind(deduce_associativity)
     }
 
     /// Parses a lambda expression.
     fn parse_expr_lambda(&mut self, lambda_token: Range) -> DiagnosticResult<ExprPatP> {
         let mut params = Vec::new();
-        while let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Identifier(_)))
-        {
-            if let TokenType::Identifier(name) = token.token_type {
+        while let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Name { .. })) {
+            if let TokenType::Name(name) = token.token_type {
                 params.push(NameP {
                     name,
                     range: token.range,
@@ -1096,6 +1089,196 @@ impl<'input> Parser<'input> {
     }
 }
 
+fn deduce_associativity(terms: Vec<ExprPatP>) -> DiagnosticResult<ExprPatP> {
+    // Deduce the associativity of each operator in this list.
+    let associativities = terms
+        .into_iter()
+        .map(|term| {
+            (
+                match &term {
+                    ExprPatP::Variable(ident) => ident.as_operator(),
+                    _ => None,
+                },
+                term,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // Now, group the terms into expressions by their associativity.
+    group_terms(collapse_func_application(associativities))
+
+    // let mut terms = terms.into_iter();
+    // let first = terms.next().unwrap();
+    // let result = terms
+    //     .into_iter()
+    //     .fold(first, |acc, i| ExprPatP::Apply(Box::new(acc), Box::new(i)));
+    // DiagnosticResult::ok(result)
+}
+
+fn apply_function_to_arguments(mut terms: Vec<ExprPatP>) -> ExprPatP {
+    if terms.len() == 1 {
+        terms.pop().unwrap()
+    } else {
+        let last = terms.pop().unwrap();
+        ExprPatP::Apply(Box::new(apply_function_to_arguments(terms)), Box::new(last))
+    }
+}
+
+fn group_terms(
+    mut terms: Vec<(Option<(Operator, ExprPatP)>, Vec<ExprPatP>)>,
+) -> DiagnosticResult<ExprPatP> {
+    if terms.is_empty() {
+        panic!("can't be empty")
+    }
+    if terms.len() == 1 {
+        let (term, mut values) = terms.pop().unwrap();
+        if let Some((_, op_expr)) = term {
+            values.insert(0, op_expr);
+        }
+        if values.is_empty() {
+            panic!("invalid input");
+        }
+        return apply_function_to_arguments(values).into();
+    }
+
+    let highest_associativity = terms
+        .iter()
+        .map(|(op, _)| op.as_ref().map_or(0, |(op, _)| op.level))
+        .max()
+        .unwrap_or(0);
+    // An associativity level has a fixed associativity type.
+    let ty = terms
+        .iter()
+        .find_map(|(op, _)| {
+            op.as_ref().and_then(|(op, _)| {
+                if op.level == highest_associativity {
+                    Some(op.ty)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap();
+
+    // Find all the operators of the highest associativity in this expression,
+    // and split the input by these operators.
+
+    let mut messages = Vec::new();
+    let mut terms_processed = Vec::new();
+    let mut current_term = Vec::new();
+    for (op, term) in terms {
+        if let Some((op, op_expr)) = op {
+            if op.level == highest_associativity {
+                // The current term must be parsed and added to the list of processed terms.
+                let (result, more_messages) =
+                    group_terms(std::mem::take(&mut current_term)).destructure();
+                messages.extend(more_messages);
+                if let Some(result) = result {
+                    terms_processed.push((Some(op_expr), result));
+                } else {
+                    return DiagnosticResult::fail_many(messages);
+                }
+                current_term.push((None, term));
+            } else {
+                current_term.push((Some((op, op_expr)), term));
+            }
+        } else {
+            current_term.push((None, term));
+        }
+    }
+    if current_term.len() > 1 || current_term[0].0.is_some() || !current_term[0].1.is_empty() {
+        let (result, more_messages) = group_terms(current_term).destructure();
+        messages.extend(more_messages);
+        if let Some(result) = result {
+            terms_processed.push((None, result));
+        } else {
+            return DiagnosticResult::fail_many(messages);
+        }
+    }
+
+    // Now, regroup the processed terms according to the associativity type.
+    match ty {
+        AssociativityType::NonAssociative => {
+            unimplemented!()
+        }
+        AssociativityType::InfixR => {
+            while terms_processed.len() > 1 {
+                // Take the last two elements and apply the operator to them.
+                let (result_operator, right) = terms_processed.pop().unwrap();
+                let (operator, left) = terms_processed.pop().unwrap();
+                terms_processed.push((
+                    result_operator,
+                    ExprPatP::Apply(
+                        Box::new(ExprPatP::Apply(Box::new(operator.unwrap()), Box::new(left))),
+                        Box::new(right),
+                    ),
+                ));
+            }
+        }
+        AssociativityType::InfixL => {
+            while terms_processed.len() > 1 {
+                // Take the first two elements and apply the operator to them.
+                let (operator, left) = terms_processed.remove(0);
+                let (result_operator, right) = terms_processed.remove(0);
+                terms_processed.insert(
+                    0,
+                    (
+                        result_operator,
+                        ExprPatP::Apply(
+                            Box::new(ExprPatP::Apply(Box::new(operator.unwrap()), Box::new(left))),
+                            Box::new(right),
+                        ),
+                    ),
+                );
+            }
+        }
+    }
+
+    let (operator, result) = terms_processed.pop().unwrap();
+    if let Some(operator) = operator {
+        DiagnosticResult::ok_with_many(
+            ExprPatP::Apply(Box::new(operator), Box::new(result)),
+            messages,
+        )
+    } else {
+        DiagnosticResult::ok_with_many(result, messages)
+    }
+}
+
+/// Collapse function application down so that we are left with a list of operators
+/// and the operands to the right of them.
+/// E.g. `foo bar + a b c - x /` is converted to
+/// ```notrust
+/// None -> [foo, bar]
+/// (infixl, +) -> [a, b, c]
+/// (infixl, +) -> [x]
+/// (infixl, +) -> []
+/// ```
+fn collapse_func_application(
+    terms: Vec<(Option<Operator>, ExprPatP)>,
+) -> Vec<(Option<(Operator, ExprPatP)>, Vec<ExprPatP>)> {
+    let mut result = Vec::new();
+    // If we're currently "inside" a function application, this is not None.
+    let mut active_operator = None;
+    // This is the list of parameters given after the active operator.
+    let mut active_application = Vec::new();
+    for (op, term) in terms {
+        if let Some(op) = op {
+            // Break out of function application.
+            let app = std::mem::take(&mut active_application);
+            if !app.is_empty() {
+                result.push((active_operator.take(), app));
+            }
+            active_operator = Some((op, term));
+        } else {
+            // We need to apply this term to the active function application, if we're currently in a function application.
+            active_application.push(term);
+        }
+    }
+    result.push((active_operator, active_application));
+    result
+}
+
 /////////////////////////
 //// OTHER UTILITIES ////
 /////////////////////////
@@ -1105,6 +1288,59 @@ impl<'input> Parser<'input> {
 pub struct IdentifierP {
     /// Must contain at least one segment.
     pub segments: Vec<NameP>,
+}
+
+#[derive(Debug, Clone)]
+struct Operator {
+    level: u32,
+    name: NameP,
+    ty: AssociativityType,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AssociativityType {
+    NonAssociative,
+    InfixR,
+    InfixL,
+}
+
+impl IdentifierP {
+    /// If this identifier represents a name that has a level of associativity,
+    /// Returns the properties of the given operator.
+    fn as_operator(&self) -> Option<Operator> {
+        if let Some(name) = self.segments.last() {
+            as_operator_inner(name.clone())
+        } else {
+            None
+        }
+    }
+}
+
+/// Returns the properties of the given operator.
+fn as_operator_inner(name: NameP) -> Option<Operator> {
+    match name.name.as_str() {
+        "+" | "-" => Some(Operator {
+            level: 10,
+            name,
+            ty: AssociativityType::InfixL,
+        }),
+        ":-" => Some(Operator {
+            level: 5,
+            name,
+            ty: AssociativityType::InfixR,
+        }),
+        _ => {
+            if name.name.as_str().chars().next().unwrap().is_alphanumeric() {
+                None
+            } else {
+                Some(Operator {
+                    level: 1,
+                    name,
+                    ty: AssociativityType::InfixL,
+                })
+            }
+        }
+    }
 }
 
 impl Ranged for IdentifierP {
@@ -1172,7 +1408,7 @@ impl<'input> Parser<'input> {
     /// Parses an identifier if the next token is an identifier fragment.
     fn parse_identifier_maybe(&mut self) -> Option<DiagnosticResult<IdentifierP>> {
         if let Some(TokenTree::Token(token)) = self.tokens.peek() {
-            if let TokenType::Identifier(_) = token.token_type {
+            if let TokenType::Name { .. } = token.token_type {
                 // This should be an identifier.
                 Some(self.parse_identifier())
             } else {
@@ -1208,9 +1444,9 @@ impl<'input> Parser<'input> {
 
     /// Parses a name from the input stream. If the next token was not a name, this emits the given message.
     fn parse_name_with_message(&mut self, fail_message: &str) -> DiagnosticResult<NameP> {
-        self.parse_token_maybe(|ty| matches!(ty, TokenType::Identifier(_)))
+        self.parse_token_maybe(|ty| matches!(ty, TokenType::Name { .. }))
             .map(|token| {
-                if let TokenType::Identifier(name) = token.token_type {
+                if let TokenType::Name(name) = token.token_type {
                     NameP {
                         name,
                         range: token.range,
