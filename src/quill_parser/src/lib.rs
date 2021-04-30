@@ -1142,17 +1142,17 @@ fn group_terms(
         return apply_function_to_arguments(values).into();
     }
 
-    let highest_associativity = terms
+    let lowest_associativity = terms
         .iter()
-        .map(|(op, _)| op.as_ref().map_or(0, |(op, _)| op.level))
-        .max()
-        .unwrap_or(0);
+        .map(|(op, _)| op.as_ref().map_or(u32::MAX, |(op, _)| op.level))
+        .min()
+        .unwrap_or(u32::MAX);
     // An associativity level has a fixed associativity type.
     let ty = terms
         .iter()
         .find_map(|(op, _)| {
             op.as_ref().and_then(|(op, _)| {
-                if op.level == highest_associativity {
+                if op.level == lowest_associativity {
                     Some(op.ty)
                 } else {
                     None
@@ -1161,7 +1161,7 @@ fn group_terms(
         })
         .unwrap();
 
-    // Find all the operators of the highest associativity in this expression,
+    // Find all the operators of the lowest associativity in this expression,
     // and split the input by these operators.
 
     let mut messages = Vec::new();
@@ -1169,7 +1169,7 @@ fn group_terms(
     let mut current_term = Vec::new();
     for (op, term) in terms {
         if let Some((op, op_expr)) = op {
-            if op.level == highest_associativity {
+            if op.level == lowest_associativity {
                 // The current term must be parsed and added to the list of processed terms.
                 let (result, more_messages) =
                     group_terms(source_file, std::mem::take(&mut current_term)).destructure();
@@ -1349,6 +1349,12 @@ fn as_operator_inner(name: NameP) -> Option<Operator> {
         } else if n.contains('+') || n.contains('-') {
             Operator {
                 level: 10,
+                name,
+                ty: AssociativityType::InfixL,
+            }
+        } else if n.contains('*') || n.contains('/') {
+            Operator {
+                level: 15,
                 name,
                 ty: AssociativityType::InfixL,
             }
