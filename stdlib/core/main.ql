@@ -11,7 +11,7 @@ def - : Int -> Int -> Int {
     i - = sub_int_unchecked i
 }
 
-def :-[T]: T -> List[T] -> List[T] {
+def :- [T]: T -> List[T] -> List[T] {
     x :- xs = Cons { value = x, list = xs }
 }
 

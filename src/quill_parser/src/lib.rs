@@ -1124,9 +1124,7 @@ fn apply_function_to_arguments(mut terms: Vec<ExprPatP>) -> ExprPatP {
     }
 }
 
-fn group_terms(
-    mut terms: Vec<(Option<(Operator, ExprPatP)>, Vec<ExprPatP>)>,
-) -> DiagnosticResult<ExprPatP> {
+fn group_terms(mut terms: FunctionApplication) -> DiagnosticResult<ExprPatP> {
     if terms.is_empty() {
         panic!("can't be empty")
     }
@@ -1245,6 +1243,8 @@ fn group_terms(
     }
 }
 
+type FunctionApplication = Vec<(Option<(Operator, ExprPatP)>, Vec<ExprPatP>)>;
+
 /// Collapse function application down so that we are left with a list of operators
 /// and the operands to the right of them.
 /// E.g. `foo bar + a b c - x /` is converted to
@@ -1254,9 +1254,7 @@ fn group_terms(
 /// (infixl, +) -> [x]
 /// (infixl, +) -> []
 /// ```
-fn collapse_func_application(
-    terms: Vec<(Option<Operator>, ExprPatP)>,
-) -> Vec<(Option<(Operator, ExprPatP)>, Vec<ExprPatP>)> {
+fn collapse_func_application(terms: Vec<(Option<Operator>, ExprPatP)>) -> FunctionApplication {
     let mut result = Vec::new();
     // If we're currently "inside" a function application, this is not None.
     let mut active_operator = None;
@@ -1318,28 +1316,27 @@ impl IdentifierP {
 
 /// Returns the properties of the given operator.
 fn as_operator_inner(name: NameP) -> Option<Operator> {
-    match name.name.as_str() {
-        "+" | "-" => Some(Operator {
-            level: 10,
-            name,
-            ty: AssociativityType::InfixL,
-        }),
-        ":-" => Some(Operator {
+    let n = name.name.as_str();
+    if n.contains(':') {
+        Some(Operator {
             level: 5,
             name,
             ty: AssociativityType::InfixR,
-        }),
-        _ => {
-            if name.name.as_str().chars().next().unwrap().is_alphanumeric() {
-                None
-            } else {
-                Some(Operator {
-                    level: 1,
-                    name,
-                    ty: AssociativityType::InfixL,
-                })
-            }
-        }
+        })
+    } else if n.contains('+') || n.contains('-') {
+        Some(Operator {
+            level: 10,
+            name,
+            ty: AssociativityType::InfixL,
+        })
+    } else if name.name.as_str().chars().next().unwrap().is_alphanumeric() {
+        None
+    } else {
+        Some(Operator {
+            level: 1,
+            name,
+            ty: AssociativityType::InfixL,
+        })
     }
 }
 
