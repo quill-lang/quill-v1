@@ -855,7 +855,8 @@ impl<'input> Parser<'input> {
             ));
         }
 
-        DiagnosticResult::sequence(terms).bind(|terms| deduce_associativity(self.source_file, terms))
+        DiagnosticResult::sequence(terms)
+            .bind(|terms| deduce_associativity(self.source_file, terms))
     }
 
     /// Parses a lambda expression.
@@ -1089,7 +1090,10 @@ impl<'input> Parser<'input> {
     }
 }
 
-fn deduce_associativity(source_file: &SourceFileIdentifier, terms: Vec<ExprPatP>) -> DiagnosticResult<ExprPatP> {
+fn deduce_associativity(
+    source_file: &SourceFileIdentifier,
+    terms: Vec<ExprPatP>,
+) -> DiagnosticResult<ExprPatP> {
     // Deduce the associativity of each operator in this list.
     let associativities = terms
         .into_iter()
