@@ -9,7 +9,47 @@ def le_int: Int -> Int -> Bool { compiler_intrinsic }
 def eq_int: Int -> Int -> Bool { compiler_intrinsic }
 def ne_int: Int -> Int -> Bool { compiler_intrinsic }
 
+def + : Int -> Int -> Int {
+    + = add_int_unchecked
+}
+
+def - : Int -> Int -> Int {
+    - = sub_int_unchecked
+}
+
+def * : Int -> Int -> Int {
+    * = mul_int_unchecked
+}
+
+def / : Int -> Int -> Int {
+    / = div_int_unchecked
+}
+
+def > : Int -> Int -> Bool {
+    > = gt_int
+}
+
+def < : Int -> Int -> Bool {
+    < = lt_int
+}
+
+def >= : Int -> Int -> Bool {
+    >= = ge_int
+}
+
+def <= : Int -> Int -> Bool {
+    <= = le_int
+}
+
+def == : Int -> Int -> Bool {
+    == = eq_int
+}
+
+def != : Int -> Int -> Bool {
+    != = ne_int
+}
+
 def factorial: Int -> Int {
     factorial 0 = 1
-    factorial n = mul_int_unchecked (copy &n) (factorial (sub_int_unchecked n 1))
+    factorial n = (copy &n) * (factorial (n - 1))
 }

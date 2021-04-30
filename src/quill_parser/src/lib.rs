@@ -855,7 +855,7 @@ impl<'input> Parser<'input> {
             ));
         }
 
-        DiagnosticResult::sequence(terms).bind(deduce_associativity)
+        DiagnosticResult::sequence(terms).bind(|terms| deduce_associativity(self.source_file, terms))
     }
 
     /// Parses a lambda expression.
@@ -1089,7 +1089,7 @@ impl<'input> Parser<'input> {
     }
 }
 
-fn deduce_associativity(terms: Vec<ExprPatP>) -> DiagnosticResult<ExprPatP> {
+fn deduce_associativity(source_file: &SourceFileIdentifier, terms: Vec<ExprPatP>) -> DiagnosticResult<ExprPatP> {
     // Deduce the associativity of each operator in this list.
     let associativities = terms
         .into_iter()
@@ -1105,7 +1105,7 @@ fn deduce_associativity(terms: Vec<ExprPatP>) -> DiagnosticResult<ExprPatP> {
         .collect::<Vec<_>>();
 
     // Now, group the terms into expressions by their associativity.
-    group_terms(collapse_func_application(associativities))
+    group_terms(source_file, collapse_func_application(associativities))
 
     // let mut terms = terms.into_iter();
     // let first = terms.next().unwrap();
@@ -1124,7 +1124,10 @@ fn apply_function_to_arguments(mut terms: Vec<ExprPatP>) -> ExprPatP {
     }
 }
 
-fn group_terms(mut terms: FunctionApplication) -> DiagnosticResult<ExprPatP> {
+fn group_terms(
+    source_file: &SourceFileIdentifier,
+    mut terms: FunctionApplication,
+) -> DiagnosticResult<ExprPatP> {
     if terms.is_empty() {
         panic!("can't be empty")
     }
@@ -1169,7 +1172,7 @@ fn group_terms(mut terms: FunctionApplication) -> DiagnosticResult<ExprPatP> {
             if op.level == highest_associativity {
                 // The current term must be parsed and added to the list of processed terms.
                 let (result, more_messages) =
-                    group_terms(std::mem::take(&mut current_term)).destructure();
+                    group_terms(source_file, std::mem::take(&mut current_term)).destructure();
                 messages.extend(more_messages);
                 if let Some(result) = result {
                     terms_processed.push((Some(op_expr), result));
@@ -1185,7 +1188,7 @@ fn group_terms(mut terms: FunctionApplication) -> DiagnosticResult<ExprPatP> {
         }
     }
     if current_term.len() > 1 || current_term[0].0.is_some() || !current_term[0].1.is_empty() {
-        let (result, more_messages) = group_terms(current_term).destructure();
+        let (result, more_messages) = group_terms(source_file, current_term).destructure();
         messages.extend(more_messages);
         if let Some(result) = result {
             terms_processed.push((None, result));
@@ -1197,7 +1200,24 @@ fn group_terms(mut terms: FunctionApplication) -> DiagnosticResult<ExprPatP> {
     // Now, regroup the processed terms according to the associativity type.
     match ty {
         AssociativityType::NonAssociative => {
-            unimplemented!()
+            if terms_processed.len() == 2 {
+                let (result_operator, right) = terms_processed.pop().unwrap();
+                let (operator, left) = terms_processed.pop().unwrap();
+                terms_processed.push((
+                    result_operator,
+                    ExprPatP::Apply(
+                        Box::new(ExprPatP::Apply(Box::new(operator.unwrap()), Box::new(left))),
+                        Box::new(right),
+                    ),
+                ));
+            } else {
+                messages.push(ErrorMessage::new(
+                    "cannot apply non-associative operators to more than two arguments".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, terms_processed[2].0.as_ref().unwrap()),
+                ));
+                return DiagnosticResult::fail_many(messages);
+            }
         }
         AssociativityType::InfixR => {
             while terms_processed.len() > 1 {
@@ -1317,25 +1337,33 @@ impl IdentifierP {
 /// Returns the properties of the given operator.
 fn as_operator_inner(name: NameP) -> Option<Operator> {
     let n = name.name.as_str();
-    if n.contains(':') {
-        Some(Operator {
-            level: 5,
-            name,
-            ty: AssociativityType::InfixR,
-        })
-    } else if n.contains('+') || n.contains('-') {
-        Some(Operator {
-            level: 10,
-            name,
-            ty: AssociativityType::InfixL,
-        })
-    } else if name.name.as_str().chars().next().unwrap().is_alphanumeric() {
+    if name.name.as_str().chars().next().unwrap().is_alphanumeric() {
         None
     } else {
-        Some(Operator {
-            level: 1,
-            name,
-            ty: AssociativityType::InfixL,
+        Some(if n.contains(':') {
+            Operator {
+                level: 5,
+                name,
+                ty: AssociativityType::InfixR,
+            }
+        } else if n.contains('+') || n.contains('-') {
+            Operator {
+                level: 10,
+                name,
+                ty: AssociativityType::InfixL,
+            }
+        } else if n.contains('=') || n.contains('<') || n.contains('>') {
+            Operator {
+                level: 3,
+                name,
+                ty: AssociativityType::NonAssociative,
+            }
+        } else {
+            Operator {
+                level: 1,
+                name,
+                ty: AssociativityType::InfixL,
+            }
         })
     }
 }
