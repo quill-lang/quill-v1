@@ -231,7 +231,6 @@ fn check_ownership_walk(
                 // In a previous run of this function, we freed this variable.
                 // Don't update any instructions.
             }
-            StatementKind::CreateLambda { .. } => unimplemented!("lambdas not implemented"),
             StatementKind::ConstructData { fields, target, .. } => {
                 for field_value in fields.values() {
                     make_rvalue_used(

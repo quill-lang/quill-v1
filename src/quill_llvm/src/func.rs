@@ -1478,8 +1478,7 @@ fn monomorphise<'ctx>(
                         }
                     }
 
-                    StatementKind::CreateLambda { ty, .. }
-                    | StatementKind::ConstructData { ty, .. } => {
+                    StatementKind::ConstructData { ty, .. } => {
                         mono(ty);
                     }
 
@@ -1503,7 +1502,6 @@ fn monomorphise<'ctx>(
                     | StatementKind::InstanceSymbol { target, .. }
                     | StatementKind::Apply { target, .. }
                     | StatementKind::ConstructFunctionObject { target, .. }
-                    | StatementKind::CreateLambda { target, .. }
                     | StatementKind::ConstructData { target, .. } => local_reprs[target].is_some(),
 
                     StatementKind::InvokeFunction { .. }

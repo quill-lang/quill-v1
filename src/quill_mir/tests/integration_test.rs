@@ -38,7 +38,7 @@ async fn test_mir() {
                     project_index.insert(file_ident.clone(), index);
                     check(&file_ident, &project_index, parsed)
                         .deny()
-                        .bind(|typeck| to_mir(&project_index, typeck))
+                        .map(|typeck| to_mir(&project_index, typeck, &file_ident))
                 })
             })
             .deny();

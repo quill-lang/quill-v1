@@ -531,7 +531,7 @@ fn generate_constraints(
                             .map(|param| {
                                 (param, expr.assumptions.0.remove(&param).unwrap_or_default())
                             })
-                            .zip(param_types)
+                            .zip(param_types.clone())
                         {
                             for assumption in assumptions {
                                 new_constraints.push((
@@ -557,7 +557,14 @@ fn generate_constraints(
                                 type_variable: lambda_type,
                                 contents: ExpressionContentsT::Lambda {
                                     lambda_token,
-                                    params,
+                                    params: params
+                                        .into_iter()
+                                        .zip(
+                                            param_types
+                                                .into_iter()
+                                                .map(|id| TypeVariable::Unknown { id }),
+                                        )
+                                        .collect(),
                                     expr: Box::new(expr.expr),
                                 },
                             },
@@ -1704,10 +1711,18 @@ fn substitute_contents(
             lambda_token,
             params,
             expr,
-        } => substitute(substitution, *expr, source_file).map(|expr| ExpressionContents::Lambda {
-            lambda_token,
-            params,
-            expr: Box::new(expr),
+        } => substitute(substitution, *expr, source_file).bind(|expr| {
+            params
+                .into_iter()
+                .map(|(name, ty)| {
+                    substitute_type(substitution, ty, source_file, name.range).map(|ty| (name, ty))
+                })
+                .collect::<DiagnosticResult<_>>()
+                .map(|params| ExpressionContents::Lambda {
+                    lambda_token,
+                    params,
+                    expr: Box::new(expr),
+                })
         }),
         ExpressionContentsT::Let {
             let_token,

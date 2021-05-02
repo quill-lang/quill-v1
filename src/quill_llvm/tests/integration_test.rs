@@ -48,8 +48,7 @@ async fn test_llvm() {
                     project_index.insert(file_ident.clone(), index);
                     check(&file_ident, &project_index, parsed)
                         .deny()
-                        .bind(|typeck| to_mir(&project_index, typeck))
-                        .deny()
+                        .map(|typeck| to_mir(&project_index, typeck, &file_ident))
                         .bind(|mir| borrow_check(&file_ident, mir))
                         .map(|result| (result, project_index))
                 })

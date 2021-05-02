@@ -63,7 +63,7 @@ impl Display for SourceFileHIR {
 /// then `arg_types` would be `[int]` and `return_type` would be `int -> int`.
 #[derive(Debug)]
 pub struct Definition {
-    range: Range,
+    pub range: Range,
     /// The type variables at the start of this definition.
     pub type_variables: Vec<TypeParameter>,
     pub arg_types: Vec<Type>,
@@ -85,7 +85,7 @@ impl Ranged for Definition {
 
 #[derive(Debug)]
 pub struct DefinitionCase {
-    range: Range,
+    pub range: Range,
     pub arg_patterns: Vec<Pattern>,
     pub replacement: Expression,
 }
@@ -367,10 +367,10 @@ impl Ranged for Expression {
 }
 
 /// Represents the contents of an expression (which may or may not have been already type checked).
-/// The type `T` represents the type variables that we are substituting into this symbol.
+/// The type `V` represents the type variables that we are substituting into this symbol.
 /// You should use `ExpressionContents` or `ExpressionContentsT` instead of this enum directly.
 #[derive(Debug)]
-pub enum ExpressionContentsGeneric<E, T> {
+pub enum ExpressionContentsGeneric<E, T, V> {
     /// An argument to this function e.g. `x`.
     Argument(NameP),
     /// A local variable declared by a `lambda` or `let` expression.
@@ -384,7 +384,7 @@ pub enum ExpressionContentsGeneric<E, T> {
         /// The type variables we're substituting into this symbol.
         /// If using an `ExpressionT`, this should be a vector of `TypeVariable`.
         /// If using an `Expression`, this should be a vector of `Type`.
-        type_variables: T,
+        type_variables: V,
     },
     /// Apply the left hand side to the right hand side, e.g. `a b`.
     /// More complicated expressions e.g. `a b c d` can be desugared into `((a b) c) d`.
@@ -392,7 +392,7 @@ pub enum ExpressionContentsGeneric<E, T> {
     /// A lambda abstraction, specifically `lambda params -> expr`.
     Lambda {
         lambda_token: Range,
-        params: Vec<NameP>,
+        params: Vec<(NameP, T)>,
         expr: Box<E>,
     },
     /// A let statement, specifically `let identifier = expr;`.
@@ -424,7 +424,7 @@ pub enum ExpressionContentsGeneric<E, T> {
     Copy { copy_token: Range, expr: Box<E> },
 }
 
-impl<E, T> Ranged for ExpressionContentsGeneric<E, T>
+impl<E, T, V> Ranged for ExpressionContentsGeneric<E, T, V>
 where
     E: Ranged,
 {
@@ -461,9 +461,9 @@ where
     }
 }
 
-pub type ExpressionContents = ExpressionContentsGeneric<Expression, Vec<Type>>;
+pub type ExpressionContents = ExpressionContentsGeneric<Expression, Type, Vec<Type>>;
 pub type ExpressionContentsT =
-    ExpressionContentsGeneric<ExpressionT, HashMap<String, TypeVariable>>;
+    ExpressionContentsGeneric<ExpressionT, TypeVariable, HashMap<String, TypeVariable>>;
 
 /// Represents a declaration that may be in a different source file.
 pub struct ForeignDeclaration<T> {

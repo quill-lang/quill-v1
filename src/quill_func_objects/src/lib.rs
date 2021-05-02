@@ -105,7 +105,6 @@ fn convert_stmt(stmt: Statement, arities: &HashMap<QualifiedName, u64>) -> Vec<S
         StatementKind::DropIfAlive { .. } => {
             unreachable!("the borrow checker should have deleted these statements already")
         }
-        StatementKind::CreateLambda { .. } => unimplemented!(),
         kind => vec![Statement {
             range: stmt.range,
             kind,

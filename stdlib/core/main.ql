@@ -7,7 +7,11 @@ def main: Unit {
     main = (
         // "Hello, world!" in Unicode code points is
         // 72 101 108 108 111 44 32 119 111 114 108 100 33
-        print_list (72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty)
+        if_lazy false (
+            nop
+        ) (
+            \a -> print_list (72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty)
+        )
         newline unit
 
         print_factorials 0 20
