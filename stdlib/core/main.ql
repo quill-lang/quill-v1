@@ -19,7 +19,7 @@ def main: Unit {
 }
 
 def print_factorials: Int -> Int -> Unit {
-    print_factorials low high = if_lazy ((copy &low) > (copy &high)) nop (print_factorials_inner low high)
+    print_factorials low high = if_lazy ((copy &low) > (copy &high)) nop (\a -> print_factorials_inner low high a)
 }
 
 def nop: Unit -> Unit {

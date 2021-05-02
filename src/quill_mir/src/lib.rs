@@ -1,5 +1,7 @@
-//! This module contains the m range: (), kind: ()id-level intermediate representation of code.
+//! This module contains the mid-level intermediate representation of code.
 //! Much of this code is heavily inspired by the Rust compiler.
+
+#![feature(drain_filter)]
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -728,9 +730,7 @@ pub fn to_mir(
         .flatten()
         .collect();
 
-    let out = SourceFileMIR { definitions };
-    println!("{}", out);
-    out
+    SourceFileMIR { definitions }
 }
 
 /// While we're translating a definition into MIR, this structure is passed around
@@ -774,6 +774,7 @@ impl DefinitionTranslationContext<'_> {
     }
 
     pub fn get_name_of_local(&self, local: &str) -> LocalVariableName {
+        // println!("Local: {}, Map: {:#?}", local, self.local_name_map);
         self.local_name_map[local]
     }
 }
@@ -1920,29 +1921,42 @@ fn generate_expr(
             params,
             expr,
         } => {
-            // Create the given lambda.
-            let variable = ctx.new_local_variable(LocalVariableInfo {
-                range,
-                ty,
-                name: None,
-            });
             // Create a new definition for this lambda.
-            // TODO: Move all used variables inside the lambda definition.
-            //let used_variables = ;
+            // Move all used variables inside the lambda definition.
+            let mut used_variables = list_used_locals(&*expr);
+            used_variables
+                .drain_filter(|name| params.iter().any(|(param_name, _)| param_name == name))
+                .for_each(drop);
+            used_variables.sort_by(|a, b| a.name.cmp(&b.name));
+            used_variables.dedup();
+            let arg_types = used_variables
+                .iter()
+                .map(|name| {
+                    ctx.local_variable_names[&ctx.local_name_map[&name.name]]
+                        .ty
+                        .clone()
+                })
+                .chain(params.iter().map(|(_, ty)| ty.clone()))
+                .collect::<Vec<_>>();
             let def = Definition {
                 range: lambda_token,
                 type_variables: ctx.type_variables.clone(),
-                arg_types: params.iter().map(|(_, ty)| ty.clone()).collect(),
+                arg_types,
                 return_type: expr.ty.clone(),
                 body: DefinitionBody::PatternMatch(vec![DefinitionCase {
                     range,
-                    arg_patterns: params
+                    arg_patterns: used_variables
                         .iter()
-                        .map(|(n, _)| Pattern::Named(n.clone()))
+                        .chain(params.iter().map(|(n, _)| n))
+                        .map(|n| Pattern::Named(n.clone()))
                         .collect(),
                     replacement: convert_locals_to_args(
                         *expr,
-                        params.iter().map(|(n, _)| n.clone()).collect(),
+                        used_variables
+                            .iter()
+                            .cloned()
+                            .chain(params.iter().map(|(n, _)| n.clone()))
+                            .collect(),
                     ),
                 }]),
             };
@@ -1957,26 +1971,78 @@ fn generate_expr(
             );
             ctx.additional_definitions.push(inner);
             ctx.additional_definitions.extend(inner_inner);
-            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
-                statements: vec![Statement {
-                    range,
-                    kind: StatementKind::InstanceSymbol {
-                        name: QualifiedName {
-                            source_file: ctx.source_file.clone(),
-                            name: format!("{}/lambda/{}", ctx.def_name, lambda_number),
-                            range,
-                        },
-                        type_variables: ctx
-                            .type_variables
-                            .iter()
-                            .map(|param| Type::Variable {
-                                variable: param.name.clone(),
-                                parameters: Vec::new(),
-                            })
-                            .collect(),
-                        target: LocalVariableName::Local(variable),
+
+            // Now that we've created the lambda as a definition, we need to instance this lambda into scope.
+            // In particular, we need to call this new definition a few times to supply the list of used locals.
+            let mut curry_types = vec![ty];
+            for var in &used_variables {
+                curry_types.push(Type::Function(
+                    Box::new(
+                        ctx.local_variable_names[&ctx.local_name_map[&var.name]]
+                            .ty
+                            .clone(),
+                    ),
+                    Box::new(curry_types.last().unwrap().clone()),
+                ));
+            }
+            let mut statements = Vec::new();
+            let mut variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty: curry_types.pop().unwrap(),
+                name: None,
+            });
+            statements.push(Statement {
+                range,
+                kind: StatementKind::InstanceSymbol {
+                    name: QualifiedName {
+                        source_file: ctx.source_file.clone(),
+                        name: format!("{}/lambda/{}", ctx.def_name, lambda_number),
+                        range,
                     },
-                }],
+                    type_variables: ctx
+                        .type_variables
+                        .iter()
+                        .map(|param| Type::Variable {
+                            variable: param.name.clone(),
+                            parameters: Vec::new(),
+                        })
+                        .collect(),
+                    target: LocalVariableName::Local(variable),
+                },
+            });
+            for (local, ty) in used_variables
+                .into_iter()
+                .zip(curry_types.into_iter().rev())
+            {
+                // Apply the variable to this local.
+                let next_variable = ctx.new_local_variable(LocalVariableInfo {
+                    range,
+                    ty: ty.clone(),
+                    name: None,
+                });
+                statements.push(Statement {
+                    range,
+                    kind: StatementKind::Apply {
+                        argument: Box::new(Rvalue::Use(Operand::Move(Place {
+                            local: ctx.local_name_map[&local.name],
+                            projection: Vec::new(),
+                        }))),
+                        function: Box::new(Rvalue::Use(Operand::Move(Place {
+                            local: LocalVariableName::Local(variable),
+                            projection: Vec::new(),
+                        }))),
+                        target: LocalVariableName::Local(next_variable),
+                        return_type: ty,
+                        argument_type: ctx.local_variable_names[&ctx.local_name_map[&local.name]]
+                            .ty
+                            .clone(),
+                    },
+                });
+                variable = next_variable;
+            }
+
+            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements,
                 terminator,
             });
             ExprGeneratedM {
@@ -2333,6 +2399,58 @@ fn generate_expr(
                 locals_to_drop: inner.locals_to_drop,
             }
         }
+    }
+}
+
+/// Creates a list of all local or argument variables used inside this expression.
+fn list_used_locals(expr: &Expression) -> Vec<NameP> {
+    match &expr.contents {
+        ExpressionContentsGeneric::Argument(arg) => vec![arg.clone()],
+        ExpressionContentsGeneric::Local(local) => vec![local.clone()],
+        ExpressionContentsGeneric::Symbol { .. } => Vec::new(),
+        ExpressionContentsGeneric::Apply(l, r) => {
+            let mut result = list_used_locals(l);
+            result.extend(list_used_locals(r));
+            result
+        }
+        ExpressionContentsGeneric::Lambda { params, expr, .. } => {
+            // Remove the lambda parameter names from the list.
+            let mut result = list_used_locals(&*expr);
+            result
+                .drain_filter(|name| params.iter().any(|(param_name, _)| param_name == name))
+                .for_each(drop);
+            result
+        }
+        ExpressionContentsGeneric::Let { expr, .. } => list_used_locals(&*expr),
+        ExpressionContentsGeneric::Block { statements, .. } => {
+            let mut result = statements
+                .iter()
+                .map(list_used_locals)
+                .flatten()
+                .collect::<Vec<_>>();
+            let let_locals = statements
+                .iter()
+                .filter_map(|stmt| {
+                    if let ExpressionContentsGeneric::Let { name, .. } = &stmt.contents {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            result
+                .drain_filter(|name| let_locals.contains(name))
+                .for_each(drop);
+            result
+        }
+        ExpressionContentsGeneric::ConstructData { fields, .. } => fields
+            .iter()
+            .map(|(_, field_expr)| list_used_locals(field_expr))
+            .flatten()
+            .collect::<Vec<_>>(),
+        ExpressionContentsGeneric::ConstantValue { .. } => Vec::new(),
+        ExpressionContentsGeneric::Borrow { expr, .. } => list_used_locals(&*expr),
+        ExpressionContentsGeneric::Copy { expr, .. } => list_used_locals(&*expr),
     }
 }
 
