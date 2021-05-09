@@ -1,5 +1,4 @@
 - Make `ProjectTypes` a real struct so that we can abstract away the code to retrieve a named type or definition.
-- Convert `lambda` closures into MIR; in order to do this, we'd probably need some kind of function trait or typeclass so that it can store the data that it captures. But this would probably break the type checker, so it might be better to make the MIR agnostic over whether it's calling a function or a lambda, and then only when monomorphising and converting to LIR should we care about the specifics.
 - Make it a hard error to use a `let` statement outside a block. This can mess with move checking and it's basically a useless feature anyway since it returns the unit type.
 - Make a proper `main` entry point function.
 - When destructuring an object, drop all fields that we don't care about.
@@ -7,7 +6,6 @@
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
 - Decide what terms to use for high level constructs: project, package, module, crate, binary...?
 - Implement a proper vtable for function objects and dynamic trait objects. Should dynamic trait objects be limited to single dispatch?
-- Make imports.
 - The heap allocation algorithm might stack overflow with large projects with lots of indirection. Convert recursion into a loop.
 - Maybe add a keyword to hint to the compiler that we want heap allocation on a specific variable.
 - Convert `LLVMStructRepresentation` to a specialised `AnyTypeRepresentation` to avoid code duplication.
