@@ -14,7 +14,7 @@ clap = { version = "~2.33.3", features = ["yaml"] }
 console = "^0.14"
 indicatif = "^0.16"
 tracing = "^0.1.25"
-tracing-subscriber = "^0.2.16"
+tracing-subscriber = "^0.2.18"
 serde_json = "1.0"
 serde = "1.0"
 toml = "0.5"
