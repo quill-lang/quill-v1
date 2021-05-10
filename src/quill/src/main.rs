@@ -95,7 +95,7 @@ impl CompilerLocation {
             }
         };
         command.arg(json);
-        println!("c: {:#?}", command);
+        info!("Executing {:#?}", command);
         let status = command.status().await.unwrap();
         if !status.success() {
             std::process::exit(1);
