@@ -156,7 +156,7 @@ async fn download_tar_gz_or_exit<U: IntoUrl>(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:30.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}")
         .progress_chars("#>-")
     );
-    progress_bar.set_message(&format!("{} downloading", display_name));
+    progress_bar.set_message(format!("{} downloading", display_name));
 
     let mut bytes = Vec::new();
 
@@ -176,7 +176,7 @@ async fn download_tar_gz_or_exit<U: IntoUrl>(
         }
     }
 
-    progress_bar.set_message(&format!("{} unpacking", display_name));
+    progress_bar.set_message(format!("{} unpacking", display_name));
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let done2 = std::sync::Arc::clone(&done);
@@ -206,7 +206,7 @@ async fn download_tar_gz_or_exit<U: IntoUrl>(
         }
     }
 
-    progress_bar.finish_with_message(&format!("{} done", display_name));
+    progress_bar.finish_with_message(format!("{} done", display_name));
 }
 
 async fn download_self(host: HostType, expected_version: QuillVersion) {
