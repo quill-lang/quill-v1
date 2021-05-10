@@ -1,0 +1,36 @@
+# https://help.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    # Files stored in repository root
+    directory: "/"
+    schedule:
+      interval: "daily"
+    reviewers:
+      - "thirdsgames"
+
+  - package-ecosystem: "npm"
+    # Files stored in `quill_vscode` directory
+    directory: "/quill_vscode"
+    schedule:
+      interval: "daily"
+    reviewers:
+      - "thirdsgames"
+  
+  - package-ecosystem: "npm"
+    # Files stored in `quill_vscode/client` directory
+    directory: "/quill_vscode/client"
+    schedule:
+      interval: "daily"
+    reviewers:
+      - "thirdsgames"
+
+  - package-ecosystem: "github-actions"
+    # Workflow files stored in the
+    # default location of `.github/workflows`
+    directory: "/"
+    schedule:
+      interval: "daily"
+    reviewers:
+      - "thirdsgames"
