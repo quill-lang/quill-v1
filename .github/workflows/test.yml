@@ -38,7 +38,7 @@ jobs:
         run: cargo run --bin download_compiler_deps
 
       - name: Run test suite
-        uses: actions-rs/tarpaulin@v1
+        uses: actions-rs/tarpaulin@v0.1
         with:
           args: '-v --out Xml'
       
