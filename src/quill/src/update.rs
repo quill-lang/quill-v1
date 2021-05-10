@@ -45,7 +45,7 @@ pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
     if let crate::CompilerLocation::Installed { host, root } = &cli_config.compiler_location {
         eprintln!("checking latest version...",);
         let version: QuillVersion = download_text_or_exit(
-            "https://github.com/quill-lang/quill/releases/download/latest/version.txt",
+            "https://github.com/quill-lang/quill/releases/download/latest-release/version.txt",
         )
         .await
         .try_into()
@@ -217,7 +217,7 @@ async fn download_self(host: HostType, expected_version: QuillVersion) {
     // Download quill itself and perform a self update.
     download_tar_gz_or_exit(
         format!(
-            "https://github.com/quill-lang/quill/releases/download/latest/{}_quill.tar.gz",
+            "https://github.com/quill-lang/quill/releases/download/latest-release/{}_quill.tar.gz",
             host.component_prefix()
         ),
         "quill",
@@ -254,7 +254,7 @@ async fn download_artifact(
     // Download quill itself and perform a self update.
     download_tar_gz_or_exit(
         format!(
-            "https://github.com/quill-lang/quill/releases/download/latest/{}.tar.gz",
+            "https://github.com/quill-lang/quill/releases/download/latest-release/{}.tar.gz",
             name
         ),
         display_name,

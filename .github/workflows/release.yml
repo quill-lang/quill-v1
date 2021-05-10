@@ -1,9 +1,9 @@
-name: release nightly
+name: release latest
 
 on:
   push:
     branches:
-      - nightly
+      - latest
 
 jobs:
   version-gen:
@@ -164,8 +164,8 @@ jobs:
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          prerelease: false
-          automatic_release_tag: latest
+          prerelease: true
+          automatic_release_tag: latest-release
           files: |
             quill-*/*
             compiler-deps/*
