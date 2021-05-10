@@ -1,9 +1,9 @@
-name: release latest
+name: release nightly
 
 on:
   push:
     branches:
-      - latest
+      - nightly
 
 jobs:
   version-gen:
