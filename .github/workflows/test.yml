@@ -34,22 +34,23 @@ jobs:
       # - name: Cache compiler artifacts
       #   uses: Swatinem/rust-cache@v1
 
-      - name: Build project
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-
       - name: Download compiler dependencies
         run: cargo run --bin download_compiler_deps
 
-      - name: Check warnings
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -Dwarnings
-
       - name: Run test suite
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/tarpaulin@v1
         with:
-          command: test
-          args: --no-fail-fast
+          args: '-v --out Xml'
+      
+      - name: Publish coverage
+        uses: codecov/codecov-action@v1
+        with:
+          files: ./cobertura.xml
+          fail_ci_if_error: true
+          verbose: true
+      
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v1
+        with:
+          name: code-coverage-report
+          path: cobertura.xml
