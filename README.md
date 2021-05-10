@@ -1,7 +1,8 @@
 # The Quill Programming Language
 
-[![Run tests and produce release](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/test.yml)
-[![Check formatting](https://github.com/quill-lang/quill/actions/workflows/format.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/format.yml)
+[![release](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/release.yml)
+[![test](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/test.yml)
+[![format](https://github.com/quill-lang/quill/actions/workflows/format.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/format.yml)
 
 Quill is a modern programming language that aims to bring the functional paradigm to high-performance, low level programming.
 
