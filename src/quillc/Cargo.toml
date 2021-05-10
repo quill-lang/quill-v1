@@ -18,6 +18,7 @@ quill_borrow_check = { path = "../quill_borrow_check" }
 quill_func_objects = { path = "../quill_func_objects" }
 quill_llvm = { path = "../quill_llvm" }
 quill_link = { path = "../quill_link" }
+quill_target = { path = "../quill_target" }
 
 quillc_api = { path = "../quillc_api" }
 serde = { version = "1.0", features = ["derive"] }
