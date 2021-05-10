@@ -7,24 +7,18 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    reviewers:
-      - "thirdsgames"
 
   - package-ecosystem: "npm"
     # Files stored in `quill_vscode` directory
     directory: "/quill_vscode"
     schedule:
       interval: "daily"
-    reviewers:
-      - "thirdsgames"
   
   - package-ecosystem: "npm"
     # Files stored in `quill_vscode/client` directory
     directory: "/quill_vscode/client"
     schedule:
       interval: "daily"
-    reviewers:
-      - "thirdsgames"
 
   - package-ecosystem: "github-actions"
     # Workflow files stored in the
@@ -32,5 +26,3 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    reviewers:
-      - "thirdsgames"
