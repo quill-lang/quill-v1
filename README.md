@@ -1,6 +1,6 @@
 # The Quill Programming Language
 
-[![release](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/release.yml)
+[![release](https://github.com/quill-lang/quill/actions/workflows/release.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/release.yml)
 [![test](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/test.yml)
 [![format](https://github.com/quill-lang/quill/actions/workflows/format.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/format.yml)
 
