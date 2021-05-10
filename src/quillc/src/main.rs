@@ -1,4 +1,4 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
@@ -158,8 +158,10 @@ async fn invoke(invocation: QuillcInvocation) {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn compile_core() {
+    use quill_target::{
+        BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
+    };
     use std::path::PathBuf;
-    use quill_target::{BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor};
 
     let code_folder = PathBuf::from("../../stdlib/core").canonicalize().unwrap();
     let build_folder = code_folder.join("build");
@@ -175,5 +177,6 @@ async fn compile_core() {
             build_folder,
         },
         deps_directory: PathBuf::from("../../compiler-deps").canonicalize().unwrap(),
-    }).await
+    })
+    .await
 }
