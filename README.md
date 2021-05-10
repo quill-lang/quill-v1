@@ -3,6 +3,7 @@
 [![release latest](https://github.com/quill-lang/quill/actions/workflows/release-latest.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/release-latest.yml)
 [![test](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/test.yml)
 [![format](https://github.com/quill-lang/quill/actions/workflows/format.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/format.yml)
+[![codecov](https://codecov.io/gh/quill-lang/quill/branch/main/graph/badge.svg?token=K8DWQNBNI9)](https://codecov.io/gh/quill-lang/quill)
 
 Quill is a modern programming language that aims to bring the functional paradigm to high-performance, low level programming.
 

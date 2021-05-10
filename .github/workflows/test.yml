@@ -34,13 +34,19 @@ jobs:
       # - name: Cache compiler artifacts
       #   uses: Swatinem/rust-cache@v1
 
+      - name: Check warnings
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: -- -Dwarnings
+
       - name: Download compiler dependencies
         run: cargo run --bin download_compiler_deps
 
       - name: Run test suite
         uses: actions-rs/tarpaulin@v0.1
         with:
-          args: '-v --out Xml'
+          args: '-v --out Xml -- --test-threads 1'
       
       - name: Publish coverage
         uses: codecov/codecov-action@v1
