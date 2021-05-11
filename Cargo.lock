@@ -719,9 +719,9 @@ dependencies = [
 
 [[package]]
 name = "lsp-types"
-version = "0.88.0"
+version = "0.89.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8e8e042772e4e10b3785822f63c82399d0dd233825de44d2596f7fa86e023e0"
+checksum = "07731ecd4ee0654728359a5b95e2a254c857876c04b85225496a35d60345daa7"
 dependencies = [
  "bitflags",
  "serde",
@@ -732,9 +732,9 @@ dependencies = [
 
 [[package]]
 name = "lspower"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b269785ce828ea93b4181cd55736a1ac96d7f67691cb6a6078f9ad84f36a8b91"
+checksum = "3167a7555dbacd9ddf3c42eefcc2d4d5e46bb79cd1702bb25d4152bdf537d4b4"
 dependencies = [
  "anyhow",
  "async-trait",
