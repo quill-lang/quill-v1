@@ -23,7 +23,7 @@ jobs:
           env-var: LLVM_SYS_110_PREFIX
 
       - name: Install latest nightly rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@v1.0.7
         with:
           profile: minimal
           toolchain: nightly
