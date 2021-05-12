@@ -38,7 +38,7 @@ jobs:
           env-var: LLVM_SYS_110_PREFIX
 
       - name: Install latest nightly rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@v1.0.7
         with:
           profile: minimal
           toolchain: nightly
@@ -50,7 +50,7 @@ jobs:
       #   uses: Swatinem/rust-cache@v1
 
       - name: Build project
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.3
         with:
           command: build
           args: --release
@@ -59,13 +59,13 @@ jobs:
         run: cargo run --release --bin download_compiler_deps
 
       - name: Check warnings
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.3
         with:
           command: clippy
           args: --release -- -Dwarnings
 
       - name: Run test suite
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.3
         with:
           command: test
           args: --release --no-fail-fast
@@ -91,7 +91,7 @@ jobs:
 
       - name: Deploy rustdoc
         if: matrix.os == 'ubuntu-latest'
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v3.8.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
