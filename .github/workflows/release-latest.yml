@@ -50,7 +50,7 @@ jobs:
       #   uses: Swatinem/rust-cache@v1
 
       - name: Build project
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.3
         with:
           command: build
           args: --release
@@ -59,13 +59,13 @@ jobs:
         run: cargo run --release --bin download_compiler_deps
 
       - name: Check warnings
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.3
         with:
           command: clippy
           args: --release -- -Dwarnings
 
       - name: Run test suite
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.3
         with:
           command: test
           args: --release --no-fail-fast
