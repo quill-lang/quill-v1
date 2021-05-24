@@ -30,6 +30,11 @@ jobs:
           override: true
           components: clippy
 
+      - name: Install latest nightly zig
+        uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+
       # Cache is disabled since we're using the nightly compiler. It will probably just slow everything down.
       # - name: Cache compiler artifacts
       #   uses: Swatinem/rust-cache@v1

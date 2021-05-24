@@ -101,7 +101,7 @@ async fn test_llvm() {
         quill_llvm::build(fname, &proj, build_info.clone());
         quill_link::link(
             "out",
-            &Path::new("../../compiler-deps").canonicalize().unwrap(),
+            &PathBuf::from("zig"),
             build_info,
         );
     }
