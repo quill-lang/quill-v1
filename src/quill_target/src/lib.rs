@@ -13,7 +13,7 @@ pub struct TargetTriple {
 }
 
 impl TargetTriple {
-    pub fn to_zig_target(&self) -> &'static str {
+    pub fn to_zig_target(self) -> &'static str {
         match (self.arch, self.vendor, self.os) {
             (TargetArchitecture::X86_64, TargetVendor::Unknown, TargetOS::Linux) => {
                 "x86_64-linux-gnu"
