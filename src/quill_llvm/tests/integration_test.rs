@@ -99,10 +99,6 @@ async fn test_llvm() {
         };
 
         quill_llvm::build(fname, &proj, build_info.clone());
-        quill_link::link(
-            "out",
-            &PathBuf::from("zig"),
-            build_info,
-        );
+        quill_link::link("out", &PathBuf::from("zig"), build_info);
     }
 }

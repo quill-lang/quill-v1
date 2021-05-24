@@ -64,7 +64,9 @@ struct ZigRelease {
 
 pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
     if let crate::CompilerLocation::Installed { host, root } = &cli_config.compiler_location {
-        tokio::fs::remove_dir_all(root).await.unwrap();
+        tokio::fs::remove_dir_all(root.join("compiler-deps"))
+            .await
+            .unwrap();
         tokio::fs::create_dir_all(root.join("compiler-deps"))
             .await
             .unwrap();
