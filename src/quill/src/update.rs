@@ -50,7 +50,7 @@ struct ZigDownloadInfo {
 }
 #[derive(serde::Deserialize)]
 struct ZigReleaseDownloadInfo {
-    version: String,
+    // version: String,
     #[serde(rename = "x86_64-linux")]
     x86_64_linux: ZigRelease,
     #[serde(rename = "x86_64-windows")]
@@ -59,7 +59,7 @@ struct ZigReleaseDownloadInfo {
 #[derive(serde::Deserialize)]
 struct ZigRelease {
     tarball: String,
-    shasum: String,
+    // shasum: String,
 }
 
 pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
