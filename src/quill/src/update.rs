@@ -127,7 +127,9 @@ pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
             while let Some(folder) = compiler_deps_folders.next_entry().await.unwrap() {
                 if folder.file_name().to_string_lossy().starts_with("zig") {
                     // This is the zig folder.
-                    tokio::fs::rename(folder.path(), folder.path().with_file_name("zig")).await.unwrap();
+                    tokio::fs::rename(folder.path(), folder.path().with_file_name("zig"))
+                        .await
+                        .unwrap();
                     found_zig = true;
                     break;
                 }

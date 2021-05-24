@@ -40,9 +40,6 @@ jobs:
           command: clippy
           args: -- -Dwarnings
 
-      - name: Download compiler dependencies
-        run: cargo run --bin download_compiler_deps
-
       - name: Run test suite
         uses: actions-rs/tarpaulin@v0.1.3
         with:
