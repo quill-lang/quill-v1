@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct QuillcInvocation {
     pub build_info: BuildInfo,
-    pub deps_directory: PathBuf,
+    pub zig_compiler: PathBuf,
 }
 
 /// This is the format for `quill.toml` files.

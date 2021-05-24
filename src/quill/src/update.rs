@@ -1,6 +1,7 @@
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Display,
+    io::Cursor,
     path::PathBuf,
     sync::atomic::Ordering,
 };
@@ -11,6 +12,8 @@ use flate2::bufread::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::IntoUrl;
 use tar::Archive;
+use xz2::read::XzDecoder;
+use zip::ZipArchive;
 
 use crate::{error, CliConfig, HostType};
 
@@ -41,11 +44,35 @@ impl TryFrom<String> for QuillVersion {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct ZigDownloadInfo {
+    master: ZigReleaseDownloadInfo,
+}
+#[derive(serde::Deserialize)]
+struct ZigReleaseDownloadInfo {
+    version: String,
+    #[serde(rename = "x86_64-linux")]
+    x86_64_linux: ZigRelease,
+    #[serde(rename = "x86_64-windows")]
+    x86_64_windows: ZigRelease,
+}
+#[derive(serde::Deserialize)]
+struct ZigRelease {
+    tarball: String,
+    shasum: String,
+}
+
 pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
     if let crate::CompilerLocation::Installed { host, root } = &cli_config.compiler_location {
+        tokio::fs::remove_dir_all(root).await.unwrap();
+        tokio::fs::create_dir_all(root.join("compiler-deps"))
+            .await
+            .unwrap();
+
         eprintln!("checking latest version...",);
         let version: QuillVersion = download_text_or_exit(
             "https://github.com/quill-lang/quill/releases/download/latest/version.txt",
+            "quill version",
         )
         .await
         .try_into()
@@ -69,30 +96,50 @@ pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
             .await;
         }
 
-        // Download development components such as dev-linux and target-linux.
-        let dev_component = match host {
-            HostType::Linux => "dev-linux",
-            HostType::Windows => "dev-win",
+        // Download development components.
+        tokio::fs::create_dir_all(root.join("compiler-deps"))
+            .await
+            .unwrap();
+        // Download the Zig compiler.
+        let zig_version: ZigDownloadInfo = serde_json::from_str(
+            &download_text_or_exit("https://ziglang.org/download/index.json", "zig version").await,
+        )
+        .unwrap_or_else(|e| error(e));
+        let zig_release = zig_version.master;
+        let zig_download = match host {
+            HostType::Linux => zig_release.x86_64_linux,
+            HostType::Windows => zig_release.x86_64_windows,
         };
-
-        download_artifact(
-            dev_component,
-            dev_component,
-            None,
+        // Download the tarball.
+        download_archive_or_exit(
+            zig_download.tarball,
+            "zig compiler",
             root.join("compiler-deps"),
-            true,
+            None,
         )
         .await;
-
-        for component in &["target-linux", "target-win"] {
-            download_artifact(component, component, None, root.join("compiler-deps"), true).await;
+        // Rename the zig folder to `zig`.
+        {
+            let mut compiler_deps_folders = tokio::fs::read_dir(root.join("compiler-deps"))
+                .await
+                .unwrap();
+            let mut found_zig = false;
+            while let Some(folder) = compiler_deps_folders.next_entry().await.unwrap() {
+                if folder.file_name().to_string_lossy().starts_with("zig") {
+                    // This is the zig folder.
+                    tokio::fs::rename(folder.path(), folder.path().with_file_name("zig")).await.unwrap();
+                    found_zig = true;
+                    break;
+                }
+            }
+            assert!(found_zig)
         }
     } else {
         error("cannot update quill when running from source")
     }
 }
 
-async fn download_text_or_exit<U: IntoUrl>(url: U) -> String {
+async fn download_text_or_exit<U: IntoUrl>(url: U, request: &str) -> String {
     let response = match reqwest::Client::builder()
         .user_agent(APP_USER_AGENT)
         .build()
@@ -102,31 +149,53 @@ async fn download_text_or_exit<U: IntoUrl>(url: U) -> String {
         .await
     {
         Ok(response) => response,
-        Err(_) => error("could not fetch quill version (could not connect to server)"),
+        Err(_) => error(format!(
+            "could not fetch {} (could not connect to server)",
+            request
+        )),
     };
 
     if !response.status().is_success() {
         error(format!(
-            "could not fetch quill version (connected but server returned error code '{}')",
+            "could not fetch {} (connected but server returned error code '{}')",
+            request,
             response.status()
         ))
     }
 
     match response.text().await {
         Ok(text) => text,
-        Err(_) => {
-            error("could not fetch quill version (connected but could not retrieve response body)")
-        }
+        Err(_) => error(format!(
+            "could not fetch {} (connected but could not retrieve response body)",
+            request
+        )),
     }
 }
 
 /// If a version is provided, this function assumes that the tarball contains a `version.txt` file, and that the version should match the given expected version.
-async fn download_tar_gz_or_exit<U: IntoUrl>(
+/// Archive types `tar.gz`, `tar.xz` and `zip` are supported.
+async fn download_archive_or_exit<U: IntoUrl>(
     url: U,
     display_name: &str,
     dir: PathBuf,
     expected_version: Option<QuillVersion>,
 ) {
+    enum ArchiveType {
+        TarGz,
+        TarXz,
+        Zip,
+    }
+
+    let archive_type = if url.as_str().ends_with("tar.gz") {
+        ArchiveType::TarGz
+    } else if url.as_str().ends_with("tar.xz") {
+        ArchiveType::TarXz
+    } else if url.as_str().ends_with("zip") {
+        ArchiveType::Zip
+    } else {
+        panic!("url was {}", url.as_str())
+    };
+
     let mut response = match reqwest::Client::builder()
         .user_agent(APP_USER_AGENT)
         .build()
@@ -182,8 +251,38 @@ async fn download_tar_gz_or_exit<U: IntoUrl>(
     let done2 = std::sync::Arc::clone(&done);
     let dir2 = dir.clone();
     tokio::task::spawn_blocking(move || {
-        let mut archive = Archive::new(GzDecoder::new(bytes.as_slice()));
-        archive.unpack(dir2).unwrap();
+        match archive_type {
+            ArchiveType::TarGz => {
+                let mut archive = Archive::new(GzDecoder::new(bytes.as_slice()));
+                archive.unpack(dir2).unwrap();
+            }
+            ArchiveType::TarXz => {
+                let mut archive = Archive::new(XzDecoder::new(bytes.as_slice()));
+                archive.unpack(dir2).unwrap();
+            }
+            ArchiveType::Zip => {
+                let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+                for i in 0..archive.len() {
+                    let mut file = archive.by_index(i).unwrap();
+                    let outpath = match file.enclosed_name() {
+                        Some(path) => path.to_owned(),
+                        None => continue,
+                    };
+
+                    if (&*file.name()).ends_with('/') {
+                        std::fs::create_dir_all(&outpath).unwrap();
+                    } else {
+                        if let Some(p) = outpath.parent() {
+                            if !p.exists() {
+                                std::fs::create_dir_all(&p).unwrap();
+                            }
+                        }
+                        let mut outfile = std::fs::File::create(&outpath).unwrap();
+                        std::io::copy(&mut file, &mut outfile).unwrap();
+                    }
+                }
+            }
+        }
         done2.store(true, Ordering::SeqCst);
     });
 
@@ -215,7 +314,7 @@ async fn download_self(host: HostType, expected_version: QuillVersion) {
         .unwrap();
 
     // Download quill itself and perform a self update.
-    download_tar_gz_or_exit(
+    download_archive_or_exit(
         format!(
             "https://github.com/quill-lang/quill/releases/download/latest/{}_quill.tar.gz",
             host.component_prefix()
@@ -252,7 +351,7 @@ async fn download_artifact(
         .unwrap();
 
     // Download quill itself and perform a self update.
-    download_tar_gz_or_exit(
+    download_archive_or_exit(
         format!(
             "https://github.com/quill-lang/quill/releases/download/latest/{}.tar.gz",
             name

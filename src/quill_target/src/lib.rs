@@ -12,6 +12,22 @@ pub struct TargetTriple {
     pub env: Option<TargetEnvironment>,
 }
 
+impl TargetTriple {
+    pub fn to_zig_target(&self) -> &'static str {
+        match (self.arch, self.vendor, self.os) {
+            (TargetArchitecture::X86_64, TargetVendor::Unknown, TargetOS::Linux) => {
+                "x86_64-linux-gnu"
+            }
+            (TargetArchitecture::X86_64, TargetVendor::Pc, TargetOS::Windows) => {
+                "x86_64-windows-gnu"
+            }
+            _ => {
+                panic!("unsupported target")
+            }
+        }
+    }
+}
+
 impl Display for TargetTriple {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(env) = &self.env {

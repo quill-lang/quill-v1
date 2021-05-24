@@ -150,7 +150,7 @@ async fn invoke(invocation: QuillcInvocation) {
     quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
     quill_link::link(
         &project_config.name,
-        &invocation.deps_directory,
+        &invocation.zig_compiler,
         invocation.build_info,
     );
 }
@@ -176,7 +176,7 @@ async fn compile_core() {
             code_folder,
             build_folder,
         },
-        deps_directory: PathBuf::from("../../compiler-deps").canonicalize().unwrap(),
+        zig_compiler: PathBuf::from("zig"),
     })
     .await
 }

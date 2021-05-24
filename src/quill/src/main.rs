@@ -102,15 +102,19 @@ impl CompilerLocation {
         }
     }
 
-    /// Where is the `compiler-deps` folder for this compiler stored?
-    fn deps_directory(&self) -> PathBuf {
+    /// Where is the Zig compiler associated with this Quill compiler stored?
+    fn zig_compiler(&self) -> PathBuf {
         match self {
-            CompilerLocation::Cargo { source } => {
-                source.join("compiler-deps").canonicalize().unwrap()
+            CompilerLocation::Cargo { .. } => {
+                // Use the system Zig installation.
+                PathBuf::from("zig")
             }
-            CompilerLocation::Installed { root, .. } => {
-                root.join("compiler-deps").canonicalize().unwrap()
-            }
+            CompilerLocation::Installed { root, .. } => root
+                .join("compiler-deps")
+                .canonicalize()
+                .unwrap()
+                .join("zig")
+                .join("zig"),
         }
     }
 }
@@ -149,6 +153,7 @@ async fn main() {
         ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args).await,
         ("", _) => {
             clap::App::from_yaml(yaml).print_help().unwrap();
+            println!();
         }
         _ => {}
     }
@@ -396,7 +401,7 @@ async fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_in
             cli_config.verbose,
             &QuillcInvocation {
                 build_info,
-                deps_directory: cli_config.compiler_location.deps_directory(),
+                zig_compiler: cli_config.compiler_location.zig_compiler(),
             },
         )
         .await;
