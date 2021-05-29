@@ -3,7 +3,7 @@
 Contributions to the Quill project are welcome from all!
 
 Quill is managed via [git](https://git-scm.com), with the canonical upstream
-repository hosted on [GitHub](https://github.com/ni/<reponame>/).
+repository hosted on [GitHub](https://github.com/quill-lang/quill).
 
 Quill follows a pull-request model for development.  If you wish to
 contribute, you will need to create a GitHub account, fork this project, push a
@@ -18,17 +18,21 @@ Certificate of Origin (see below) and are able to legally submit your code to
 this repository.
 If you're using Visual Studio Code as an IDE, you can use the setting
 [`git.alwaysSignOff`](https://github.com/microsoft/vscode/issues/83096) to do
-this automatically.
+this automatically. The `git.enableCommitSigning` flag may also be useful for
+verifying your commits.
 
 See [GitHub's official documentation](https://help.github.com/articles/using-pull-requests/) for more details.
 
 # Getting Started
 
-- TODO: include build steps here.
+- You need a nightly Rust compiler toolchain. There is no strict minimum supported Rust version (MSRV) since this is a binary project, but some unstable features are required.
+- You also need a Zig compiler, on your `PATH`. This is used as Quill's linker. Zig 0.6.0 is the earliest potentially-compatible version, but versions before 0.7 have not been tested.
+- You need an LLVM 11 installation, including `llvm-config`. LLVM's releases for Windows do not contain this binary, so you'll either need to
+    - build LLVM from source yourself
+    - or download pre-built binaries that include `llvm-config` [here](https://github.com/thirdsgames/llvm-binaries-win)
+- To tell Rust where LLVM is, set the environment variable `LLVM_SYS_110_PREFIX` to the location of your LLVM 11 installation.
 
-# Testing
-
-- TODO: include testing steps here.
+You can check that most things are installed correctly by running `cargo build`. This will check that Rust and LLVM are correctly installed, however it will not check if Zig is correctly installed.
 
 # Developer Certificate of Origin (DCO)
 
