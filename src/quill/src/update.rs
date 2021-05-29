@@ -62,14 +62,10 @@ struct ZigRelease {
     // shasum: String,
 }
 
-pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
+pub async fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
     if let crate::CompilerLocation::Installed { host, root } = &cli_config.compiler_location {
-        tokio::fs::remove_dir_all(root.join("compiler-deps"))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(root.join("compiler-deps"))
-            .await
-            .unwrap();
+        let _ = tokio::fs::remove_dir_all(root.join("compiler-deps")).await;
+        let _ = tokio::fs::create_dir_all(root.join("compiler-deps")).await;
 
         eprintln!("checking latest version...",);
         let version: QuillVersion = download_text_or_exit(
@@ -81,7 +77,32 @@ pub async fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
         .unwrap_or_else(|e| error(e));
         eprintln!("installing quill {}", version);
 
-        download_self(*host, version).await;
+        let exe_path = if let HostType::Windows = host {
+            root.join("quill.exe")
+        } else {
+            root.join("quill")
+        };
+        download_self(*host, version, exe_path.clone()).await;
+
+        let update_self = !args.is_present("not-self");
+        if update_self {
+            let status = tokio::process::Command::new(exe_path)
+                .arg("update")
+                .arg("--not-self")
+                .status()
+                .await
+                .unwrap();
+            if !status.success() {
+                println!(
+                    "{}",
+                    console::style("Could not execute quill updater!")
+                        .red()
+                        .bright()
+                        .bold()
+                );
+            }
+            return;
+        }
 
         // Download components such as quillc.
         tokio::fs::create_dir_all(root.join("compiler-deps"))
@@ -312,7 +333,7 @@ async fn download_archive_or_exit<U: IntoUrl>(
     progress_bar.finish_with_message(format!("{} done", display_name));
 }
 
-async fn download_self(host: HostType, expected_version: QuillVersion) {
+async fn download_self(host: HostType, expected_version: QuillVersion, exe_path: PathBuf) {
     let temp_dir = tokio::task::spawn_blocking(|| tempdir::TempDir::new("quill_install").unwrap())
         .await
         .unwrap();
@@ -329,13 +350,12 @@ async fn download_self(host: HostType, expected_version: QuillVersion) {
     )
     .await;
 
-    let self_path = std::env::current_exe().unwrap();
-    let temp_path = self_path.with_extension("old");
+    let temp_path = exe_path.with_extension("old");
     let _ = tokio::fs::remove_file(&temp_path).await;
     tokio::task::spawn_blocking(move || {
         self_update::Move::from_source(&host.as_executable(temp_dir.path().join("quill")))
             .replace_using_temp(&temp_path)
-            .to_dest(&self_path)
+            .to_dest(&exe_path)
             .unwrap();
     })
     .await

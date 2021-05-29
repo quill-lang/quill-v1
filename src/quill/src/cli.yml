@@ -4,14 +4,17 @@ author: thirdsgames <thirdsgames2018@gmail.com>
 about: Compiler for the Quill language
 args:
   - project:
+      long: project
       short: p
       help: The directory that contains the Quill project
       takes_value: true
       value_name: DIR
   - verbose:
+      long: verbose
       short: v
       help: Makes the compiler emit verbose output
   - source:
+      long: source
       short: s
       help: Executes components of the Quill compiler from source, not intended for use outside of development of the compiler
 subcommands:
@@ -19,6 +22,7 @@ subcommands:
       about: Builds the Quill code in a given folder into an executable file
       args:
         - target:
+            long: target
             short: t
             multiple: true
             takes_value: true
@@ -28,3 +32,7 @@ subcommands:
       about: Runs the Quill code in a given folder
   - update:
       about: Updates the Quill compiler and its dependencies
+      args:
+        - not-self:
+            long: not-self
+            help: If specified, will update dependencies but not the quill executable itself

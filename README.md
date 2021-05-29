@@ -1,5 +1,6 @@
 # The Quill Programming Language
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![release latest](https://github.com/quill-lang/quill/actions/workflows/release-latest.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/release-latest.yml)
 [![test](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/test.yml)
 [![format](https://github.com/quill-lang/quill/actions/workflows/format.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/format.yml)
@@ -10,8 +11,6 @@ Quill is a modern programming language that aims to bring the functional paradig
 ## 🚧 Actively Developed 🚧
 
 Quill is evolving all the time, and is in very early stages of development. The features outlined below are not all currently implemented in the Quill compiler. In particular, the borrow checker and zero-cost function currying abstractions are not implemented, although this will change in the near future.
-
-Further, there is currently not a license for using the project. There are some potential legal problems with distributing potentially proprietary `libc` implementations (in particular the MSVCRT), so these will need to be cleared up before a license for this project can be chosen.
 
 ## Code Sample
 

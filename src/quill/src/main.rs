@@ -187,7 +187,7 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
             } else {
                 HostType::Linux
             },
-            root: dirs::home_dir().unwrap().join(".ql"),
+            root: dirs::home_dir().unwrap().join(".quill"),
         }
     };
 
