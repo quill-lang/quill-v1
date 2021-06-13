@@ -77,18 +77,20 @@ pub async fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
         .unwrap_or_else(|e| error(e));
         eprintln!("installing quill {}", version);
 
-        let exe_path = if let HostType::Windows = host {
-            root.join("quill.exe")
-        } else {
-            root.join("quill")
-        };
-        download_self(*host, version, exe_path.clone()).await;
-
         let update_self = !args.is_present("not-self");
+        println!("updating self: {}", update_self);
         if update_self {
-            let status = tokio::process::Command::new(exe_path)
+            let exe_path = if let HostType::Windows = host {
+                root.join("quill.exe")
+            } else {
+                root.join("quill")
+            };
+            download_self(*host, version, exe_path.clone()).await;
+
+            let status = tokio::process::Command::new(exe_path.clone())
                 .arg("update")
                 .arg("--not-self")
+                .current_dir(exe_path.parent().unwrap())
                 .status()
                 .await
                 .unwrap();
@@ -137,28 +139,10 @@ pub async fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
         download_archive_or_exit(
             zig_download.tarball,
             "zig compiler",
-            root.join("compiler-deps"),
+            root.join("compiler-deps").join("zig"),
             None,
         )
         .await;
-        // Rename the zig folder to `zig`.
-        {
-            let mut compiler_deps_folders = tokio::fs::read_dir(root.join("compiler-deps"))
-                .await
-                .unwrap();
-            let mut found_zig = false;
-            while let Some(folder) = compiler_deps_folders.next_entry().await.unwrap() {
-                if folder.file_name().to_string_lossy().starts_with("zig") {
-                    // This is the zig folder.
-                    tokio::fs::rename(folder.path(), folder.path().with_file_name("zig"))
-                        .await
-                        .unwrap();
-                    found_zig = true;
-                    break;
-                }
-            }
-            assert!(found_zig)
-        }
     } else {
         error("cannot update quill when running from source")
     }
@@ -199,6 +183,8 @@ async fn download_text_or_exit<U: IntoUrl>(url: U, request: &str) -> String {
 
 /// If a version is provided, this function assumes that the tarball contains a `version.txt` file, and that the version should match the given expected version.
 /// Archive types `tar.gz`, `tar.xz` and `zip` are supported.
+/// If `zip` is provided, we assume that we're downloading the zig compiler, and special-case logic is used to remove the top-level
+/// folder from the archive.
 async fn download_archive_or_exit<U: IntoUrl>(
     url: U,
     display_name: &str,
@@ -287,10 +273,27 @@ async fn download_archive_or_exit<U: IntoUrl>(
             }
             ArchiveType::Zip => {
                 let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+                // Find the root folder of this archive.
+                let prefix = {
+                    let mut path = archive
+                        .by_index(0)
+                        .unwrap()
+                        .enclosed_name()
+                        .unwrap()
+                        .to_owned();
+                    while let Some(parent) = path.parent() {
+                        if parent.file_name().is_some() {
+                            path = parent.to_owned();
+                        } else {
+                            break;
+                        }
+                    }
+                    path
+                };
                 for i in 0..archive.len() {
                     let mut file = archive.by_index(i).unwrap();
                     let outpath = match file.enclosed_name() {
-                        Some(path) => path.to_owned(),
+                        Some(path) => dir2.join(path.strip_prefix(&prefix).unwrap()),
                         None => continue,
                     };
 
