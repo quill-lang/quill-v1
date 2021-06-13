@@ -85,7 +85,7 @@ async fn invoke(invocation: QuillcInvocation) {
         let mut results = Vec::new();
         for file_ident in source_files.iter() {
             results.push(
-                quill_lexer::lex(&fs, &file_ident)
+                quill_lexer::lex(&fs, file_ident)
                     .await
                     .map(|lexed| (file_ident.clone(), lexed)),
             );

@@ -710,7 +710,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
             self.add_field_raw(field_name, None);
         } else if let Some(repr) = self.reprs.repr(replace_type_variables(
             field_type,
-            &type_params,
+            type_params,
             &mono.type_parameters,
         )) {
             self.add_field_raw(field_name, Some(repr));
@@ -937,7 +937,7 @@ impl<'a, 'ctx> EnumRepresentation<'ctx> {
         let file = source_file_debug_info(codegen, &mono.name.source_file);
         let di_type = codegen.di_builder.create_struct_type(
             file.as_debug_info_scope(),
-            &"<function object>",
+            "<function object>",
             file,
             ty.range.start.line + 1,
             0,

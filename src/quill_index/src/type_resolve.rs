@@ -55,8 +55,8 @@ pub(crate) fn resolve_typep(
                 }
             }),
         TypeP::Function(left, right) => {
-            resolve_typep(source_file, &left, type_params, visible_types).bind(|left| {
-                resolve_typep(source_file, &right, type_params, visible_types)
+            resolve_typep(source_file, left, type_params, visible_types).bind(|left| {
+                resolve_typep(source_file, right, type_params, visible_types)
                     .map(|right| Type::Function(Box::new(left), Box::new(right)))
             })
         }

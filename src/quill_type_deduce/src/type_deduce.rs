@@ -529,7 +529,7 @@ fn generate_constraints(
                         for ((param, assumptions), param_type) in params
                             .iter()
                             .map(|param| {
-                                (param, expr.assumptions.0.remove(&param).unwrap_or_default())
+                                (param, expr.assumptions.0.remove(param).unwrap_or_default())
                             })
                             .zip(param_types.clone())
                         {
@@ -697,7 +697,7 @@ fn generate_constraints(
                             let let_assumptions = result
                                 .assumptions
                                 .0
-                                .remove(&variable_name)
+                                .remove(variable_name)
                                 .unwrap_or_else(Vec::new);
 
                             for assumption in let_assumptions {
@@ -852,7 +852,7 @@ fn generate_constraints(
 
                             // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
                             let field_type_variable =
-                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+                                instantiate_with(field_type, &mut ids, &mut higher_kinded_ids);
 
                             constraints.0.push((
                                 result.expr.type_variable.clone(),
@@ -906,7 +906,7 @@ fn generate_constraints(
 
                             // Convert the field type to a type variable, replacing type parameters like `T` with their variables assigned previously.
                             let field_type_variable =
-                                instantiate_with(&field_type, &mut ids, &mut higher_kinded_ids);
+                                instantiate_with(field_type, &mut ids, &mut higher_kinded_ids);
 
                             constraints.0.push((
                                 result.expr.type_variable.clone(),
@@ -1214,7 +1214,7 @@ fn fix_infinite_type(
 fn contains_id(v: &TypeVariable, id: &TypeVariableId) -> bool {
     match v {
         TypeVariable::Named { parameters, .. } => parameters.iter().any(|p| contains_id(p, id)),
-        TypeVariable::Function(l, r) => contains_id(&l, id) || contains_id(&r, id),
+        TypeVariable::Function(l, r) => contains_id(l, id) || contains_id(r, id),
         TypeVariable::Variable { parameters, .. } => parameters.iter().any(|v| contains_id(v, id)),
         TypeVariable::Unknown { id: other_id } => other_id == id,
         TypeVariable::Primitive(_) => false,

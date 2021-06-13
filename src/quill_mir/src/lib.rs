@@ -302,18 +302,18 @@ impl ControlFlowGraph {
         for block in self.basic_blocks.values_mut() {
             match &mut block.terminator.kind {
                 TerminatorKind::Goto(target) => {
-                    *target = block_id_map[&target];
+                    *target = block_id_map[target];
                 }
                 TerminatorKind::SwitchDiscriminant { cases, .. } => {
                     for target in cases.values_mut() {
-                        *target = block_id_map[&target];
+                        *target = block_id_map[target];
                     }
                 }
                 TerminatorKind::SwitchConstant { cases, default, .. } => {
                     for target in cases.values_mut() {
-                        *target = block_id_map[&target];
+                        *target = block_id_map[target];
                     }
-                    *default = block_id_map[&default];
+                    *default = block_id_map[default];
                 }
                 TerminatorKind::Invalid => unreachable!(),
                 TerminatorKind::Return { .. } => {}
@@ -1754,8 +1754,8 @@ fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
         ExpressionContentsGeneric::Local(_) => {}
         ExpressionContentsGeneric::Symbol { .. } => {}
         ExpressionContentsGeneric::Apply(left, right) => {
-            initialise_expr(ctx, &left);
-            initialise_expr(ctx, &right);
+            initialise_expr(ctx, left);
+            initialise_expr(ctx, right);
         }
         ExpressionContentsGeneric::Lambda { .. } => {}
         ExpressionContentsGeneric::Let { name, expr, .. } => {

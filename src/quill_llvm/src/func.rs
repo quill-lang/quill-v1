@@ -486,7 +486,7 @@ fn create_real_func_body_cfg<'ctx>(
                                 ctx.index,
                                 ctx.reprs,
                                 &ctx.locals,
-                                &local_variable_names,
+                                local_variable_names,
                                 source,
                             )
                             .unwrap(),
@@ -527,7 +527,7 @@ fn create_real_func_body_cfg<'ctx>(
                                 ctx.index,
                                 ctx.reprs,
                                 &ctx.locals,
-                                &local_variable_names,
+                                local_variable_names,
                                 rvalue,
                             )
                             .unwrap();
@@ -594,7 +594,7 @@ fn create_real_func_body_cfg<'ctx>(
                                 ctx.index,
                                 ctx.reprs,
                                 &ctx.locals,
-                                &local_variable_names,
+                                local_variable_names,
                                 rvalue,
                             )
                             .unwrap();
@@ -643,7 +643,7 @@ fn create_real_func_body_cfg<'ctx>(
                         ctx.index,
                         ctx.reprs,
                         &ctx.locals,
-                        &local_variable_names,
+                        local_variable_names,
                         func_object,
                     );
                     let func_object_ptr = ctx
@@ -695,7 +695,7 @@ fn create_real_func_body_cfg<'ctx>(
                             ctx.index,
                             ctx.reprs,
                             &ctx.locals,
-                            &local_variable_names,
+                            local_variable_names,
                             arg,
                         ) {
                             args.push(ctx.codegen.builder.build_load(ptr, &format!("io/{}arg", i)))
@@ -821,7 +821,7 @@ fn create_real_func_body_cfg<'ctx>(
                                         ctx.index,
                                         ctx.reprs,
                                         &ctx.locals,
-                                        &local_variable_names,
+                                        local_variable_names,
                                         field_rvalue,
                                     )
                                     .unwrap(),
@@ -850,7 +850,7 @@ fn create_real_func_body_cfg<'ctx>(
                                         ctx.index,
                                         ctx.reprs,
                                         &ctx.locals,
-                                        &local_variable_names,
+                                        local_variable_names,
                                         field_rvalue,
                                     )
                                     .unwrap(),
@@ -873,7 +873,7 @@ fn create_real_func_body_cfg<'ctx>(
             TerminatorKind::Goto(other_id) => {
                 ctx.codegen
                     .builder
-                    .build_unconditional_branch(blocks[&other_id]);
+                    .build_unconditional_branch(blocks[other_id]);
             }
             TerminatorKind::SwitchDiscriminant {
                 enum_name,
@@ -886,7 +886,7 @@ fn create_real_func_body_cfg<'ctx>(
                     ctx.index,
                     ctx.reprs,
                     &ctx.locals,
-                    &local_variable_names,
+                    local_variable_names,
                     &Rvalue::Use(Operand::Copy(
                         enum_place.clone().then(PlaceSegment::EnumDiscriminant),
                     )),
@@ -908,7 +908,7 @@ fn create_real_func_body_cfg<'ctx>(
                                 .map(|ty| {
                                     replace_type_variables(
                                         ty.clone(),
-                                        &type_variables,
+                                        type_variables,
                                         &ctx.func.mono.type_parameters,
                                     )
                                 })
@@ -944,7 +944,7 @@ fn create_real_func_body_cfg<'ctx>(
                     ctx.index,
                     ctx.reprs,
                     &ctx.locals,
-                    &local_variable_names,
+                    local_variable_names,
                     &Rvalue::Use(Operand::Copy(place.clone())),
                 )
                 .unwrap();

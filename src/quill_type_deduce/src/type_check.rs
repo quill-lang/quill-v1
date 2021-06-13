@@ -327,7 +327,7 @@ impl TypeVariablePrinter {
                 return self.print(cloned);
             }
         }
-        if let Some(result) = self.type_variable_names.get(&ty) {
+        if let Some(result) = self.type_variable_names.get(ty) {
             return result.clone();
         }
         let name = self.new_name();
@@ -625,7 +625,7 @@ impl<'a> TypeChecker<'a> {
                             .map(|(range, args, replacement)| {
                                 self.validate_case(
                                     &visible_names,
-                                    &symbol_type,
+                                    symbol_type,
                                     range,
                                     args,
                                     replacement,
@@ -1184,7 +1184,7 @@ fn collect_bound_vars(
 fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
     match symbol_type {
         Type::Function(left, right) => {
-            let (mut args, out) = get_args_of_type(&right);
+            let (mut args, out) = get_args_of_type(right);
             args.insert(0, *left.clone());
             (args, out)
         }

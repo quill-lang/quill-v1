@@ -13,11 +13,11 @@ pub fn index_single_file(
     file_ident: &SourceFileIdentifier,
     parsed: &FileP,
 ) -> DiagnosticResult<FileIndex> {
-    compute_types(&file_ident, &parsed)
+    compute_types(file_ident, parsed)
         .bind(|cache| {
             let mut project_types = ProjectTypesC::new();
             project_types.insert(file_ident.clone(), cache);
-            index(&file_ident, &parsed, &project_types)
+            index(file_ident, parsed, &project_types)
         })
         .deny()
 }
@@ -36,7 +36,7 @@ pub fn index_project(
     project_types_cache
         .bind(|project_types_cache| {
             DiagnosticResult::sequence_unfail(files.iter().map(|(file, parsed)| {
-                index(&file, &parsed, &project_types_cache).map(|index| (file.clone(), index))
+                index(file, parsed, &project_types_cache).map(|index| (file.clone(), index))
             }))
             .map(|index| index.into_iter().collect())
         })
