@@ -25,9 +25,9 @@ See [GitHub's official documentation](https://help.github.com/articles/using-pul
 
 # Getting Started
 
-- You need a nightly Rust compiler toolchain. There is no strict minimum supported Rust version (MSRV) since this is a binary project, but some unstable features are required.
+- You need a Rust compiler toolchain. There is no strict minimum supported Rust version (MSRV) since this is a binary project. No unstable features are used, and the latest stable is used on CI.
 - If you're on Windows targeting MSVC, you need to install the Microsoft Visual C++ toolchain.
-- You also need a Zig compiler, on your `PATH`. This is used as Quill's linker. Zig 0.6.0 is the earliest potentially-compatible version, but versions before 0.7 have not been tested.
+- You also need a Zig compiler, on your `PATH`. This is used as Quill's linker. Zig 0.6.0 is the earliest potentially-compatible version, but versions before 0.7 have not been tested. This is easiest to get by installing quill in the normal way, since quill downloads its own up-to-date zig installation.
 - You need an LLVM 11 installation, including `llvm-config`. LLVM's releases for Windows do not contain this binary, so you'll either need to
     - build LLVM from source yourself
     - or download pre-built binaries that include `llvm-config` [here](https://github.com/thirdsgames/llvm-binaries-win)
