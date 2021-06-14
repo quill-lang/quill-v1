@@ -102,7 +102,6 @@ impl Display for TargetOS {
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum TargetEnvironment {
     Gnu,
-    Msvc,
 }
 
 impl Display for TargetEnvironment {
@@ -112,7 +111,6 @@ impl Display for TargetEnvironment {
             "{}",
             match self {
                 TargetEnvironment::Gnu => "gnu",
-                TargetEnvironment::Msvc => "msvc",
             }
         )
     }

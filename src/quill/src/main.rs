@@ -316,7 +316,7 @@ fn string_to_target(target: &str) -> TargetTriple {
             arch: TargetArchitecture::X86_64,
             vendor: TargetVendor::Pc,
             os: TargetOS::Windows,
-            env: Some(TargetEnvironment::Msvc),
+            env: Some(TargetEnvironment::Gnu),
         },
         "linux" => TargetTriple {
             arch: TargetArchitecture::X86_64,
@@ -342,7 +342,7 @@ fn default_target() -> TargetTriple {
         arch: TargetArchitecture::X86_64,
         vendor: TargetVendor::Pc,
         os: TargetOS::Windows,
-        env: Some(TargetEnvironment::Msvc),
+        env: Some(TargetEnvironment::Gnu),
     }
 }
 
