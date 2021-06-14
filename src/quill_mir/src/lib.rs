@@ -1623,8 +1623,8 @@ struct BoundPatternVariables {
 
 /// Creates a local variable for each bound variable in a pattern, assuming that the given value
 /// has the given pattern, and the given type.
-/// Returns statements that will initialise these variables.
-/// If no variables need to be initialised, returns None.
+/// Returns statements that will initialise these variables, or statements that will *drop* the value
+/// if no variable initialisation is required.
 fn bind_pattern_variables(
     ctx: &mut DefinitionTranslationContext,
     index: &ProjectIndex,
