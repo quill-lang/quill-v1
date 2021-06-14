@@ -1,8 +1,6 @@
 //! This module contains the mid-level intermediate representation of code.
 //! Much of this code is heavily inspired by the Rust compiler.
 
-#![feature(drain_filter)]
-
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Display,
@@ -1924,9 +1922,7 @@ fn generate_expr(
             // Create a new definition for this lambda.
             // Move all used variables inside the lambda definition.
             let mut used_variables = list_used_locals(&*expr);
-            used_variables
-                .drain_filter(|name| params.iter().any(|(param_name, _)| param_name == name))
-                .for_each(drop);
+            used_variables.retain(|name| params.iter().all(|(param_name, _)| param_name != name));
             used_variables.sort_by(|a, b| a.name.cmp(&b.name));
             used_variables.dedup();
             let arg_types = used_variables
@@ -2416,9 +2412,7 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
         ExpressionContentsGeneric::Lambda { params, expr, .. } => {
             // Remove the lambda parameter names from the list.
             let mut result = list_used_locals(&*expr);
-            result
-                .drain_filter(|name| params.iter().any(|(param_name, _)| param_name == name))
-                .for_each(drop);
+            result.retain(|name| params.iter().all(|(param_name, _)| param_name != name));
             result
         }
         ExpressionContentsGeneric::Let { expr, .. } => list_used_locals(&*expr),
@@ -2438,9 +2432,7 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
                     }
                 })
                 .collect::<Vec<_>>();
-            result
-                .drain_filter(|name| let_locals.contains(name))
-                .for_each(drop);
+            result.retain(|name| !let_locals.contains(name));
             result
         }
         ExpressionContentsGeneric::ConstructData { fields, .. } => fields
