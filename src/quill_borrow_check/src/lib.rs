@@ -83,7 +83,6 @@ struct OwnershipStatuses {
 /// We walk through all branches of the control flow graph deducing ownership (but not borrow) status.
 /// This allows us to insert StorageLive, StorageDead, and Drop instructions into the MIR.
 /// In particular, we remove DropIfAlive instructions in this step, replacing them with hard drops, introducing drop flags if necessary.
-#[allow(clippy::clone_on_copy)]
 fn check_ownership(
     source_file: &SourceFileIdentifier,
     def: &mut DefinitionM,
@@ -98,8 +97,7 @@ fn check_ownership(
             .iter()
             .map(|(name, info)| {
                 (
-                    // Clippy thinks I can remove `clone`, but then the borrow's lifetime has to include the `chain` call.
-                    name.clone(),
+                    *name,
                     OwnershipStatus::NotInitialised {
                         definition: info.range,
                     },
