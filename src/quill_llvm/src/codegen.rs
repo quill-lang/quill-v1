@@ -12,7 +12,7 @@ use inkwell::{
 use quill_index::ProjectIndex;
 use quill_mir::LocalVariableName;
 
-use crate::repr::{MonomorphisedFunction, Representations};
+use crate::{monomorphisation::MonomorphisedFunction, repr::Representations};
 
 pub struct CodeGenContext<'ctx> {
     pub context: &'ctx Context,

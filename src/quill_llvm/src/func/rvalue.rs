@@ -9,7 +9,8 @@ use quill_type_deduce::replace_type_variables;
 
 use crate::{
     codegen::CodeGenContext,
-    repr::{MonomorphisationParameters, MonomorphisedType, Representations},
+    monomorphisation::{MonomorphisationParameters, MonomorphisedType},
+    repr::Representations,
 };
 
 /// Returns None if the rvalue had no representation.

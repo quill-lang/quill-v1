@@ -7,13 +7,15 @@ use quill_type_deduce::replace_type_variables;
 
 use crate::{
     codegen::{BodyCreationContext, CodeGenContext},
-    repr::{source_file_debug_info, MonomorphisedFunction, Representations},
+    debug::source_file_debug_info,
+    monomorphisation::MonomorphisedFunction,
+    repr::Representations,
 };
 
 mod body;
 mod lifetime;
-mod rvalue;
 mod monomorphise;
+mod rvalue;
 
 pub fn compile_function<'ctx>(
     codegen: &CodeGenContext<'ctx>,

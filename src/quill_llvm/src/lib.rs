@@ -7,7 +7,7 @@ use inkwell::{
 };
 use quill_mir::ProjectMIR;
 use quill_target::{BuildInfo, TargetTriple};
-use repr::{Monomorphisation, MonomorphisationParameters, MonomorphisedFunction, Representations};
+use repr::Representations;
 use std::{
     error::Error,
     fmt::{Debug, Display},
@@ -17,10 +17,17 @@ use std::{
     process::Output,
 };
 
+use crate::monomorphisation::{
+    Monomorphisation, MonomorphisationParameters, MonomorphisedFunction,
+};
+
 mod codegen;
+mod debug;
 mod func;
 mod intrinsics;
+mod monomorphisation;
 mod repr;
+mod sort_types;
 
 struct ExecutionError {
     program: String,

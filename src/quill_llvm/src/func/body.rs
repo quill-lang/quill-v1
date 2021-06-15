@@ -18,7 +18,7 @@ use crate::{
         monomorphise::monomorphise,
         rvalue::{get_pointer_to_rvalue, get_pointer_to_rvalue_arg},
     },
-    repr::{MonomorphisationParameters, MonomorphisedFunction, MonomorphisedType},
+    monomorphisation::{MonomorphisationParameters, MonomorphisedFunction, MonomorphisedType},
 };
 
 pub fn create_real_func_body<'ctx>(

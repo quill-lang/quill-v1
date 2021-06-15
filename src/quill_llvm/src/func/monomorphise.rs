@@ -4,7 +4,7 @@ use quill_mir::{DefinitionBodyM, DefinitionM, StatementKind};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
-use crate::repr::{MonomorphisedFunction, Representations};
+use crate::{monomorphisation::MonomorphisedFunction, repr::Representations};
 
 pub fn monomorphise<'ctx>(
     reprs: &Representations<'_, 'ctx>,
