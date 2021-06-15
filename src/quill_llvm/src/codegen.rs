@@ -35,6 +35,8 @@ pub struct BodyCreationContext<'a, 'ctx> {
     pub di_file: DIFile<'ctx>,
 }
 
+/// Adds definitions to the LLVM module to assert that certain libc functions
+/// like `malloc` exist, and declare their types so we can use them later.
 fn declare_libc<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {
     module.add_function(
         "malloc",
