@@ -1,14 +1,18 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use inkwell::{
     builder::Builder,
     context::Context,
-    debug_info::{DICompileUnit, DebugInfoBuilder},
+    debug_info::{DICompileUnit, DIFile, DebugInfoBuilder},
     execution_engine::ExecutionEngine,
     module::Module,
     targets::TargetData,
-    values::FunctionValue,
+    values::{FunctionValue, PointerValue},
 };
+use quill_index::ProjectIndex;
+use quill_mir::LocalVariableName;
+
+use crate::repr::{MonomorphisedFunction, Representations};
 
 pub struct CodeGenContext<'ctx> {
     pub context: &'ctx Context,
@@ -18,6 +22,17 @@ pub struct CodeGenContext<'ctx> {
     pub project_root: PathBuf,
     pub di_builder: DebugInfoBuilder<'ctx>,
     pub di_compile_unit: DICompileUnit<'ctx>,
+}
+
+/// Contains all the useful information when generating a function body.
+pub struct BodyCreationContext<'a, 'ctx> {
+    pub codegen: &'a CodeGenContext<'ctx>,
+    pub reprs: &'a Representations<'a, 'ctx>,
+    pub index: &'a ProjectIndex,
+    pub func: MonomorphisedFunction,
+    pub func_value: FunctionValue<'ctx>,
+    pub locals: HashMap<LocalVariableName, PointerValue<'ctx>>,
+    pub di_file: DIFile<'ctx>,
 }
 
 fn declare_libc<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {

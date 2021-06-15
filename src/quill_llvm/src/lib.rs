@@ -1,5 +1,3 @@
-use codegen::CodeGenContext;
-use func::compile_function;
 use inkwell::targets::{InitializationConfig, Target};
 use inkwell::{context::Context, targets::FileType};
 use inkwell::{module::Module, OptimizationLevel};
@@ -21,6 +19,7 @@ use std::{
 
 mod codegen;
 mod func;
+mod intrinsics;
 mod repr;
 
 struct ExecutionError {
@@ -70,7 +69,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     let context = Context::create();
     let module = context.create_module(project_name);
     module.set_triple(&target_triple);
-    let codegen = CodeGenContext::new(&context, module, build_info.code_folder.clone());
+    let codegen = codegen::CodeGenContext::new(&context, module, build_info.code_folder.clone());
 
     let mono = Monomorphisation::new(mir);
     let mut reprs = Representations::new(&codegen, &mir.index, mono.types);
@@ -81,7 +80,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     }
     reprs.create_drop_funcs();
     for func in &mono.functions {
-        compile_function(&codegen, &reprs, mir, func.clone());
+        func::compile_function(&codegen, &reprs, mir, func.clone());
     }
 
     // Now introduce the main function.
