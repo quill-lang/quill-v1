@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use quill_mir::{DefinitionBodyM, DefinitionM, StatementKind};
+use quill_mir::mir::{DefinitionBodyM, DefinitionM, StatementKind};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 

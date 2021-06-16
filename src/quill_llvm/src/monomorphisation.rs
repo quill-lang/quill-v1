@@ -5,7 +5,10 @@ use inkwell::{
     AddressSpace,
 };
 use quill_common::name::QualifiedName;
-use quill_mir::{ArgumentIndex, DefinitionBodyM, LocalVariableName, ProjectMIR, StatementKind};
+use quill_mir::{
+    mir::{ArgumentIndex, DefinitionBodyM, LocalVariableName, StatementKind},
+    ProjectMIR,
+};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 

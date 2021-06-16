@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use quill_common::name::QualifiedName;
-use quill_mir::{DefinitionBodyM, DefinitionM, ProjectMIR, Statement, StatementKind};
+use quill_mir::{
+    mir::{DefinitionBodyM, DefinitionM, Statement, StatementKind},
+    ProjectMIR,
+};
 
 /// Converts curried functions and partial application of functions into more LLVM-friendly representations.
 pub fn convert_func_objects(project: &mut ProjectMIR) {

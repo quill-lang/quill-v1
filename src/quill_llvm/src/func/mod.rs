@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use inkwell::{debug_info::AsDIScope, AddressSpace};
-use quill_mir::{ArgumentIndex, LocalVariableName, ProjectMIR};
+use quill_mir::{
+    mir::{ArgumentIndex, LocalVariableName},
+    ProjectMIR,
+};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 

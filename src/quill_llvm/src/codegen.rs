@@ -10,7 +10,7 @@ use inkwell::{
     values::{FunctionValue, PointerValue},
 };
 use quill_index::ProjectIndex;
-use quill_mir::LocalVariableName;
+use quill_mir::mir::LocalVariableName;
 
 use crate::{monomorphisation::MonomorphisedFunction, repr::Representations};
 

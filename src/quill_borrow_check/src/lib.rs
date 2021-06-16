@@ -4,7 +4,7 @@ use quill_common::{
     diagnostic::{DiagnosticResult, ErrorMessage},
     location::SourceFileIdentifier,
 };
-use quill_mir::{DefinitionM, SourceFileMIR};
+use quill_mir::{mir::DefinitionM, SourceFileMIR};
 
 /// Checks to make sure that borrows of data do not outlive the data they borrow,
 /// and to make sure that once data is not used when it is not owned.

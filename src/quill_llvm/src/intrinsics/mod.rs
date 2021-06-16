@@ -8,7 +8,7 @@ use inkwell::{
     IntPredicate,
 };
 use quill_index::TypeParameter;
-use quill_mir::{ArgumentIndex, LocalVariableInfo, LocalVariableName};
+use quill_mir::mir::{ArgumentIndex, LocalVariableInfo, LocalVariableName};
 
 use crate::codegen::BodyCreationContext;
 

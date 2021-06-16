@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use inkwell::{basic_block::BasicBlock, debug_info::DIScope, types::BasicTypeEnum, AddressSpace};
 
 use quill_index::TypeParameter;
-use quill_mir::{
+use quill_mir::mir::{
     ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Operand,
     PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };

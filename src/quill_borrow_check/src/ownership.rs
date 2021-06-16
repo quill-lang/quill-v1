@@ -4,7 +4,7 @@ use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{Range, SourceFileIdentifier},
 };
-use quill_mir::{
+use quill_mir::mir::{
     ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableName,
     Operand, Rvalue, Statement, StatementKind, TerminatorKind,
 };

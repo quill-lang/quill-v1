@@ -5,7 +5,7 @@ use inkwell::{
     AddressSpace,
 };
 use quill_common::location::Range;
-use quill_mir::{LocalVariableInfo, LocalVariableName, Operand, Rvalue};
+use quill_mir::mir::{LocalVariableInfo, LocalVariableName, Operand, Rvalue};
 
 use crate::codegen::BodyCreationContext;
 
