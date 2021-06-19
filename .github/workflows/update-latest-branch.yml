@@ -24,6 +24,7 @@ jobs:
           key: check-SHA-${{ github.sha }}
 
       - name: Checkout
+        id: cpr
         if: steps.check_sha.outputs.cache-hit != 'true'
         uses: actions/checkout@v2.3.4
 
