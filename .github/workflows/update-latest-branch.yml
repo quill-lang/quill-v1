@@ -36,7 +36,15 @@ jobs:
           delete-branch: false
           labels: automated
 
-      - uses: peter-evans/enable-pull-request-automerge@v1
+      - name: Auto approve
+        if: steps.check_sha.outputs.cache-hit != 'true'
+        uses: juliangruber/approve-pull-request-action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.cpr.outputs.pull-request-number }}
+
+      - name: Auto merge
+        uses: peter-evans/enable-pull-request-automerge@v1
         if: steps.check_sha.outputs.cache-hit != 'true'
         with:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
