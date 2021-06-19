@@ -7,7 +7,7 @@ mod substitute;
 use std::collections::HashMap;
 
 use quill_common::{
-    diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
+    diagnostic::DiagnosticResult,
     location::{Range, Ranged, SourceFileIdentifier},
 };
 use quill_index::ProjectIndex;
@@ -28,7 +28,7 @@ use self::{
 
 /// An intermediate result after having documented an expression's types.
 #[derive(Debug)]
-struct ExprTypeCheck {
+pub(crate) struct ExprTypeCheck {
     expr: ExpressionT,
     /// When we create a new type variable, we should store its location of definition in this map.
     type_variable_definition_ranges: HashMap<TypeVariableId, Range>,
