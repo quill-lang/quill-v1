@@ -48,10 +48,13 @@ async fn main() {
     let invocation: QuillcInvocation =
         serde_json::from_str(&std::env::args().nth(1).unwrap()).unwrap();
 
-    invoke(invocation).await;
+    if invoke(invocation).await.is_err() {
+        std::process::exit(1);
+    }
 }
 
-async fn invoke(invocation: QuillcInvocation) {
+/// Returns an Err if an error was emitted.
+async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
     // (This is excluding the annoying case where the file changes after being parsed by `quill`, and before this program is executed.)
     let project_config = toml::from_str::<ProjectInfo>(
@@ -140,7 +143,7 @@ async fn invoke(invocation: QuillcInvocation) {
 
     let mir = error_emitter.consume_diagnostic(mir);
     if error_emitter.emit_all().await {
-        return;
+        return Err(());
     }
 
     let mut mir = mir.unwrap();
@@ -153,30 +156,36 @@ async fn invoke(invocation: QuillcInvocation) {
         &invocation.zig_compiler,
         invocation.build_info,
     );
+
+    Ok(())
 }
 
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn compile_core() {
-    use quill_target::{
-        BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
-    };
-    use std::path::PathBuf;
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn compile_core() {
+        use quill_target::{
+            BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
+        };
+        use std::path::PathBuf;
 
-    let code_folder = PathBuf::from("../../stdlib/core").canonicalize().unwrap();
-    let build_folder = code_folder.join("build");
-    invoke(QuillcInvocation {
-        build_info: BuildInfo {
-            target_triple: TargetTriple {
-                arch: TargetArchitecture::X86_64,
-                vendor: TargetVendor::Unknown,
-                os: TargetOS::Linux,
-                env: Some(TargetEnvironment::Gnu),
+        let code_folder = PathBuf::from("../../stdlib/core").canonicalize().unwrap();
+        let build_folder = code_folder.join("build");
+
+        crate::invoke(crate::QuillcInvocation {
+            build_info: BuildInfo {
+                target_triple: TargetTriple {
+                    arch: TargetArchitecture::X86_64,
+                    vendor: TargetVendor::Unknown,
+                    os: TargetOS::Linux,
+                    env: Some(TargetEnvironment::Gnu),
+                },
+                code_folder,
+                build_folder,
             },
-            code_folder,
-            build_folder,
-        },
-        zig_compiler: PathBuf::from("zig"),
-    })
-    .await
+            zig_compiler: PathBuf::from("zig"),
+        })
+        .await
+        .unwrap();
+    }
 }
