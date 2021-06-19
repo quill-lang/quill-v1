@@ -13,14 +13,15 @@ use quill_parser::{
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
+    hir::expr::{
+        AbstractionVariable, BoundVariable, Expression, ExpressionContents, ExpressionContentsT,
+        ExpressionT, TypeVariable,
+    },
     index_resolve::{
         as_variable, instantiate, instantiate_with, resolve_definition, resolve_type_constructor,
         InstantiationResult,
     },
-    type_check::{
-        AbstractionVariable, BoundVariable, Expression, ExpressionContents, ExpressionContentsT,
-        ExpressionT, TypeVariable, TypeVariablePrinter, VisibleNames,
-    },
+    type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
 

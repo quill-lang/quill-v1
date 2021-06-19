@@ -9,10 +9,7 @@ use quill_index::{DefinitionI, TypeDeclarationTypeI, TypeParameter};
 use quill_parser::identifier::IdentifierP;
 use quill_type::Type;
 
-use crate::{
-    type_check::{TypeVariable, VisibleNames},
-    type_resolve::TypeVariableId,
-};
+use crate::{hir::expr::TypeVariable, type_check::VisibleNames, type_resolve::TypeVariableId};
 
 /// When a type constructor is used in code, e.g. `False`.
 /// For type constructor declarations, see `TypeConstructor`.
