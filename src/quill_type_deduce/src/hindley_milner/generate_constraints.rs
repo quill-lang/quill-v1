@@ -633,9 +633,29 @@ pub(crate) fn generate_constraints(
                         ),
                     };
 
+                    let mut messages = Vec::new();
+
+                    // Check to see if all fields have been created.
+                    for (field, _field_ty) in &type_ctor.fields {
+                        if fields
+                            .fields
+                            .iter()
+                            .all(|(field_name, _)| field_name != field)
+                            && fields
+                                .auto_fields
+                                .iter()
+                                .all(|field_name| field_name != field)
+                        {
+                            messages.push(ErrorMessage::new(
+                                format!("field `{}` is missing from this object", field),
+                                Severity::Error,
+                                Diagnostic::at(source_file, &data_constructor),
+                            ));
+                        }
+                    }
+
                     // Generate constraints for each field.
                     let mut fields_with_constraints = Vec::new();
-                    let mut messages = Vec::new();
                     let mut type_variable_definition_ranges = HashMap::new();
                     let mut assumptions = Assumptions::default();
                     let mut constraints = Constraints::default();
