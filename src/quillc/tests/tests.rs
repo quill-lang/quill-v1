@@ -41,7 +41,12 @@ async fn check_output(directory: &str) {
 
     let output = tokio::time::timeout(
         Duration::from_secs(10),
-        tokio::process::Command::new(build_folder.join("test.exe")).output(),
+        tokio::process::Command::new(build_folder.join(if cfg!(target_os = "windows") {
+            "test.exe"
+        } else {
+            "test"
+        }))
+        .output(),
     )
     .await
     .expect("timed out")
