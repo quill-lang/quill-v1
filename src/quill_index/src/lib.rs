@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub use main_index::*;
 
 use quill_common::{diagnostic::DiagnosticResult, location::SourceFileIdentifier};
-use quill_parser::FileP;
+use quill_parser::file::FileP;
 use type_index::{compute_types, ProjectTypesC};
 
 pub fn index_single_file(
