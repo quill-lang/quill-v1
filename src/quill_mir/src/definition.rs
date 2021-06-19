@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use quill_common::location::{Range, Ranged, SourceFileIdentifier};
 use quill_index::{ProjectIndex, TypeParameter};
 use quill_type::Type;
-use quill_type_deduce::type_check::{Definition, DefinitionBody, DefinitionCase};
+use quill_type_deduce::hir::definition::{Definition, DefinitionBody, DefinitionCase};
 
 use crate::{
     expr::{generate_expr, initialise_expr},

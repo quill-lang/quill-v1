@@ -10,7 +10,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use quill_common::{location::SourceFileIdentifier, name::QualifiedName};
 use quill_index::ProjectIndex;
-use quill_type_deduce::type_check::SourceFileHIR;
+use quill_type_deduce::hir::SourceFileHIR;
 
 #[derive(Debug)]
 pub struct ProjectMIR {

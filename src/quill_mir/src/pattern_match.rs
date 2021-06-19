@@ -10,7 +10,7 @@ use quill_common::{
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
 use quill_type::Type;
-use quill_type_deduce::{replace_type_variables, type_check::Pattern, TypeConstructorInvocation};
+use quill_type_deduce::{TypeConstructorInvocation, hir::pattern::Pattern, replace_type_variables};
 
 use crate::{definition::DefinitionTranslationContext, mir::*};
 
