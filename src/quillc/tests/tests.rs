@@ -97,6 +97,8 @@ async fn should_compile(directory: &str) {
 #[allow(clippy::unused_unit)]
 #[test_case("check_main_function/empty_project")]
 #[test_case("check_main_function/empty_project_with_main")]
+// Register all the regression tests for fixed issues.
+#[test_case("regression/0055")]
 #[tokio::test]
 #[should_panic]
 async fn should_fail(directory: &str) {
