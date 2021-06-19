@@ -51,6 +51,7 @@ async fn main() {
     invoke(invocation).await;
 }
 
+/// Exits with code 1 if an error was emitted.
 async fn invoke(invocation: QuillcInvocation) {
     // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
     // (This is excluding the annoying case where the file changes after being parsed by `quill`, and before this program is executed.)
@@ -140,7 +141,7 @@ async fn invoke(invocation: QuillcInvocation) {
 
     let mir = error_emitter.consume_diagnostic(mir);
     if error_emitter.emit_all().await {
-        return;
+        std::process::exit(1);
     }
 
     let mut mir = mir.unwrap();
