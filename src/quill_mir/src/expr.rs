@@ -1,10 +1,12 @@
 //! Creates MIR expressions from HIR expressions.
 
 use quill_common::{location::Ranged, name::QualifiedName};
-use quill_parser::{ConstantValue, NameP};
+use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
 use quill_type::{PrimitiveType, Type};
-use quill_type_deduce::type_check::{
-    Definition, DefinitionBody, DefinitionCase, Expression, ExpressionContentsGeneric, Pattern,
+use quill_type_deduce::hir::{
+    definition::{Definition, DefinitionBody, DefinitionCase},
+    expr::{Expression, ExpressionContents},
+    pattern::Pattern,
 };
 
 use crate::{
@@ -15,34 +17,34 @@ use crate::{
 /// Sets up the context for dealing with this expression.
 pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
     match &expr.contents {
-        ExpressionContentsGeneric::Argument(_) => {}
-        ExpressionContentsGeneric::Local(_) => {}
-        ExpressionContentsGeneric::Symbol { .. } => {}
-        ExpressionContentsGeneric::Apply(left, right) => {
+        ExpressionContents::Argument(_) => {}
+        ExpressionContents::Local(_) => {}
+        ExpressionContents::Symbol { .. } => {}
+        ExpressionContents::Apply(left, right) => {
             initialise_expr(ctx, left);
             initialise_expr(ctx, right);
         }
-        ExpressionContentsGeneric::Lambda { .. } => {}
-        ExpressionContentsGeneric::Let { name, expr, .. } => {
+        ExpressionContents::Lambda { .. } => {}
+        ExpressionContents::Let { name, expr, .. } => {
             ctx.new_local_variable(LocalVariableInfo {
                 range: name.range,
                 ty: expr.ty.clone(),
                 name: Some(name.name.clone()),
             });
         }
-        ExpressionContentsGeneric::Block { statements, .. } => {
+        ExpressionContents::Block { statements, .. } => {
             for stmt in statements {
                 initialise_expr(ctx, stmt);
             }
         }
-        ExpressionContentsGeneric::ConstructData { fields, .. } => {
+        ExpressionContents::ConstructData { fields, .. } => {
             for (_, expr) in fields {
                 initialise_expr(ctx, expr);
             }
         }
-        ExpressionContentsGeneric::ConstantValue { .. } => {}
-        ExpressionContentsGeneric::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
-        ExpressionContentsGeneric::Copy { expr, .. } => initialise_expr(ctx, &*expr),
+        ExpressionContents::ConstantValue { .. } => {}
+        ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
+        ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
     }
 }
 
@@ -60,22 +62,22 @@ pub(crate) struct ExprGeneratedM {
 /// Creates a list of all local or argument variables used inside this expression.
 fn list_used_locals(expr: &Expression) -> Vec<NameP> {
     match &expr.contents {
-        ExpressionContentsGeneric::Argument(arg) => vec![arg.clone()],
-        ExpressionContentsGeneric::Local(local) => vec![local.clone()],
-        ExpressionContentsGeneric::Symbol { .. } => Vec::new(),
-        ExpressionContentsGeneric::Apply(l, r) => {
+        ExpressionContents::Argument(arg) => vec![arg.clone()],
+        ExpressionContents::Local(local) => vec![local.clone()],
+        ExpressionContents::Symbol { .. } => Vec::new(),
+        ExpressionContents::Apply(l, r) => {
             let mut result = list_used_locals(l);
             result.extend(list_used_locals(r));
             result
         }
-        ExpressionContentsGeneric::Lambda { params, expr, .. } => {
+        ExpressionContents::Lambda { params, expr, .. } => {
             // Remove the lambda parameter names from the list.
             let mut result = list_used_locals(&*expr);
             result.retain(|name| params.iter().all(|(param_name, _)| param_name != name));
             result
         }
-        ExpressionContentsGeneric::Let { expr, .. } => list_used_locals(&*expr),
-        ExpressionContentsGeneric::Block { statements, .. } => {
+        ExpressionContents::Let { expr, .. } => list_used_locals(&*expr),
+        ExpressionContents::Block { statements, .. } => {
             let mut result = statements
                 .iter()
                 .map(list_used_locals)
@@ -84,7 +86,7 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             let let_locals = statements
                 .iter()
                 .filter_map(|stmt| {
-                    if let ExpressionContentsGeneric::Let { name, .. } = &stmt.contents {
+                    if let ExpressionContents::Let { name, .. } = &stmt.contents {
                         Some(name.clone())
                     } else {
                         None
@@ -94,14 +96,14 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             result.retain(|name| !let_locals.contains(name));
             result
         }
-        ExpressionContentsGeneric::ConstructData { fields, .. } => fields
+        ExpressionContents::ConstructData { fields, .. } => fields
             .iter()
             .map(|(_, field_expr)| list_used_locals(field_expr))
             .flatten()
             .collect::<Vec<_>>(),
-        ExpressionContentsGeneric::ConstantValue { .. } => Vec::new(),
-        ExpressionContentsGeneric::Borrow { expr, .. } => list_used_locals(&*expr),
-        ExpressionContentsGeneric::Copy { expr, .. } => list_used_locals(&*expr),
+        ExpressionContents::ConstantValue { .. } => Vec::new(),
+        ExpressionContents::Borrow { expr, .. } => list_used_locals(&*expr),
+        ExpressionContents::Copy { expr, .. } => list_used_locals(&*expr),
     }
 }
 
@@ -109,10 +111,10 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
 /// However, they aren't considered local variables any more; they're really arguments
 /// passed to the expanded lambda. So we need to convert these locals into arguments.
 fn convert_locals_to_args(mut expr: Expression, locals: Vec<NameP>) -> Expression {
-    if let ExpressionContentsGeneric::Local(l) = &expr.contents {
+    if let ExpressionContents::Local(l) = &expr.contents {
         for local in &locals {
             if local.name == l.name {
-                expr.contents = ExpressionContentsGeneric::Argument(local.clone());
+                expr.contents = ExpressionContents::Argument(local.clone());
                 break;
             }
         }
@@ -180,7 +182,7 @@ pub(crate) fn generate_expr(
     let range = expr.range();
     let ty = expr.ty;
     match expr.contents {
-        ExpressionContentsGeneric::Argument(arg) => {
+        ExpressionContents::Argument(arg) => {
             // Create an empty basic block.
             let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
                 statements: Vec::new(),
@@ -193,7 +195,7 @@ pub(crate) fn generate_expr(
                 locals_to_drop: Vec::new(),
             }
         }
-        ExpressionContentsGeneric::Local(local) => {
+        ExpressionContents::Local(local) => {
             let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
                 statements: Vec::new(),
                 terminator,
@@ -205,7 +207,7 @@ pub(crate) fn generate_expr(
                 locals_to_drop: Vec::new(),
             }
         }
-        ExpressionContentsGeneric::Symbol {
+        ExpressionContents::Symbol {
             name,
             range,
             type_variables,
@@ -233,7 +235,7 @@ pub(crate) fn generate_expr(
                 locals_to_drop: Vec::new(),
             }
         }
-        ExpressionContentsGeneric::Apply(left, right) => {
+        ExpressionContents::Apply(left, right) => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
                 ty,
@@ -294,7 +296,7 @@ pub(crate) fn generate_expr(
                     .collect(),
             }
         }
-        ExpressionContentsGeneric::Lambda {
+        ExpressionContents::Lambda {
             lambda_token,
             params,
             expr,
@@ -428,7 +430,7 @@ pub(crate) fn generate_expr(
                 locals_to_drop: Vec::new(),
             }
         }
-        ExpressionContentsGeneric::Let {
+        ExpressionContents::Let {
             name,
             expr: right_expr,
             ..
@@ -489,12 +491,12 @@ pub(crate) fn generate_expr(
                 locals_to_drop: rvalue.locals_to_drop,
             }
         }
-        ExpressionContentsGeneric::Block { mut statements, .. } => {
+        ExpressionContents::Block { mut statements, .. } => {
             // Make a list of all the local variables we'll need to drop at the end of this scope.
             let locals_to_drop = statements
                 .iter()
                 .filter_map(|expr| {
-                    if let ExpressionContentsGeneric::Let { name, .. } = &expr.contents {
+                    if let ExpressionContents::Let { name, .. } = &expr.contents {
                         Some(name.name.clone())
                     } else {
                         None
@@ -598,7 +600,7 @@ pub(crate) fn generate_expr(
                 }
             }
         }
-        ExpressionContentsGeneric::ConstructData {
+        ExpressionContents::ConstructData {
             fields, variant, ..
         } => {
             // Break each field into its name and its expression.
@@ -662,7 +664,7 @@ pub(crate) fn generate_expr(
                 locals_to_drop: chain.locals_to_drop,
             }
         }
-        ExpressionContentsGeneric::ConstantValue { value, range } => {
+        ExpressionContents::ConstantValue { value, range } => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
                 ty,
@@ -689,7 +691,7 @@ pub(crate) fn generate_expr(
                 locals_to_drop: Vec::new(),
             }
         }
-        ExpressionContentsGeneric::Borrow { borrow_token, expr } => {
+        ExpressionContents::Borrow { borrow_token, expr } => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
                 ty: Type::Borrow {
@@ -732,7 +734,7 @@ pub(crate) fn generate_expr(
                 locals_to_drop: inner.locals_to_drop,
             }
         }
-        ExpressionContentsGeneric::Copy { copy_token, expr } => {
+        ExpressionContents::Copy { copy_token, expr } => {
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
                 ty: if let Type::Borrow { ty, .. } = expr.ty.clone() {

@@ -7,7 +7,7 @@ use quill_mir::mir::{
     ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Operand,
     PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };
-use quill_parser::ConstantValue;
+use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 

@@ -11,7 +11,7 @@ use quill_common::{
     location::{Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
-use quill_parser::{IdentifierP, TypeP};
+use quill_parser::{identifier::IdentifierP, types::TypeP};
 use quill_type::{BorrowCondition, Lifetime, PrimitiveType, Type};
 
 use crate::ForeignTypeDeclarationC;

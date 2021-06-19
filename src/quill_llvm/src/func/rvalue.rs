@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use inkwell::{types::BasicType, values::PointerValue, AddressSpace};
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_mir::mir::{LocalVariableInfo, LocalVariableName, Operand, PlaceSegment, Rvalue};
-use quill_parser::ConstantValue;
+use quill_parser::expr_pat::ConstantValue;
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
 

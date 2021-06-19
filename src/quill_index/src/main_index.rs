@@ -11,7 +11,7 @@ use quill_common::{
         ModuleIdentifier, Range, SourceFileIdentifier, SourceFileIdentifierSegment, SourceFileType,
     },
 };
-use quill_parser::{FileP, NameP};
+use quill_parser::{file::FileP, identifier::NameP};
 use quill_type::Type;
 
 use crate::type_index::{ProjectTypesC, TypeDeclarationC};

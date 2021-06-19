@@ -10,7 +10,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::TypeParameter;
-use quill_parser::ConstantValue;
+use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]

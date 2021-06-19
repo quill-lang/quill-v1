@@ -8,9 +8,9 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
-use quill_parser::{ConstantValue, NameP};
+use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
 use quill_type::Type;
-use quill_type_deduce::{replace_type_variables, type_check::Pattern, TypeConstructorInvocation};
+use quill_type_deduce::{hir::pattern::Pattern, replace_type_variables, TypeConstructorInvocation};
 
 use crate::{definition::DefinitionTranslationContext, mir::*};
 
