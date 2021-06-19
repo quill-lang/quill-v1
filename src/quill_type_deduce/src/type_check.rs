@@ -15,7 +15,12 @@ use quill_index::{
     compute_used_files, DefinitionI, ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI,
     TypeParameter,
 };
-use quill_parser::{ConstantValue, DefinitionBodyP, DefinitionCaseP, ExprPatP, FileP, NameP};
+use quill_parser::{
+    definition::{DefinitionBodyP, DefinitionCaseP},
+    expr_pat::{ConstantValue, ExprPatP},
+    file::FileP,
+    identifier::NameP,
+};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{

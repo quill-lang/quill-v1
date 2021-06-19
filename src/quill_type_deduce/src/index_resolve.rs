@@ -6,7 +6,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::{DefinitionI, TypeDeclarationTypeI, TypeParameter};
-use quill_parser::IdentifierP;
+use quill_parser::identifier::IdentifierP;
 use quill_type::Type;
 
 use crate::{

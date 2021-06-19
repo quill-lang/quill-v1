@@ -10,7 +10,7 @@ use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::SourceFileIdentifier,
 };
-use quill_parser::{FileP, NameP};
+use quill_parser::{file::FileP, identifier::NameP};
 
 /// A set of all types declared in a single module, mapping type names to their declarations.
 pub type ModuleTypesC = HashMap<String, TypeDeclarationC>;

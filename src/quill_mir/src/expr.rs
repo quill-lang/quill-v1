@@ -1,7 +1,7 @@
 //! Creates MIR expressions from HIR expressions.
 
 use quill_common::{location::Ranged, name::QualifiedName};
-use quill_parser::{ConstantValue, NameP};
+use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::type_check::{
     Definition, DefinitionBody, DefinitionCase, Expression, ExpressionContentsGeneric, Pattern,

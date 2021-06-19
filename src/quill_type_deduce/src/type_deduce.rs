@@ -6,7 +6,10 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
-use quill_parser::{ConstantValue, ExprPatP, IdentifierP, NameP};
+use quill_parser::{
+    expr_pat::{ConstantValue, ExprPatP},
+    identifier::{IdentifierP, NameP},
+};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
