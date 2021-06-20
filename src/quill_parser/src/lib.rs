@@ -4,6 +4,7 @@ pub mod expr_pat;
 pub mod file;
 pub mod identifier;
 pub mod types;
+mod validate;
 pub mod visibility;
 
 use data_types::*;
@@ -392,10 +393,15 @@ impl<'input> Parser<'input> {
                 "expected assign symbol `=`",
             )
             .bind(|_| {
-                self.parse_expr().map(|replacement| DefinitionCaseP {
-                    pattern,
-                    replacement,
-                })
+                self.parse_expr()
+                    .bind(|expr| {
+                        let messages = validate::validate(self.source_file, &expr);
+                        DiagnosticResult::ok_with_many(expr, messages)
+                    })
+                    .map(|replacement| DefinitionCaseP {
+                        pattern,
+                        replacement,
+                    })
             })
         })
     }
