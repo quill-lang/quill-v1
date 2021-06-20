@@ -290,6 +290,10 @@ pub(crate) fn generate_constraints(
 
             for param in &params {
                 let NameP { name, range, .. } = param;
+                if name == "_" {
+                    // Unnamed lambda parameters do not need to be tracked here.
+                    continue;
+                }
                 match lambda_variables.entry(name.clone()) {
                     Entry::Occupied(occupied) => {
                         messages.push(already_defined(source_file, *range, occupied.get().range));
