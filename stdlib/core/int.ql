@@ -41,10 +41,6 @@ def <= : Int -> Int -> Bool {
     <= = le_int
 }
 
-def == : Int -> Int -> Bool {
-    == = eq_int
-}
-
 def != : Int -> Int -> Bool {
     != = ne_int
 }

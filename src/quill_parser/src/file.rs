@@ -1,8 +1,4 @@
-use crate::{
-    data_types::{DataP, EnumP},
-    definition::DefinitionP,
-    identifier::IdentifierP,
-};
+use crate::{data_types::{ClassP, DataP, EnumP}, definition::DefinitionP, identifier::IdentifierP};
 
 /// A single `.ql` file may export data types and definitions.
 /// This `File` struct contains the parsed abstract syntax tree of a file.
@@ -12,6 +8,7 @@ pub struct FileP {
     pub data: Vec<DataP>,
     pub enums: Vec<EnumP>,
     pub definitions: Vec<DefinitionP>,
+    pub classes: Vec<ClassP>,
 }
 
 #[derive(Debug)]
