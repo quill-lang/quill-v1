@@ -428,7 +428,7 @@ impl<'input> Parser<'input> {
 ///////////////
 
 impl<'input> Parser<'input> {
-    /// `type ::= type_borrow* (type_name type_args | "(" type ")") ("->" type)?`
+    /// `type ::= type_borrow* (type_name type_args | "(" type ")" | "impl" type_impl) ("->" type)?`
     fn parse_type(&mut self) -> DiagnosticResult<TypeP> {
         self.parse_type_borrow().bind(|borrow| {
             if let Some(borrow) = borrow {
@@ -464,6 +464,13 @@ impl<'input> Parser<'input> {
                         } else {
                             unreachable!()
                         }
+                    }
+                    Some(TokenTree::Token(Token {
+                        token_type: TokenType::Impl,
+                        range: impl_token,
+                    })) => {
+                        let impl_token = *impl_token;
+                        self.parse_type_impl(impl_token)
                     }
                     _ => {
                         self.parse_identifier().bind(|identifier| {
@@ -525,6 +532,22 @@ impl<'input> Parser<'input> {
         } else {
             DiagnosticResult::ok(None)
         }
+    }
+
+    /// `type_impl ::= class ('[' type_params ']')?`
+    fn parse_type_impl(&mut self, impl_token: Range) -> DiagnosticResult<TypeP> {
+        self.parse_identifier().bind(|class| {
+            let params = if let Some(tree) = self.parse_tree(BracketType::Square) {
+                self.parse_in_tree(tree, |parser| parser.parse_type_params())
+            } else {
+                DiagnosticResult::ok(Vec::new())
+            };
+            params.map(|params| TypeP::Impl {
+                impl_token,
+                class,
+                params,
+            })
+        })
     }
 
     /// Parses a list of names for type parameters, e.g. `[A, B, C[_]]` but not something like `[bool]` because that is a type not a type parameter name.
@@ -1110,36 +1133,34 @@ fn collapse_func_application(terms: Vec<(Option<Operator>, ExprPatP)>) -> Functi
 /////////////////
 
 impl<'input> Parser<'input> {
-    /// `class ::= name named_type_params '{' class_body '}'
+    /// `class ::= name named_type_params? '{' class_body '}'
     fn parse_class(&mut self, vis: Visibility) -> DiagnosticResult<ClassP> {
         self.parse_name().bind(|identifier| {
-            if let Some(tree) = self.parse_tree(BracketType::Square) {
+            let type_params = if let Some(tree) = self.parse_tree(BracketType::Square) {
                 self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
-                    .bind(|type_params| {
-                        if let Some(tree) = self.parse_tree(BracketType::Brace) {
-                            self.parse_in_tree(tree, |parser| {
-                                parser.parse_class_body(vis).map(|definitions| ClassP {
-                                    vis,
-                                    identifier,
-                                    type_params,
-                                    definitions,
-                                })
-                            })
-                        } else {
-                            DiagnosticResult::fail(ErrorMessage::new(
-                                "expected brace bracket block".to_string(),
-                                Severity::Error,
-                                Diagnostic::at(self.source_file, &self.tokens.range()),
-                            ))
-                        }
-                    })
             } else {
-                DiagnosticResult::fail(ErrorMessage::new(
-                    "expected square bracket block for type class".to_string(),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, &self.tokens.range()),
-                ))
-            }
+                // TODO: emit a nicer error message if the user omits square brackets around the type class name(s).
+                DiagnosticResult::ok(Vec::new())
+            };
+
+            type_params.bind(|type_params| {
+                if let Some(tree) = self.parse_tree(BracketType::Brace) {
+                    self.parse_in_tree(tree, |parser| {
+                        parser.parse_class_body(vis).map(|definitions| ClassP {
+                            vis,
+                            identifier,
+                            type_params,
+                            definitions,
+                        })
+                    })
+                } else {
+                    DiagnosticResult::fail(ErrorMessage::new(
+                        "expected brace bracket block".to_string(),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &self.tokens.range()),
+                    ))
+                }
+            })
         })
     }
 
