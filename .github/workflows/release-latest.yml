@@ -1,9 +1,9 @@
 name: release latest
 
 on:
-  push:
-    branches:
-      - latest-branch
+  schedule:
+    # Run once per day at 4am UTC.
+    - cron: "0 4 * * *"
 
 jobs:
   version-gen:
