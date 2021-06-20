@@ -32,7 +32,7 @@ jobs:
         if: steps.check_sha.outputs.cache-hit != 'true'
         uses: peter-evans/create-pull-request@v3
         with:
-          branch: latest
+          branch: latest-branch
           delete-branch: false
           labels: automated
 
