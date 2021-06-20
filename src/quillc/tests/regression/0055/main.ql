@@ -3,3 +3,6 @@ def should_fail: List[Int] {
     // Does not contain all required fields.
     should_fail = Cons { value = 0 }
 }
+def main: Unit {
+    main = unit
+}

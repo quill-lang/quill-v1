@@ -103,9 +103,14 @@ async fn should_compile(directory: &str) {
 #[allow(clippy::unused_unit)]
 #[test_case("check_main_function/empty_project")]
 #[test_case("check_main_function/empty_project_with_main")]
+// Register all the regression tests for fixed issues.
+#[test_case("regression/0054")]
 #[test_case("regression/0055")]
+#[test_case("regression/0076/empty_block")]
+#[test_case("regression/0076/let_as_last_expr")]
+#[test_case("regression/0076/nested_let")]
+#[test_case("regression/0076/underscore_in_expr")]
 #[tokio::test]
-#[should_panic]
 async fn should_fail(directory: &str) {
     let code_folder = PathBuf::from("tests")
         .join(directory)
@@ -123,5 +128,5 @@ async fn should_fail(directory: &str) {
         zig_compiler: PathBuf::from("zig"),
     })
     .await
-    .unwrap();
+    .unwrap_err();
 }
