@@ -88,6 +88,117 @@ fn validate_expr_types<'a>(
                 ))
                 .collect()
         }
+        ExprPatP::Unknown(_) => {
+            vec![ErrorMessage::new(
+                String::from("underscore not allowed in expressions"),
+                Severity::Error,
+                Diagnostic::at(source_file, expr),
+            )]
+        }
+        ExprPatP::Apply(l, r) => {
+            let mut l = validate_expr_types(
+                source_file,
+                l,
+                ValidTypes {
+                    let_expr: Some(TypeInvalidReason {
+                        produce_error_message: Box::new(|expr| {
+                            ErrorMessage::new(
+                                "`let` statements can't be used in function application"
+                                    .to_string(),
+                                Severity::Error,
+                                Diagnostic::at(source_file, expr),
+                            )
+                        }),
+                    }),
+                },
+            );
+            let r = validate_expr_types(
+                source_file,
+                r,
+                ValidTypes {
+                    let_expr: Some(TypeInvalidReason {
+                        produce_error_message: Box::new(|expr| {
+                            ErrorMessage::new(
+                                "`let` statements can't be used in function application"
+                                    .to_string(),
+                                Severity::Error,
+                                Diagnostic::at(source_file, expr),
+                            )
+                        }),
+                    }),
+                },
+            );
+            l.extend(r);
+            l
+        }
+        ExprPatP::Lambda { expr, .. } => validate_expr_types(
+            source_file,
+            &*expr,
+            ValidTypes {
+                let_expr: Some(TypeInvalidReason {
+                    produce_error_message: Box::new(|expr| {
+                        ErrorMessage::new(
+                            "`let` statements can't be used in function application".to_string(),
+                            Severity::Error,
+                            Diagnostic::at(source_file, expr),
+                        )
+                    }),
+                }),
+            },
+        ),
+        ExprPatP::Borrow { expr, .. } => validate_expr_types(
+            source_file,
+            &*expr,
+            ValidTypes {
+                let_expr: Some(TypeInvalidReason {
+                    produce_error_message: Box::new(|expr| {
+                        ErrorMessage::new(
+                            "`let` statements can't be used in function application".to_string(),
+                            Severity::Error,
+                            Diagnostic::at(source_file, expr),
+                        )
+                    }),
+                }),
+            },
+        ),
+        ExprPatP::Copy { expr, .. } => validate_expr_types(
+            source_file,
+            &*expr,
+            ValidTypes {
+                let_expr: Some(TypeInvalidReason {
+                    produce_error_message: Box::new(|expr| {
+                        ErrorMessage::new(
+                            "`let` statements can't be used in function application".to_string(),
+                            Severity::Error,
+                            Diagnostic::at(source_file, expr),
+                        )
+                    }),
+                }),
+            },
+        ),
+        ExprPatP::ConstructData { fields, .. } => fields
+            .fields
+            .iter()
+            .map(|(_field_name, expr)| {
+                validate_expr_types(
+                    source_file,
+                    expr,
+                    ValidTypes {
+                        let_expr: Some(TypeInvalidReason {
+                            produce_error_message: Box::new(|expr| {
+                                ErrorMessage::new(
+                                    "`let` statements can't be used in constructor fields"
+                                        .to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, expr),
+                                )
+                            }),
+                        }),
+                    },
+                )
+            })
+            .flatten()
+            .collect(),
         _ => Vec::new(),
     }
 }

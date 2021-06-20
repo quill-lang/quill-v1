@@ -110,7 +110,6 @@ async fn should_compile(directory: &str) {
 #[test_case("regression/0076/nested_let")]
 #[test_case("regression/0076/underscore_in_expr")]
 #[tokio::test]
-#[should_panic]
 async fn should_fail(directory: &str) {
     let code_folder = PathBuf::from("tests")
         .join(directory)
@@ -128,5 +127,5 @@ async fn should_fail(directory: &str) {
         zig_compiler: PathBuf::from("zig"),
     })
     .await
-    .unwrap();
+    .unwrap_err();
 }
