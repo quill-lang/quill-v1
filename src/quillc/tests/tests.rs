@@ -78,6 +78,7 @@ async fn check_output(directory: &str) {
 
 #[allow(clippy::unused_unit)]
 #[test_case("check_main_function/successful")]
+#[test_case("regression/0057")]
 #[tokio::test]
 async fn should_compile(directory: &str) {
     let code_folder = PathBuf::from("tests")
@@ -102,7 +103,6 @@ async fn should_compile(directory: &str) {
 #[allow(clippy::unused_unit)]
 #[test_case("check_main_function/empty_project")]
 #[test_case("check_main_function/empty_project_with_main")]
-// Register all the regression tests for fixed issues.
 #[test_case("regression/0055")]
 #[tokio::test]
 #[should_panic]
