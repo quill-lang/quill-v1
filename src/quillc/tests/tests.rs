@@ -105,6 +105,7 @@ async fn should_compile(directory: &str) {
 // Register all the regression tests for fixed issues.
 #[test_case("regression/0054")]
 #[test_case("regression/0055")]
+#[test_case("regression/0076/empty_block")]
 #[test_case("regression/0076/let_as_last_expr")]
 #[test_case("regression/0076/nested_let")]
 #[test_case("regression/0076/underscore_in_expr")]

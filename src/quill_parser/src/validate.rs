@@ -36,7 +36,7 @@ struct ValidTypes<'a> {
 }
 
 /// What types of expressions are valid here?
-/// Fixes #54.
+/// Fixes #54, #76.
 fn validate_expr_types<'a>(
     source_file: &'a SourceFileIdentifier,
     expr: &ExprPatP,
@@ -63,6 +63,30 @@ fn validate_expr_types<'a>(
                     },
                 )
             }
+        }
+        ExprPatP::Block { statements, .. } => {
+            let (last, others) = statements.split_last().unwrap();
+            others
+                .iter()
+                .map(|expr| validate_expr_types(source_file, expr, ValidTypes { let_expr: None }))
+                .flatten()
+                .chain(validate_expr_types(
+                    source_file,
+                    last,
+                    ValidTypes {
+                        let_expr: Some(TypeInvalidReason {
+                            produce_error_message: Box::new(|expr| {
+                                ErrorMessage::new(
+                                    "`let` statements can't be the last expression in a block"
+                                        .to_string(),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, expr),
+                                )
+                            }),
+                        }),
+                    },
+                ))
+                .collect()
         }
         _ => Vec::new(),
     }
