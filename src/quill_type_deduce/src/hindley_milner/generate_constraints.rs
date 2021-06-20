@@ -290,8 +290,13 @@ pub(crate) fn generate_constraints(
 
             for param in &params {
                 let NameP { name, range, .. } = param;
+
+                let param_type = TypeVariableId::default();
+                param_types.push(param_type);
+                type_variable_definition_ranges.insert(param_type, *range);
+
                 if name == "_" {
-                    // Unnamed lambda parameters do not need to be tracked here.
+                    // Unnamed lambda parameters do not need to be tracked by name here.
                     continue;
                 }
                 match lambda_variables.entry(name.clone()) {
@@ -305,13 +310,10 @@ pub(crate) fn generate_constraints(
                         if let Some(previous) = let_variables.get(name) {
                             messages.push(already_defined(source_file, *range, previous.range));
                         }
-                        let param_type = TypeVariableId::default();
-                        param_types.push(param_type);
                         vacant.insert(AbstractionVariable {
                             range: *range,
                             var_type: param_type,
                         });
-                        type_variable_definition_ranges.insert(param_type, *range);
                     }
                 }
             }
