@@ -643,12 +643,19 @@ impl<'input> Parser<'input> {
     /// Parses a lambda expression.
     fn parse_expr_lambda(&mut self, lambda_token: Range) -> DiagnosticResult<ExprPatP> {
         let mut params = Vec::new();
-        while let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Name { .. })) {
+        while let Some(token) = self
+            .parse_token_maybe(|ty| matches!(ty, TokenType::Name { .. } | TokenType::Underscore))
+        {
             if let TokenType::Name(name) = token.token_type {
                 params.push(NameP {
                     name,
                     range: token.range,
                 });
+            } else if let TokenType::Underscore = token.token_type {
+                params.push(NameP {
+                    name: "_".to_string(),
+                    range: token.range,
+                })
             } else {
                 unreachable!()
             }
