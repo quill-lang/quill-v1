@@ -38,7 +38,7 @@ pub def or_options: Option[Bool] -> Option[Bool] -> Option[Bool] {
 }
 
 pub def test_let: Unit {
-    test_let = (let a = 1)
+    test_let = (let a = 1, unit)
 }
 
 def main: Unit {
