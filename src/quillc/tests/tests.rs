@@ -103,6 +103,7 @@ async fn should_compile(directory: &str) {
 #[test_case("check_main_function/empty_project")]
 #[test_case("check_main_function/empty_project_with_main")]
 // Register all the regression tests for fixed issues.
+#[test_case("regression/0054")]
 #[test_case("regression/0055")]
 #[tokio::test]
 #[should_panic]
