@@ -245,11 +245,11 @@ pub fn index(
     let mut enum_variant_types = HashMap::<String, String>::new();
 
     for definition in &file_parsed.definitions {
-        match definitions.entry(definition.name.name.clone()) {
+        match definitions.entry(definition.decl.name.name.clone()) {
             Entry::Occupied(occupied) => {
                 messages.push(name_used_earlier(
                     source_file,
-                    definition.name.range,
+                    definition.decl.name.range,
                     occupied.get().name.range,
                 ));
             }
@@ -257,8 +257,9 @@ pub fn index(
                 // Let's add this definition into the map.
                 let symbol_type = crate::type_resolve::resolve_typep(
                     source_file,
-                    &definition.definition_type,
+                    &definition.decl.definition_type,
                     &definition
+                        .decl
                         .type_parameters
                         .iter()
                         .map(|id| id.name.name.clone())
@@ -269,8 +270,9 @@ pub fn index(
                 messages.append(&mut inner_messages);
                 if let Some(symbol_type) = symbol_type {
                     let definition = DefinitionI {
-                        name: definition.name.clone(),
+                        name: definition.decl.name.clone(),
                         type_variables: definition
+                            .decl
                             .type_parameters
                             .iter()
                             .map(|param| TypeParameter {

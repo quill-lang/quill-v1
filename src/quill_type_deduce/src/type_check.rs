@@ -296,8 +296,8 @@ impl<'a> TypeChecker<'a> {
         let mut definitions = HashMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
-            let def_name = definition.name;
-            let type_parameters = definition.type_parameters;
+            let def_name = definition.decl.name;
+            let type_parameters = definition.decl.type_parameters;
 
             let symbol = &self.project_index[self.source_file].definitions[&def_name.name];
             let symbol_type = &symbol.symbol_type;

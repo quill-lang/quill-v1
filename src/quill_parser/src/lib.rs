@@ -527,7 +527,7 @@ impl<'input> Parser<'input> {
         }
     }
 
-    /// Parses a list of names for type parameters, e.g. [A, B, C[_]] but not something like [bool] because that is a type not a type parameter name.
+    /// Parses a list of names for type parameters, e.g. `[A, B, C[_]]` but not something like `[bool]` because that is a type not a type parameter name.
     fn parse_type_param_names(&mut self) -> DiagnosticResult<Vec<TypeParameterP>> {
         self.parse_name().bind(|first_param| {
             // Check if this is a higher-kinded type, i.e. we have parameters for this type variable.
@@ -688,7 +688,7 @@ impl<'input> Parser<'input> {
     }
 
     /// Parses a let expression.
-    /// `expr_let ::= name '=' expr ';'`
+    /// `expr_let ::= name '=' expr ','`
     fn parse_expr_let(&mut self, let_token: Range) -> DiagnosticResult<ExprPatP> {
         self.parse_name().bind(|name| {
             self.parse_token(
@@ -1113,37 +1113,52 @@ impl<'input> Parser<'input> {
     /// `class ::= name named_type_params '{' class_body '}'
     fn parse_class(&mut self, vis: Visibility) -> DiagnosticResult<ClassP> {
         self.parse_name().bind(|identifier| {
-            self.parse_type_param_names().bind(|type_params| {
-                if let Some(tree) = self.parse_tree(BracketType::Brace) {
-                    self.parse_in_tree(tree, |parser| {
-                        parser.parse_class_body(vis).map(|definitions| ClassP {
-                            vis,
-                            identifier,
-                            type_params,
-                            definitions,
-                        })
+            if let Some(tree) = self.parse_tree(BracketType::Square) {
+                self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
+                    .bind(|type_params| {
+                        if let Some(tree) = self.parse_tree(BracketType::Brace) {
+                            self.parse_in_tree(tree, |parser| {
+                                parser.parse_class_body(vis).map(|definitions| ClassP {
+                                    vis,
+                                    identifier,
+                                    type_params,
+                                    definitions,
+                                })
+                            })
+                        } else {
+                            DiagnosticResult::fail(ErrorMessage::new(
+                                "expected brace bracket block".to_string(),
+                                Severity::Error,
+                                Diagnostic::at(self.source_file, &self.tokens.range()),
+                            ))
+                        }
                     })
-                } else {
-                    DiagnosticResult::fail(ErrorMessage::new(
-                        "expected brace bracket block".to_string(),
-                        Severity::Error,
-                        Diagnostic::at(self.source_file, &self.tokens.range()),
-                    ))
-                }
-            })
+            } else {
+                DiagnosticResult::fail(ErrorMessage::new(
+                    "expected square bracket block for type class".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &self.tokens.range()),
+                ))
+            }
         })
     }
 
-    /// `class_body ::= ( def_decl class_body? )?`
+    /// `class_body ::= ( def_decl ',' class_body? )?`
     fn parse_class_body(&mut self, vis: Visibility) -> DiagnosticResult<Vec<DefinitionDeclP>> {
         if self.tokens.peek().is_none() {
             return DiagnosticResult::ok(Vec::new());
         }
 
         self.parse_def_decl(vis).bind(|decl| {
-            self.parse_class_body(vis).map(|mut remaining| {
-                remaining.insert(0, decl);
-                remaining
+            self.parse_token(
+                |tk| matches!(tk, TokenType::EndOfLine { .. }),
+                "expected end of line after function in class",
+            )
+            .bind(|_| {
+                self.parse_class_body(vis).map(|mut remaining| {
+                    remaining.insert(0, decl);
+                    remaining
+                })
             })
         })
     }

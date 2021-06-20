@@ -1,4 +1,9 @@
-use crate::{definition::{DefinitionDeclP, TypeParameterP}, identifier::NameP, types::TypeP, visibility::Visibility};
+use crate::{
+    definition::{DefinitionDeclP, TypeParameterP},
+    identifier::NameP,
+    types::TypeP,
+    visibility::Visibility,
+};
 
 /// A `data` block, used to define product types.
 #[derive(Debug)]

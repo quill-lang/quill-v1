@@ -1,5 +1,5 @@
 class PartialEq[T] {
-    def ==: T -> T -> Bool
+    == : T -> T -> Bool
 }
 
 // FIXME: This syntax should definitely be improved but it's good enough for trying things out.
