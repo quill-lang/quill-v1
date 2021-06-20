@@ -336,26 +336,6 @@ fn string_to_target(target: &str) -> TargetTriple {
     }
 }
 
-#[cfg(target_family = "windows")]
-fn default_target() -> TargetTriple {
-    TargetTriple {
-        arch: TargetArchitecture::X86_64,
-        vendor: TargetVendor::Pc,
-        os: TargetOS::Windows,
-        env: Some(TargetEnvironment::Gnu),
-    }
-}
-
-#[cfg(target_family = "unix")]
-fn default_target() -> TargetTriple {
-    TargetTriple {
-        arch: TargetArchitecture::X86_64,
-        vendor: TargetVendor::Unknown,
-        os: TargetOS::Linux,
-        env: Some(TargetEnvironment::Gnu),
-    }
-}
-
 async fn process_build(
     cli_config: &CliConfig,
     project_config: &ProjectConfig,
@@ -369,7 +349,7 @@ async fn process_build(
                 .map(|target| string_to_target(&target))
                 .collect()
         })
-        .unwrap_or_else(|| vec![default_target()]);
+        .unwrap_or_else(|| vec![TargetTriple::default_triple()]);
 
     for target_triple in targets {
         let build_info = BuildInfo {
@@ -387,7 +367,7 @@ async fn process_run(
     _args: &ArgMatches<'_>,
 ) {
     let info = BuildInfo {
-        target_triple: default_target(),
+        target_triple: TargetTriple::default_triple(),
         code_folder: project_config.code_folder.clone(),
         build_folder: project_config.build_folder.clone(),
     };

@@ -26,6 +26,28 @@ impl TargetTriple {
             }
         }
     }
+
+    /// On Windows, returns `x86_64-pc-windows-gnu`.
+    #[cfg(target_family = "windows")]
+    pub fn default_triple() -> TargetTriple {
+        TargetTriple {
+            arch: TargetArchitecture::X86_64,
+            vendor: TargetVendor::Pc,
+            os: TargetOS::Windows,
+            env: Some(TargetEnvironment::Gnu),
+        }
+    }
+
+    /// On Unix, returns `x86_64-unknown-linux-gnu`.
+    #[cfg(target_family = "unix")]
+    pub fn default_triple() -> TargetTriple {
+        TargetTriple {
+            arch: TargetArchitecture::X86_64,
+            vendor: TargetVendor::Unknown,
+            os: TargetOS::Linux,
+            env: Some(TargetEnvironment::Gnu),
+        }
+    }
 }
 
 impl Display for TargetTriple {
