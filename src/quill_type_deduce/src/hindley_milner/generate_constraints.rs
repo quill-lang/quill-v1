@@ -277,11 +277,7 @@ pub(crate) fn generate_constraints(
                 })
             })
         }
-        ExprPatP::Unknown(range) => DiagnosticResult::fail(ErrorMessage::new(
-            String::from("underscore not allowed in expressions"),
-            Severity::Error,
-            Diagnostic::at(source_file, &range),
-        )),
+        ExprPatP::Unknown(_) => panic!("we should not ever have an unknown in an expression"),
         ExprPatP::Lambda {
             lambda_token,
             params,
