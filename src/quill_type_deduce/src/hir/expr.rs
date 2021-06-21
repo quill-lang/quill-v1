@@ -88,6 +88,12 @@ pub enum ExpressionContentsGeneric<E, T, V, I> {
         impl_token: Range,
         implementations: I,
     },
+    /// Getting a field from an object.
+    Field {
+        container: Box<E>,
+        field: NameP,
+        dot: Range,
+    },
 }
 
 /// Represents a case of a definition in an impl expression.
@@ -135,6 +141,9 @@ where
                 copy_token, expr, ..
             } => copy_token.union(expr.range()),
             ExpressionContentsGeneric::Impl { impl_token, .. } => *impl_token,
+            ExpressionContentsGeneric::Field {
+                container, field, ..
+            } => container.range().union(field.range),
         }
     }
 }

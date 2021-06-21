@@ -575,6 +575,7 @@ pub enum PlaceSegment {
     DataField { field: String },
     EnumField { variant: String, field: String },
     EnumDiscriminant,
+    ImplField { field: String },
 }
 
 impl Display for PlaceSegment {
@@ -583,6 +584,7 @@ impl Display for PlaceSegment {
             PlaceSegment::DataField { field } => write!(f, ".{}", field),
             PlaceSegment::EnumField { variant, field } => write!(f, ".<{}>.{}", variant, field),
             PlaceSegment::EnumDiscriminant => write!(f, ".discriminant"),
+            PlaceSegment::ImplField { field } => write!(f, ".<impl>.{}", field),
         }
     }
 }

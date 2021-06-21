@@ -8,12 +8,18 @@ def newline: Unit -> Unit {
     newline _ = putchar 10
 }
 
-def print_list: List[Int] -> Unit {
-    print_list Cons { value, list } = (
-        putchar value
-        print_list list
-    )
-    print_list _ = unit
+aspect Print[T] {
+    print: T -> Unit
+}
+
+def print_list: impl Print[List[Int]] {
+    print_list = impl {    
+        print Cons { value, list } = (
+            putchar value
+            print_list.print list
+        )
+        print _ = unit
+    }
 }
 
 def print_int: Int -> Unit {

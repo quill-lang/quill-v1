@@ -48,6 +48,7 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
+        ExpressionContents::Field { container, .. } => initialise_expr(ctx, &*container),
     }
 }
 
@@ -120,6 +121,7 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             */
             Vec::new()
         }
+        ExpressionContents::Field { container, .. } => list_used_locals(&*container),
     }
 }
 
@@ -895,6 +897,59 @@ pub(crate) fn generate_expr(
                 block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+            }
+        }
+        ExpressionContents::Field {
+            container,
+            field,
+            dot,
+        } => {
+            let projection = match &container.ty {
+                Type::Named { .. } => PlaceSegment::DataField {
+                    field: field.name.clone(),
+                },
+                Type::Impl { .. } => PlaceSegment::ImplField {
+                    field: field.name.clone(),
+                },
+                _ => panic!("invalid container type"),
+            };
+            let variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty,
+                name: None,
+            });
+            let terminator_range = terminator.range;
+            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: Vec::new(),
+                terminator,
+            });
+            let inner = generate_expr(
+                ctx,
+                *container,
+                Terminator {
+                    range: terminator_range,
+                    kind: TerminatorKind::Goto(block),
+                },
+            );
+            ctx.control_flow_graph
+                .basic_blocks
+                .get_mut(&block)
+                .unwrap()
+                .statements
+                .push(Statement {
+                    range: dot,
+                    kind: StatementKind::Assign {
+                        target: LocalVariableName::Local(variable),
+                        source: Rvalue::Use(Operand::Move(Place {
+                            local: inner.variable,
+                            projection: vec![projection],
+                        })),
+                    },
+                });
+            ExprGeneratedM {
+                block: inner.block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: inner.locals_to_drop,
             }
         }
     }

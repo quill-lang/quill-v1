@@ -893,6 +893,46 @@ pub(crate) fn generate_constraints(
                 new_variables: None,
             })
         }
+        ExprPatP::Field {
+            container,
+            field,
+            dot,
+        } => generate_constraints(
+            source_file,
+            project_index,
+            visible_names,
+            args,
+            lambda_variables,
+            let_variables,
+            *container,
+        )
+        .map(|mut container| {
+            let type_variable = TypeVariable::Unknown {
+                id: TypeVariableId::default(),
+            };
+            // let expr_range = container.expr.range();
+            // container.constraints.0.push((
+            //     container.expr.type_variable.clone(),
+            //     Constraint::Equality {
+            //         ty: TypeVariable::Borrow {
+            //             ty: Box::new(type_variable.clone()),
+            //         },
+            //         reason: ConstraintEqualityReason::Copy {
+            //             expr: expr_range,
+            //             copy_token,
+            //         },
+            //     },
+            // ));
+            container.expr = ExpressionT {
+                type_variable,
+                contents: ExpressionContentsT::Field {
+                    container: Box::new(container.expr),
+                    field,
+                    dot,
+                },
+            };
+            container
+        }),
     }
 }
 

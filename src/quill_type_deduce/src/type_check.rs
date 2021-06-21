@@ -775,6 +775,11 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &impl_token),
             )),
+            ExprPatP::Field { dot, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("fields are not allowed in function patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &dot),
+            )),
         }
     }
 
@@ -916,6 +921,11 @@ impl<'a> TypeChecker<'a> {
                 String::from("`impl` expressions are not allowed in patterns"),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &impl_token),
+            )),
+            ExprPatP::Field { dot, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("fields are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &dot),
             )),
         }
     }

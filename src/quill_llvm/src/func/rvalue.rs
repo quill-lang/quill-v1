@@ -128,6 +128,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 unreachable!()
                             }
                         }
+                        PlaceSegment::ImplField { field } => todo!(),
                     }
                 }
 
@@ -255,6 +256,7 @@ pub fn get_type_of_rvalue(
                             unreachable!()
                         }
                     }
+                    PlaceSegment::ImplField { field } => todo!(),
                 }
             }
 
