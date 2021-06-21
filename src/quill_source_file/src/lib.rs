@@ -153,11 +153,7 @@ impl PackageFileSystem {
         .await;
     }
 
-    async fn load_source_file(
-        &self,
-        identifier: SourceFileIdentifier,
-    ) -> Result<SourceFile, SourceFileLoadError> {
-        use tokio::io::AsyncReadExt;
+    pub fn file_path(&self, identifier: &SourceFileIdentifier) -> PathBuf {
         let directory = self.project_directories[&identifier.module.segments[0].0].clone();
         let directory = identifier
             .module
@@ -165,14 +161,20 @@ impl PackageFileSystem {
             .iter()
             .skip(1)
             .fold(directory, |dir, segment| dir.join(&segment.0));
+        directory
+            .join(&identifier.file.0)
+            .with_extension(identifier.file_type.file_extension())
+    }
 
-        let file = File::open(
-            directory
-                .join(identifier.file.0)
-                .with_extension(identifier.file_type.file_extension()),
-        )
-        .await
-        .map_err(SourceFileLoadError::Io)?;
+    async fn load_source_file(
+        &self,
+        identifier: SourceFileIdentifier,
+    ) -> Result<SourceFile, SourceFileLoadError> {
+        use tokio::io::AsyncReadExt;
+
+        let file = File::open(self.file_path(&identifier))
+            .await
+            .map_err(SourceFileLoadError::Io)?;
 
         let metadata = file.metadata().await.map_err(SourceFileLoadError::Io)?;
         let modified_time = metadata.modified().map_err(SourceFileLoadError::Io)?;
