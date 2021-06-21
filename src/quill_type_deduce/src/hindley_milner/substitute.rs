@@ -279,7 +279,7 @@ fn typeck_impl(
         messages: Vec::new(),
     };
 
-    typeck.compute_impl(impl_token, aspect, cases, visible_names)
+    typeck.compute_impl(impl_token, aspect, &parameters, cases, visible_names)
 }
 
 fn substitute_type(
