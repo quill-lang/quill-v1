@@ -8,6 +8,7 @@ use quill_index::ProjectIndex;
 
 use crate::{
     hir::expr::{Expression, ExpressionT, TypeVariable},
+    index_resolve::instantiate_with,
     type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
@@ -49,6 +50,7 @@ pub(crate) fn solve_type_constraints(
                 }
                 _ => mid_priority_constraints.push_back(constraint),
             },
+            Constraint::FieldAccess { .. } => low_priority_constraints.push_back(constraint),
         }
     }
     // To solve the constraints, we will pop entries off the front of the queue, process them, and if needed push them to the back of the queue.
@@ -140,6 +142,83 @@ fn solve_type_constraint_queue(
                             error,
                             reason,
                             substitution,
+                        ));
+                    }
+                }
+            }
+            Constraint::FieldAccess {
+                ty: field_ty,
+                field,
+                reason,
+            } => {
+                // This constraint specifies that `type_variable` has a field named `field` with type `field_ty`.
+                // At this point, we should know the container's type.
+                match type_variable {
+                    TypeVariable::Impl { name, parameters } => {
+                        let aspect = &project_index[&name.source_file].aspects[&name.name];
+                        match aspect
+                            .definitions
+                            .iter()
+                            .find(|def| def.name.name == field.name)
+                        {
+                            Some(field) => {
+                                constraint_queue.push_front((
+                                    field_ty,
+                                    Constraint::Equality {
+                                        ty: TypeVariable::Borrow {
+                                            ty: Box::new(instantiate_with(
+                                                &field.symbol_type,
+                                                &mut {
+                                                    let mut map = HashMap::new();
+                                                    for (param, var) in
+                                                        aspect.type_variables.iter().zip(parameters)
+                                                    {
+                                                        map.insert(param.name.clone(), var);
+                                                    }
+                                                    map
+                                                },
+                                                &mut HashMap::new(),
+                                            )),
+                                        },
+                                        reason: ConstraintEqualityReason::FieldAccess(reason),
+                                    },
+                                ));
+                            }
+                            None => {
+                                return DiagnosticResult::fail(ErrorMessage::new(
+                                    format!("aspect `{}` has no definition `{}`", name, field),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &reason.field),
+                                ));
+                            }
+                        }
+                    }
+                    type_variable => {
+                        return DiagnosticResult::fail(ErrorMessage::new(
+                            match type_variable {
+                                TypeVariable::Named { .. } => {
+                                    "cannot use `.` syntax on data or enum types (yet)"
+                                }
+                                TypeVariable::Function(_, _) => {
+                                    "cannot use `.` syntax on functions"
+                                }
+                                TypeVariable::Variable { .. } => {
+                                    "cannot use `.` syntax on type variables"
+                                }
+                                TypeVariable::Unknown { .. } => {
+                                    "could not deduce the type of this expression"
+                                }
+                                TypeVariable::Primitive(_) => {
+                                    "cannot use `.` syntax on primitive types"
+                                }
+                                TypeVariable::Borrow { .. } => {
+                                    "cannot use `.` syntax on borrowed types"
+                                }
+                                TypeVariable::Impl { .. } => unreachable!(),
+                            }
+                            .to_string(),
+                            Severity::Error,
+                            Diagnostic::at(source_file, &reason.container),
                         ));
                     }
                 }
@@ -380,6 +459,7 @@ fn apply_substitution_to_constraints(
         apply_substitution(mgu, ty);
         match constraint {
             Constraint::Equality { ty: other, .. } => apply_substitution(mgu, other),
+            Constraint::FieldAccess { ty, .. } => apply_substitution(mgu, ty),
         }
     }
 }
@@ -390,6 +470,35 @@ fn apply_substitution(sub: &HashMap<TypeVariableId, TypeVariable>, ty: &mut Type
             *ty = sub_value.clone();
         }
     }
+
+    // match ty {
+    //     TypeVariable::Unknown { id } => {
+    //         if let Some(sub_value) = sub.get(id) {
+    //             *ty = sub_value.clone();
+    //         }
+    //     }
+    //     TypeVariable::Named { parameters, .. } => {
+    //         for param in parameters {
+    //             apply_substitution(sub, param);
+    //         }
+    //     }
+    //     TypeVariable::Function(l, r) => {
+    //         apply_substitution(sub, &mut *l);
+    //         apply_substitution(sub, &mut *r);
+    //     }
+    //     TypeVariable::Variable { parameters, .. } => {
+    //         for param in parameters {
+    //             apply_substitution(sub, param);
+    //         }
+    //     }
+    //     TypeVariable::Primitive(_) => {}
+    //     TypeVariable::Borrow { ty } => apply_substitution(sub, &mut *ty),
+    //     TypeVariable::Impl { parameters, .. } => {
+    //         for param in parameters {
+    //             apply_substitution(sub, param);
+    //         }
+    //     }
+    // }
 }
 
 enum UnificationError {

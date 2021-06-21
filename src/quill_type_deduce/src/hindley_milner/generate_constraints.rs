@@ -13,7 +13,7 @@ use quill_parser::{
 use quill_type::PrimitiveType;
 
 use crate::{
-    hindley_milner::LetStatementNewVariables,
+    hindley_milner::{constraints::ConstraintFieldAccessReason, LetStatementNewVariables},
     hir::expr::{
         AbstractionVariable, BoundVariable, ExpressionContentsT, ExpressionT, TypeVariable,
     },
@@ -910,19 +910,17 @@ pub(crate) fn generate_constraints(
             let type_variable = TypeVariable::Unknown {
                 id: TypeVariableId::default(),
             };
-            // let expr_range = container.expr.range();
-            // container.constraints.0.push((
-            //     container.expr.type_variable.clone(),
-            //     Constraint::Equality {
-            //         ty: TypeVariable::Borrow {
-            //             ty: Box::new(type_variable.clone()),
-            //         },
-            //         reason: ConstraintEqualityReason::Copy {
-            //             expr: expr_range,
-            //             copy_token,
-            //         },
-            //     },
-            // ));
+            container.constraints.0.push((
+                type_variable.clone(),
+                Constraint::FieldAccess {
+                    ty: container.expr.type_variable.clone(),
+                    field: field.clone(),
+                    reason: ConstraintFieldAccessReason {
+                        container: container.expr.range(),
+                        field: field.range,
+                    },
+                },
+            ));
             container.expr = ExpressionT {
                 type_variable,
                 contents: ExpressionContentsT::Field {

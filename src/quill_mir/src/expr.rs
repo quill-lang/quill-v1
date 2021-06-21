@@ -905,12 +905,8 @@ pub(crate) fn generate_expr(
             dot,
         } => {
             let projection = match &container.ty {
-                Type::Named { .. } => PlaceSegment::DataField {
-                    field: field.name.clone(),
-                },
-                Type::Impl { .. } => PlaceSegment::ImplField {
-                    field: field.name.clone(),
-                },
+                Type::Named { .. } => PlaceSegment::DataField { field: field.name },
+                Type::Impl { .. } => PlaceSegment::ImplField { field: field.name },
                 _ => panic!("invalid container type"),
             };
             let variable = ctx.new_local_variable(LocalVariableInfo {
@@ -940,7 +936,7 @@ pub(crate) fn generate_expr(
                     range: dot,
                     kind: StatementKind::Assign {
                         target: LocalVariableName::Local(variable),
-                        source: Rvalue::Use(Operand::Move(Place {
+                        source: Rvalue::Use(Operand::Copy(Place {
                             local: inner.variable,
                             projection: vec![projection],
                         })),
