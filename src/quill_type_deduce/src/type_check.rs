@@ -719,6 +719,11 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &data_constructor),
             )),
+            ExprPatP::Impl { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("`impl` blocks are not allowed in function patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &impl_token),
+            )),
         }
     }
 
@@ -856,6 +861,11 @@ impl<'a> TypeChecker<'a> {
                         })
                 })
             }
+            ExprPatP::Impl { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("`impl` expressions are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &impl_token),
+            )),
         }
     }
 }

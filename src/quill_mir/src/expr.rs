@@ -45,6 +45,7 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::ConstantValue { .. } => {}
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
+        ExpressionContents::Impl { .. } => {}
     }
 }
 
@@ -104,6 +105,14 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
         ExpressionContents::ConstantValue { .. } => Vec::new(),
         ExpressionContents::Borrow { expr, .. } => list_used_locals(&*expr),
         ExpressionContents::Copy { expr, .. } => list_used_locals(&*expr),
+        ExpressionContents::Impl {
+            implementations, ..
+        } => implementations
+            .values()
+            .flatten()
+            .map(|f| list_used_locals(&*f.replacement))
+            .flatten()
+            .collect(),
     }
 }
 
@@ -778,5 +787,9 @@ pub(crate) fn generate_expr(
                 locals_to_drop: inner.locals_to_drop,
             }
         }
+        ExpressionContents::Impl {
+            impl_token,
+            implementations,
+        } => todo!(),
     }
 }

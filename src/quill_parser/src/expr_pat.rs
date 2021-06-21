@@ -2,7 +2,11 @@ use std::fmt::Display;
 
 use quill_common::location::{Range, Ranged};
 
-use crate::identifier::{IdentifierP, NameP};
+use crate::{
+    definition::DefinitionBodyP,
+    identifier::{IdentifierP, NameP},
+    types::TypeP,
+};
 
 /// Represents either an expression or a pattern.
 #[derive(Debug)]
@@ -50,6 +54,12 @@ pub enum ExprPatP {
         open_brace: Range,
         close_brace: Range,
         fields: ConstructDataFields,
+    },
+    /// An implementation of an aspect.
+    Impl {
+        impl_token: Range,
+        aspect: TypeP,
+        body: DefinitionBodyP,
     },
     /// An underscore `_` representing an unknown.
     /// This is valid only in patterns, not normal expressions.
@@ -107,6 +117,7 @@ impl Ranged for ExprPatP {
                 close_brace,
                 ..
             } => data_constructor.range().union(close_brace.range()),
+            ExprPatP::Impl { aspect, .. } => aspect.range(),
         }
     }
 }

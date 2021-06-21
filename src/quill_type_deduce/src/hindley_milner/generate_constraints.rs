@@ -872,6 +872,11 @@ pub(crate) fn generate_constraints(
             };
             expr
         }),
+        ExprPatP::Impl {
+            impl_token,
+            aspect,
+            body,
+        } => todo!(),
     }
 }
 

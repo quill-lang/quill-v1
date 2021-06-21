@@ -469,6 +469,8 @@ impl<'input> Parser<'input> {
                         range: impl_token,
                     })) => {
                         let impl_token = *impl_token;
+                        // Consume the `impl` token.
+                        self.tokens.next();
                         self.parse_type_impl(impl_token)
                     }
                     _ => {
@@ -639,6 +641,7 @@ impl<'input> Parser<'input> {
         // - let: a `let` statement
         // - block: a block of statements followed by a returned value
         // - copy: copy the primitive value behind a reference
+        // - impl: an implementation of an aspect beginning with an `impl` token
         // Any expressions we add to the language in the future must reduce to one of these basic
         // expression types, so that we can apply a Hindley-Milner-like type system solver.
         if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Lambda)) {
@@ -653,6 +656,9 @@ impl<'input> Parser<'input> {
                 copy_token: tk.range,
                 expr: Box::new(expr),
             })
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Impl)) {
+            // This is an impl expression.
+            self.parse_expr_impl(tk.range)
         } else {
             // Default to a variable or application expression, since this will show a decent error message.
             self.parse_expr_app()
@@ -723,6 +729,18 @@ impl<'input> Parser<'input> {
                     name,
                     expr: Box::new(expr),
                 })
+            })
+        })
+    }
+
+    /// Parses an impl expression.
+    fn parse_expr_impl(&mut self, impl_token: Range) -> DiagnosticResult<ExprPatP> {
+        // TODO: Allow `impl` to elide types, to be solved using type inference.
+        self.parse_type_impl(impl_token).bind(|aspect| {
+            self.parse_def_body().map(|body| ExprPatP::Impl {
+                impl_token,
+                aspect,
+                body,
             })
         })
     }

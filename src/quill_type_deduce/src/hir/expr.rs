@@ -79,6 +79,23 @@ pub enum ExpressionContentsGeneric<E, T, V> {
     Borrow { borrow_token: Range, expr: Box<E> },
     /// A copy of a borrowed value.
     Copy { copy_token: Range, expr: Box<E> },
+    /// An implementation of an aspect.
+    Impl {
+        /// Maps names of definitions to their implementations.
+        impl_token: Range,
+        implementations: HashMap<NameP, Vec<DefinitionCaseGeneric<E>>>,
+    },
+}
+
+/// Represents a case of a definition in an impl expression.
+#[derive(Debug)]
+pub struct DefinitionCaseGeneric<E> {
+    pub range: Range,
+    /// WHich definition are we defining a pattern replacement for?
+    pub def_name: NameP,
+    /// TODO: This should probably be changed to some other pattern type.
+    pub arg_patterns: Vec<super::pattern::Pattern>,
+    pub replacement: Box<E>,
 }
 
 impl<E, T, V> Ranged for ExpressionContentsGeneric<E, T, V>
@@ -114,6 +131,7 @@ where
             ExpressionContentsGeneric::Copy {
                 copy_token, expr, ..
             } => copy_token.union(expr.range()),
+            ExpressionContentsGeneric::Impl { impl_token, .. } => *impl_token,
         }
     }
 }

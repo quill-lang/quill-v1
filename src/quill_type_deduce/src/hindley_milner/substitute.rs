@@ -170,6 +170,10 @@ fn substitute_contents(
                 expr: Box::new(expr),
             })
         }
+        ExpressionContentsT::Impl {
+            impl_token,
+            implementations,
+        } => todo!(),
     }
 }
 
