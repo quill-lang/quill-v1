@@ -925,6 +925,7 @@ impl<'a> TypeChecker<'a> {
         mut self,
         impl_token: Range,
         aspect: &AspectI,
+        parameters: &[Type],
         cases: Vec<DefinitionCaseP>,
         visible_names: &VisibleNames,
     ) -> DiagnosticResult<ExpressionContents> {
@@ -938,6 +939,9 @@ impl<'a> TypeChecker<'a> {
         let mut implementations = HashMap::new();
 
         for def in &aspect.definitions {
+            let symbol_type =
+                replace_type_variables(def.symbol_type.clone(), &aspect.type_variables, parameters);
+
             let implementation = DefinitionP {
                 decl: DefinitionDeclP {
                     vis: Visibility::Private,
@@ -945,10 +949,9 @@ impl<'a> TypeChecker<'a> {
                         name: def.name.name.clone(),
                         range: impl_token,
                     },
-                    type_parameters: aspect
+                    type_parameters: def
                         .type_variables
                         .iter()
-                        .chain(def.type_variables.iter())
                         .map(|param| TypeParameterP {
                             name: NameP {
                                 name: param.name.clone(),
@@ -957,7 +960,7 @@ impl<'a> TypeChecker<'a> {
                             parameters: param.parameters,
                         })
                         .collect(),
-                    definition_type: to_typep(&def.symbol_type, impl_token),
+                    definition_type: to_typep(&symbol_type, impl_token),
                 },
                 body: DefinitionBodyP::PatternMatch(
                     cases_by_func_name
@@ -967,7 +970,7 @@ impl<'a> TypeChecker<'a> {
             };
 
             // Type check this implementation.
-            let result = self.compute_definition(visible_names, implementation, &def.symbol_type);
+            let result = self.compute_definition(visible_names, implementation, &symbol_type);
             if let Some((k, v)) = result {
                 implementations.insert(k, v);
             }
