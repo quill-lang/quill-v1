@@ -170,6 +170,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     repr.di_type,
                 )
             }),
+            Type::Impl { name, parameters } => todo!(),
         }
     }
 
@@ -240,6 +241,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             Type::Borrow { .. } => {
                 // Dropping a borrow does nothing. No operation is required.
             }
+            Type::Impl { name, parameters } => todo!(),
         }
     }
 
