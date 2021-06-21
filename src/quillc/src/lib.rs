@@ -104,19 +104,16 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
                         .deny()
                         .map(|typeck| {
                             // Output the HIR to a build file.
-                            let f = invocation
-                                .build_info
-                                .build_folder
-                                .join("hir")
-                                .join(
-                                    fs.file_path(&file_ident)
-                                        .strip_prefix(&invocation.build_info.code_folder)
-                                        .unwrap(),
-                                )
-                                .with_extension("hir");
+                            let f = invocation.build_info.build_folder.join("ir").join(
+                                fs.file_path(&file_ident)
+                                    .strip_prefix(&invocation.build_info.code_folder)
+                                    .unwrap(),
+                            );
                             let _ = std::fs::create_dir_all(f.parent().unwrap());
-                            std::fs::write(f, typeck.to_string()).unwrap();
-                            quill_mir::to_mir(&index, typeck, &file_ident)
+                            std::fs::write(f.with_extension("hir"), typeck.to_string()).unwrap();
+                            let mir = quill_mir::to_mir(&index, typeck, &file_ident);
+                            std::fs::write(f.with_extension("mir"), mir.to_string()).unwrap();
+                            mir
                         })
                         .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
                         .map(|mir| (file_ident, mir))

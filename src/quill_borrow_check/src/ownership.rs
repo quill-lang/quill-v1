@@ -212,6 +212,10 @@ fn check_ownership_walk(
                 }
                 make_owned(statuses, stmt.range, *target);
             }
+            StatementKind::ConstructImpl { .. } => {
+                // TODO: For now, we can't pass local variables into impls.
+                // When this is implemented, we can add something here.
+            }
             _ => unreachable!(),
         }
     }

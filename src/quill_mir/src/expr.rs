@@ -1,5 +1,7 @@
 //! Creates MIR expressions from HIR expressions.
 
+use std::collections::HashMap;
+
 use quill_common::{location::Ranged, name::QualifiedName};
 use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
 use quill_type::{PrimitiveType, Type};
@@ -793,8 +795,107 @@ pub(crate) fn generate_expr(
             }
         }
         ExpressionContents::Impl {
-            impl_token,
-            implementations,
-        } => todo!(),
+            implementations, ..
+        } => {
+            // Use the new definitions for this impl.
+            // TODO: Move all used variables inside the impl definition.
+            // Look at the implementation of ExpressionContents::Lambda for more info.
+
+            // TODO: HashMap's ordering isn't technically guaranteed to be consistent.
+            // Maybe change to a different intermediate representation?
+
+            let (aspect, type_variables) = if let Type::Impl { name, parameters } = ty.clone() {
+                (name, parameters)
+            } else {
+                unreachable!()
+            };
+
+            // Store the types of the definitions.
+            let def_types = implementations
+                .values()
+                .map(|def| {
+                    let mut symbol_type = def.return_type.clone();
+                    for arg in def.arg_types.iter().rev() {
+                        symbol_type = Type::Function(Box::new(arg.clone()), Box::new(symbol_type));
+                    }
+                    symbol_type
+                })
+                .collect::<Vec<_>>();
+
+            // Store the definition numbers and names.
+            let mut def_numbers = Vec::new();
+            for (name, def) in implementations {
+                def_numbers.push((name, *ctx.lambda_number));
+                *ctx.lambda_number += 1;
+                let (inner, inner_inner) = to_mir_def(
+                    ctx.project_index,
+                    def,
+                    ctx.source_file,
+                    ctx.def_name,
+                    ctx.lambda_number,
+                );
+                ctx.additional_definitions.push(inner);
+                ctx.additional_definitions.extend(inner_inner);
+            }
+
+            // Now that we've created the lambda as a definition, we need to instance this impl into scope.
+
+            let mut statements = Vec::new();
+            let mut definitions = HashMap::new();
+            let variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty,
+                name: None,
+            });
+
+            for ((def_name, def_number), def_type) in def_numbers.into_iter().zip(def_types) {
+                let def_variable = ctx.new_local_variable(LocalVariableInfo {
+                    range,
+                    ty: def_type,
+                    name: None,
+                });
+                definitions.insert(def_name, LocalVariableName::Local(def_variable));
+
+                statements.push(Statement {
+                    range,
+                    kind: StatementKind::InstanceSymbol {
+                        name: QualifiedName {
+                            source_file: ctx.source_file.clone(),
+                            name: format!("{}/lambda/{}", ctx.def_name, def_number),
+                            range,
+                        },
+                        type_variables: ctx
+                            .type_variables
+                            .iter()
+                            .map(|param| Type::Variable {
+                                variable: param.name.clone(),
+                                parameters: Vec::new(),
+                            })
+                            .collect(),
+                        target: LocalVariableName::Local(def_variable),
+                    },
+                });
+            }
+
+            statements.push(Statement {
+                range,
+                kind: StatementKind::ConstructImpl {
+                    aspect,
+                    type_variables,
+                    definitions,
+                    target: LocalVariableName::Local(variable),
+                },
+            });
+
+            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements,
+                terminator,
+            });
+            ExprGeneratedM {
+                block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: Vec::new(),
+            }
+        }
     }
 }
