@@ -1,3 +1,5 @@
+use int
+
 aspect PartialEq[T] {
     == : T -> T -> Bool
 }

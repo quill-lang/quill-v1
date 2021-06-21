@@ -9,6 +9,8 @@ use quill_type::{PrimitiveType, Type};
 
 use crate::type_resolve::TypeVariableId;
 
+use super::definition::Definition;
+
 /// The Expression type is central to the HIR, or high-level intermediate representation.
 /// In an expression in HIR, the type of each object is known.
 #[derive(Debug)]
@@ -137,7 +139,8 @@ where
     }
 }
 
-pub type ExpressionContents = ExpressionContentsGeneric<Expression, Type, Vec<Type>, ()>;
+pub type ExpressionContents =
+    ExpressionContentsGeneric<Expression, Type, Vec<Type>, HashMap<String, Definition>>;
 pub type ExpressionContentsT = ExpressionContentsGeneric<
     ExpressionT,
     TypeVariable,

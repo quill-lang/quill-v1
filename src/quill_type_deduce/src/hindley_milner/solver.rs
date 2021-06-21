@@ -8,7 +8,7 @@ use quill_index::ProjectIndex;
 
 use crate::{
     hir::expr::{Expression, ExpressionT, TypeVariable},
-    type_check::TypeVariablePrinter,
+    type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
 
@@ -27,6 +27,7 @@ pub(crate) fn solve_type_constraints(
     project_index: &ProjectIndex,
     expr: ExpressionT,
     constraints: Constraints,
+    visible_names: &VisibleNames,
 ) -> DiagnosticResult<Expression> {
     // println!("Deducing type of {:#?}", expr);
     // println!("Constraints: {:#?}", constraints);
@@ -78,7 +79,13 @@ pub(crate) fn solve_type_constraints(
     .bind(|substitution| {
         // println!("Sub was:");
         // println!("{:#?}", substitution);
-        substitute::substitute(&substitution, expr, source_file)
+        substitute::substitute(
+            &substitution,
+            expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
     })
 }
 
