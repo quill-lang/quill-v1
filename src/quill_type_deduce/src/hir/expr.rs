@@ -4,7 +4,7 @@ use quill_common::{
     location::{Range, Ranged},
     name::QualifiedName,
 };
-use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
+use quill_parser::{definition::DefinitionBodyP, expr_pat::ConstantValue, identifier::NameP};
 use quill_type::{PrimitiveType, Type};
 
 use crate::type_resolve::TypeVariableId;
@@ -25,9 +25,10 @@ impl Ranged for Expression {
 
 /// Represents the contents of an expression (which may or may not have been already type checked).
 /// The type `V` represents the type variables that we are substituting into this symbol.
+/// The type `I` represents the contents of an `impl` expression.
 /// You should use `ExpressionContents` or `ExpressionContentsT` instead of this enum directly.
 #[derive(Debug)]
-pub enum ExpressionContentsGeneric<E, T, V> {
+pub enum ExpressionContentsGeneric<E, T, V, I> {
     /// An argument to this function e.g. `x`.
     Argument(NameP),
     /// A local variable declared by a `lambda` or `let` expression.
@@ -83,7 +84,7 @@ pub enum ExpressionContentsGeneric<E, T, V> {
     Impl {
         /// Maps names of definitions to their implementations.
         impl_token: Range,
-        implementations: HashMap<NameP, Vec<DefinitionCaseGeneric<E>>>,
+        implementations: I,
     },
 }
 
@@ -98,7 +99,7 @@ pub struct DefinitionCaseGeneric<E> {
     pub replacement: Box<E>,
 }
 
-impl<E, T, V> Ranged for ExpressionContentsGeneric<E, T, V>
+impl<E, T, V, I> Ranged for ExpressionContentsGeneric<E, T, V, I>
 where
     E: Ranged,
 {
@@ -136,9 +137,13 @@ where
     }
 }
 
-pub type ExpressionContents = ExpressionContentsGeneric<Expression, Type, Vec<Type>>;
-pub type ExpressionContentsT =
-    ExpressionContentsGeneric<ExpressionT, TypeVariable, HashMap<String, TypeVariable>>;
+pub type ExpressionContents = ExpressionContentsGeneric<Expression, Type, Vec<Type>, ()>;
+pub type ExpressionContentsT = ExpressionContentsGeneric<
+    ExpressionT,
+    TypeVariable,
+    HashMap<String, TypeVariable>,
+    DefinitionBodyP,
+>;
 
 /// A variable bound by the definition of a function.
 #[derive(Debug, Clone)]

@@ -872,11 +872,27 @@ pub(crate) fn generate_constraints(
             };
             expr
         }),
-        ExprPatP::Impl {
-            impl_token,
-            aspect,
-            body,
-        } => todo!(),
+        ExprPatP::Impl { impl_token, body } => {
+            let type_variable = TypeVariableId::default();
+            DiagnosticResult::ok(ExprTypeCheck {
+                expr: ExpressionT {
+                    type_variable: TypeVariable::Unknown { id: type_variable },
+                    contents: ExpressionContentsT::Impl {
+                        impl_token,
+                        implementations: body,
+                    },
+                },
+                type_variable_definition_ranges: {
+                    let mut map = HashMap::new();
+                    map.insert(type_variable, impl_token);
+                    map
+                },
+                assumptions: Assumptions::default(),
+                constraints: Constraints::default(),
+                let_variables: HashMap::new(),
+                new_variables: None,
+            })
+        }
     }
 }
 

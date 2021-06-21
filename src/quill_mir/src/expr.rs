@@ -107,12 +107,17 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
         ExpressionContents::Copy { expr, .. } => list_used_locals(&*expr),
         ExpressionContents::Impl {
             implementations, ..
-        } => implementations
+        } => {
+            /* TODO
+            implementations
             .values()
             .flatten()
             .map(|f| list_used_locals(&*f.replacement))
             .flatten()
-            .collect(),
+            .collect()
+            */
+            Vec::new()
+        }
     }
 }
 

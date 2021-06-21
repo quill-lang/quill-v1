@@ -8,7 +8,7 @@ use quill_common::{
     location::{Range, Ranged, SourceFileIdentifier},
 };
 use quill_index::{
-    compute_used_files, DefinitionI, ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI,
+    compute_used_files, AspectI, DefinitionI, ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI,
     TypeParameter,
 };
 use quill_parser::{
@@ -182,10 +182,11 @@ pub struct VisibleNames<'a> {
     pub types: HashMap<&'a str, ForeignDeclaration<&'a TypeDeclarationI>>,
     pub enum_variants: HashMap<&'a str, ForeignDeclaration<&'a str>>,
     pub definitions: HashMap<&'a str, ForeignDeclaration<&'a DefinitionI>>,
+    pub aspects: HashMap<&'a str, ForeignDeclaration<&'a AspectI>>,
 }
 
 /// Work out what names are visible inside a file.
-/// This is the counterpart to `compute_visible_types` once we've got the full project index.
+/// This is the counterpart to `compute_visible_types_and_aspects` once we've got the full project index.
 fn compute_visible_names<'a>(
     source_file: &'a SourceFileIdentifier,
     file_parsed: &FileP,
@@ -195,6 +196,7 @@ fn compute_visible_names<'a>(
     let mut visible_types = MultiMap::new();
     let mut visible_enum_variants = MultiMap::new();
     let mut visible_defs = MultiMap::new();
+    let mut visible_aspects = MultiMap::new();
 
     let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
         project_index.contains_key(name)
@@ -202,7 +204,7 @@ fn compute_visible_names<'a>(
     .destructure();
     assert!(
         more_messages.is_empty(),
-        "should have errored in `compute_visible_types`"
+        "should have errored in `compute_visible_types_and_aspects`"
     );
     for file in used_files.unwrap() {
         let file_index = &project_index[&file.file];
@@ -226,6 +228,15 @@ fn compute_visible_names<'a>(
         }
         for (name, def) in &file_index.definitions {
             visible_defs.insert(
+                name.as_str(),
+                ForeignDeclaration {
+                    source_file: file.file.clone(),
+                    decl: def,
+                },
+            );
+        }
+        for (name, def) in &file_index.aspects {
+            visible_aspects.insert(
                 name.as_str(),
                 ForeignDeclaration {
                     source_file: file.file.clone(),
@@ -283,12 +294,31 @@ fn compute_visible_names<'a>(
         }
     })
         .collect();
+    let aspects = visible_aspects.into_iter().filter_map(|(key, mut decls)| {
+            if decls.len() == 1 {
+                Some((key, decls.pop().unwrap()))
+            } else {
+                messages.push(ErrorMessage::new_with_many(
+                    format!("an aspect with name `{}` was imported from multiple locations, which could cause ambiguity, so this name will not be usable in this file", key),
+                    Severity::Warning,
+                    Diagnostic::in_file(source_file),
+                    decls.into_iter().map(|decl| HelpMessage {
+                        message: format!("defined in {} here", decl.source_file),
+                        help_type: HelpType::Note,
+                        diagnostic: Diagnostic::at(&decl.source_file, &decl.decl.name.range),
+                    }).collect()
+                ));
+                None
+            }
+        })
+            .collect();
 
     DiagnosticResult::ok_with_many(
         VisibleNames {
             types,
             enum_variants,
             definitions,
+            aspects,
         },
         messages,
     )

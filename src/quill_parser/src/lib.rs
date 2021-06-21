@@ -735,14 +735,8 @@ impl<'input> Parser<'input> {
 
     /// Parses an impl expression.
     fn parse_expr_impl(&mut self, impl_token: Range) -> DiagnosticResult<ExprPatP> {
-        // TODO: Allow `impl` to elide types, to be solved using type inference.
-        self.parse_type_impl(impl_token).bind(|aspect| {
-            self.parse_def_body().map(|body| ExprPatP::Impl {
-                impl_token,
-                aspect,
-                body,
-            })
-        })
+        self.parse_def_body()
+            .map(|body| ExprPatP::Impl { impl_token, body })
     }
 
     /// Parses a single term from an expression by consuming either zero or one token trees from the input.

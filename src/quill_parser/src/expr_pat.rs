@@ -5,7 +5,6 @@ use quill_common::location::{Range, Ranged};
 use crate::{
     definition::DefinitionBodyP,
     identifier::{IdentifierP, NameP},
-    types::TypeP,
 };
 
 /// Represents either an expression or a pattern.
@@ -58,7 +57,6 @@ pub enum ExprPatP {
     /// An implementation of an aspect.
     Impl {
         impl_token: Range,
-        aspect: TypeP,
         body: DefinitionBodyP,
     },
     /// An underscore `_` representing an unknown.
@@ -117,7 +115,7 @@ impl Ranged for ExprPatP {
                 close_brace,
                 ..
             } => data_constructor.range().union(close_brace.range()),
-            ExprPatP::Impl { aspect, .. } => aspect.range(),
+            ExprPatP::Impl { impl_token, .. } => impl_token.range(),
         }
     }
 }

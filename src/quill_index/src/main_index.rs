@@ -25,6 +25,7 @@ pub struct FileIndex {
     pub definitions: HashMap<String, DefinitionI>,
     /// Maps enum variant names (True, Left) to the enum that contains them (Bool, Either)
     pub enum_variant_types: HashMap<String, String>,
+    pub aspects: HashMap<String, AspectI>,
 }
 
 pub type ProjectIndex = HashMap<SourceFileIdentifier, FileIndex>;
@@ -88,6 +89,14 @@ pub struct TypeParameter {
     /// A type variable may have one or more unnamed parameters, e.g. `F[_]` is a common type for a functor.
     /// This field stores how many such parameters the type variable has.
     pub parameters: u32,
+}
+
+/// An aspect.
+#[derive(Debug)]
+pub struct AspectI {
+    pub name: NameP,
+    pub type_variables: Vec<TypeParameter>,
+    pub definitions: Vec<DefinitionI>,
 }
 
 /// Returns a generic error message about multiply defined symbols, making sure that the "earlier" symbol
@@ -244,6 +253,7 @@ pub fn index(
     let mut types = HashMap::<String, TypeDeclarationI>::new();
     let mut definitions = HashMap::<String, DefinitionI>::new();
     let mut enum_variant_types = HashMap::<String, String>::new();
+    let mut aspects = HashMap::<String, AspectI>::new();
 
     for definition in &file_parsed.definitions {
         match definitions.entry(definition.decl.name.name.clone()) {
@@ -436,10 +446,72 @@ pub fn index(
         }
     }
 
+    for aspect in &file_parsed.aspects {
+        match aspects.entry(aspect.identifier.name.clone()) {
+            Entry::Occupied(occupied) => {
+                messages.push(name_used_earlier(
+                    source_file,
+                    aspect.identifier.range,
+                    occupied.get().name.range,
+                ));
+            }
+            Entry::Vacant(vacant) => {
+                // Let's add this aspect into the map.
+                let definitions = aspect
+                    .definitions
+                    .iter()
+                    .map(|def| {
+                        crate::type_resolve::resolve_typep(
+                            source_file,
+                            &def.definition_type,
+                            &aspect
+                                .type_params
+                                .iter()
+                                .chain(def.type_parameters.iter())
+                                .map(|id| id.name.name.clone())
+                                .collect(),
+                            &visible_types,
+                        )
+                        .map(|symbol_type| DefinitionI {
+                            name: def.name.clone(),
+                            type_variables: def
+                                .type_parameters
+                                .iter()
+                                .map(|param| TypeParameter {
+                                    name: param.name.name.clone(),
+                                    parameters: param.parameters,
+                                })
+                                .collect(),
+                            symbol_type,
+                        })
+                    })
+                    .collect::<DiagnosticResult<Vec<_>>>();
+                let (definitions, mut inner_messages) = definitions.destructure();
+                messages.append(&mut inner_messages);
+                if let Some(definitions) = definitions {
+                    let aspect = AspectI {
+                        name: aspect.identifier.clone(),
+                        type_variables: aspect
+                            .type_params
+                            .iter()
+                            .map(|param| TypeParameter {
+                                name: param.name.name.clone(),
+                                parameters: param.parameters,
+                            })
+                            .collect(),
+                        definitions,
+                    };
+                    vacant.insert(aspect);
+                }
+            }
+        }
+    }
+
     let index = FileIndex {
         types,
         definitions,
         enum_variant_types,
+        aspects,
     };
     DiagnosticResult::ok_with_many(index, messages)
 }

@@ -173,7 +173,11 @@ fn substitute_contents(
         ExpressionContentsT::Impl {
             impl_token,
             implementations,
-        } => todo!(),
+        } => DiagnosticResult::ok(ExpressionContents::Impl {
+            impl_token,
+            // TODO: nested type inference here.
+            implementations: (),
+        }),
     }
 }
 
