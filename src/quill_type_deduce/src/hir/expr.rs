@@ -175,4 +175,9 @@ pub enum TypeVariable {
     Borrow {
         ty: Box<TypeVariable>,
     },
+    /// An explicitly named implementation of an aspect possibly with type parameters.
+    Impl {
+        name: QualifiedName,
+        parameters: Vec<TypeVariable>,
+    },
 }

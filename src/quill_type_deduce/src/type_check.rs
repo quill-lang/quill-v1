@@ -115,6 +115,20 @@ impl TypeVariablePrinter {
             TypeVariable::Borrow { ty } => {
                 format!("&{}", self.print(*ty))
             }
+            TypeVariable::Impl { name, parameters } => {
+                let mut result = format!("impl {}", name);
+                if !parameters.is_empty() {
+                    result += "[";
+                    for (i, param) in parameters.into_iter().enumerate() {
+                        if i != 0 {
+                            result += ", ";
+                        }
+                        result += &self.print(param);
+                    }
+                    result += "]";
+                }
+                result
+            }
         }
     }
 
@@ -606,6 +620,13 @@ impl<'a> TypeChecker<'a> {
                             variables
                         })
                 }
+                Type::Impl { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    String::from(
+                        "expected a name for an aspect implementation, not a type constructor",
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &type_ctor.range),
+                )),
             },
             Pattern::Unknown(_) => DiagnosticResult::ok(HashMap::new()),
             Pattern::Function { .. } => unimplemented!(),

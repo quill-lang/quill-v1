@@ -194,6 +194,7 @@ fn contains_id(v: &TypeVariable, id: &TypeVariableId) -> bool {
         TypeVariable::Unknown { id: other_id } => other_id == id,
         TypeVariable::Primitive(_) => false,
         TypeVariable::Borrow { ty, .. } => contains_id(&*ty, id),
+        TypeVariable::Impl { parameters, .. } => parameters.iter().any(|p| contains_id(p, id)),
     }
 }
 
@@ -576,6 +577,80 @@ fn most_general_unifier(
                 actual,
             }),
         },
+        TypeVariable::Impl {
+            name: left_name,
+            parameters: left_parameters,
+        } => {
+            match actual {
+                TypeVariable::Impl {
+                    name: right_name,
+                    parameters: right_parameters,
+                } => {
+                    // Both type variables are impl types.
+                    // Check that they are the same.
+                    if left_name == right_name {
+                        // Unify the type parameters.
+                        // The lists must have equal length, since the names matched.
+                        let mut mgu = HashMap::new();
+                        for (left_param, right_param) in
+                            left_parameters.into_iter().zip(right_parameters)
+                        {
+                            let inner_mgu =
+                                most_general_unifier(project_index, left_param, right_param)?;
+                            mgu = unify(project_index, mgu, inner_mgu)?;
+                        }
+                        Ok(mgu)
+                    } else {
+                        Err(UnificationError::ExpectedDifferent {
+                            expected: TypeVariable::Impl {
+                                name: left_name,
+                                parameters: left_parameters,
+                            },
+                            actual: TypeVariable::Impl {
+                                name: right_name,
+                                parameters: right_parameters,
+                            },
+                        })
+                    }
+                }
+                TypeVariable::Unknown { id: right } => {
+                    let mut map = HashMap::new();
+                    map.insert(
+                        right,
+                        TypeVariable::Impl {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                    );
+                    Ok(map)
+                }
+                TypeVariable::Function(right_param, right_result) => {
+                    Err(UnificationError::ExpectedDifferent {
+                        expected: TypeVariable::Impl {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                        actual: TypeVariable::Function(right_param, right_result),
+                    })
+                }
+                TypeVariable::Variable { variable, .. } => {
+                    Err(UnificationError::ExpectedVariable {
+                        actual: TypeVariable::Impl {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                        variable,
+                    })
+                }
+                actual => Err(UnificationError::ExpectedDifferent {
+                    expected: TypeVariable::Impl {
+                        name: left_name,
+                        parameters: left_parameters,
+                    },
+                    actual,
+                }),
+            }
+        }
     }
 }
 

@@ -234,5 +234,12 @@ fn substitute_type(
                 borrow: None,
             })
         }
+        TypeVariable::Impl { name, parameters } => {
+            let parameters = parameters
+                .into_iter()
+                .map(|param| substitute_type(substitution, param, source_file, range))
+                .collect::<DiagnosticResult<Vec<_>>>();
+            parameters.map(|parameters| Type::Impl { name, parameters })
+        }
     }
 }
