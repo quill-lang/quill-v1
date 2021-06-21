@@ -1,4 +1,4 @@
-class PartialEq[T] {
+aspect PartialEq[T] {
     == : T -> T -> Bool
 }
 

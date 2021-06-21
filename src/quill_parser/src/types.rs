@@ -15,10 +15,10 @@ pub enum TypeP {
     Function(Box<TypeP>, Box<TypeP>),
     /// A borrowed type.
     Borrow { ty: Box<TypeP>, borrow: TypeBorrowP },
-    /// An implementation of a class for a list of types.
+    /// An implementation of an aspect for a list of types.
     Impl {
         impl_token: Range,
-        class: IdentifierP,
+        aspect: IdentifierP,
         params: Vec<TypeP>,
     },
 }
@@ -35,8 +35,8 @@ impl Ranged for TypeP {
             TypeP::Function(left, right) => left.range().union(right.range()),
             TypeP::Borrow { ty, borrow } => ty.range().union(borrow.borrow_token),
             TypeP::Impl {
-                impl_token, class, ..
-            } => class.range().union(*impl_token),
+                impl_token, aspect, ..
+            } => aspect.range().union(*impl_token),
         }
     }
 }

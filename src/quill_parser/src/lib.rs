@@ -57,14 +57,14 @@ impl DerefMut for TokenStream {
     }
 }
 
-/// Any top level item such as a definition or theorem.
+/// Any top level item such as a definition or type.
 #[derive(Debug)]
 enum ItemP {
     Use(UseP),
     Data(DataP),
     Enum(EnumP),
     Definition(DefinitionP),
-    Class(ClassP),
+    Aspect(AspectP),
 }
 
 /// Parses a source file. This function parses the top-level item declarations, without parsing the contents of items.
@@ -107,14 +107,14 @@ pub fn parse(
         let mut data = Vec::new();
         let mut enums = Vec::new();
         let mut definitions = Vec::new();
-        let mut classes = Vec::new();
+        let mut aspects = Vec::new();
         for item in items {
             match item {
                 ItemP::Use(i) => uses.push(i),
                 ItemP::Data(i) => data.push(i),
                 ItemP::Enum(i) => enums.push(i),
                 ItemP::Definition(i) => definitions.push(i),
-                ItemP::Class(i) => classes.push(i),
+                ItemP::Aspect(i) => aspects.push(i),
             }
         }
         FileP {
@@ -122,7 +122,7 @@ pub fn parse(
             data,
             enums,
             definitions,
-            classes,
+            aspects,
         }
     })
 }
@@ -139,7 +139,7 @@ impl<'input> Parser<'input> {
         // An item starts with an optional visibility declaration.
         let vis = self.parse_visibility();
 
-        // Then we require one of `use`, `data`, `enum`, `def`, `class`, `impl`.
+        // Then we require one of `use`, `data`, `enum`, `def`, `aspect`.
         let item_type = self.parse_token_maybe(|ty| {
             matches!(
                 ty,
@@ -147,8 +147,7 @@ impl<'input> Parser<'input> {
                     | TokenType::Data
                     | TokenType::Enum
                     | TokenType::Def
-                    | TokenType::Class
-                    | TokenType::Impl
+                    | TokenType::Aspect
             )
         });
 
@@ -170,12 +169,12 @@ impl<'input> Parser<'input> {
                     TokenType::Data => self.parse_data(vis).map(ItemP::Data),
                     TokenType::Enum => self.parse_enum(vis).map(ItemP::Enum),
                     TokenType::Def => self.parse_def(vis).map(ItemP::Definition),
-                    TokenType::Class => self.parse_class(vis).map(ItemP::Class),
+                    TokenType::Aspect => self.parse_aspect(vis).map(ItemP::Aspect),
                     _ => unreachable!(),
                 }
             } else {
                 DiagnosticResult::fail(ErrorMessage::new(
-                    "expected one of `use`, `data`, `enum`, `def`, `class`, `impl`".to_string(),
+                    "expected one of `use`, `data`, `enum`, `def`, `aspect`".to_string(),
                     Severity::Error,
                     Diagnostic::at(self.source_file, &self.tokens.range()),
                 ))
@@ -534,9 +533,9 @@ impl<'input> Parser<'input> {
         }
     }
 
-    /// `type_impl ::= class ('[' type_params ']')?`
+    /// `type_impl ::= aspect ('[' type_params ']')?`
     fn parse_type_impl(&mut self, impl_token: Range) -> DiagnosticResult<TypeP> {
-        self.parse_identifier().bind(|class| {
+        self.parse_identifier().bind(|aspect| {
             let params = if let Some(tree) = self.parse_tree(BracketType::Square) {
                 self.parse_in_tree(tree, |parser| parser.parse_type_params())
             } else {
@@ -544,7 +543,7 @@ impl<'input> Parser<'input> {
             };
             params.map(|params| TypeP::Impl {
                 impl_token,
-                class,
+                aspect,
                 params,
             })
         })
@@ -1129,24 +1128,24 @@ fn collapse_func_application(terms: Vec<(Option<Operator>, ExprPatP)>) -> Functi
 }
 
 /////////////////
-//// CLASSES ////
+//// ASPECTS ////
 /////////////////
 
 impl<'input> Parser<'input> {
-    /// `class ::= name named_type_params? '{' class_body '}'
-    fn parse_class(&mut self, vis: Visibility) -> DiagnosticResult<ClassP> {
+    /// `aspect ::= name named_type_params? '{' aspect_body '}'
+    fn parse_aspect(&mut self, vis: Visibility) -> DiagnosticResult<AspectP> {
         self.parse_name().bind(|identifier| {
             let type_params = if let Some(tree) = self.parse_tree(BracketType::Square) {
                 self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
             } else {
-                // TODO: emit a nicer error message if the user omits square brackets around the type class name(s).
+                // TODO: emit a nicer error message if the user omits square brackets around the aspect type name(s).
                 DiagnosticResult::ok(Vec::new())
             };
 
             type_params.bind(|type_params| {
                 if let Some(tree) = self.parse_tree(BracketType::Brace) {
                     self.parse_in_tree(tree, |parser| {
-                        parser.parse_class_body(vis).map(|definitions| ClassP {
+                        parser.parse_aspect_body(vis).map(|definitions| AspectP {
                             vis,
                             identifier,
                             type_params,
@@ -1164,8 +1163,8 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// `class_body ::= ( def_decl ',' class_body? )?`
-    fn parse_class_body(&mut self, vis: Visibility) -> DiagnosticResult<Vec<DefinitionDeclP>> {
+    /// `aspect_body ::= ( def_decl ',' aspect_body? )?`
+    fn parse_aspect_body(&mut self, vis: Visibility) -> DiagnosticResult<Vec<DefinitionDeclP>> {
         if self.tokens.peek().is_none() {
             return DiagnosticResult::ok(Vec::new());
         }
@@ -1173,10 +1172,10 @@ impl<'input> Parser<'input> {
         self.parse_def_decl(vis).bind(|decl| {
             self.parse_token(
                 |tk| matches!(tk, TokenType::EndOfLine { .. }),
-                "expected end of line after function in class",
+                "expected end of line after function in aspect",
             )
             .bind(|_| {
-                self.parse_class_body(vis).map(|mut remaining| {
+                self.parse_aspect_body(vis).map(|mut remaining| {
                     remaining.insert(0, decl);
                     remaining
                 })

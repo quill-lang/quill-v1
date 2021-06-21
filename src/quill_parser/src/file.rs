@@ -1,5 +1,5 @@
 use crate::{
-    data_types::{ClassP, DataP, EnumP},
+    data_types::{AspectP, DataP, EnumP},
     definition::DefinitionP,
     identifier::IdentifierP,
 };
@@ -12,7 +12,7 @@ pub struct FileP {
     pub data: Vec<DataP>,
     pub enums: Vec<EnumP>,
     pub definitions: Vec<DefinitionP>,
-    pub classes: Vec<ClassP>,
+    pub aspects: Vec<AspectP>,
 }
 
 #[derive(Debug)]

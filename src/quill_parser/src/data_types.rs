@@ -45,9 +45,9 @@ pub struct EnumVariantP {
     pub type_ctor: TypeConstructorP,
 }
 
-/// A `class` definition.
+/// An `aspect` definition.
 #[derive(Debug)]
-pub struct ClassP {
+pub struct AspectP {
     pub vis: Visibility,
     pub identifier: NameP,
     pub type_params: Vec<TypeParameterP>,
