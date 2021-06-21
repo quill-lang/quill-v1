@@ -50,7 +50,7 @@ pub(crate) fn solve_type_constraints(
                 }
                 _ => mid_priority_constraints.push_back(constraint),
             },
-            Constraint::FieldAccess { .. } => low_priority_constraints.push_back(constraint),
+            Constraint::FieldAccess { .. } => mid_priority_constraints.push_back(constraint),
         }
     }
     // To solve the constraints, we will pop entries off the front of the queue, process them, and if needed push them to the back of the queue.
@@ -147,13 +147,13 @@ fn solve_type_constraint_queue(
                 }
             }
             Constraint::FieldAccess {
-                ty: field_ty,
+                ty: container_ty,
                 field,
                 reason,
             } => {
                 // This constraint specifies that `type_variable` has a field named `field` with type `field_ty`.
                 // At this point, we should know the container's type.
-                match type_variable {
+                match container_ty {
                     TypeVariable::Impl { name, parameters } => {
                         let aspect = &project_index[&name.source_file].aspects[&name.name];
                         match aspect
@@ -163,7 +163,7 @@ fn solve_type_constraint_queue(
                         {
                             Some(field) => {
                                 constraint_queue.push_front((
-                                    field_ty,
+                                    type_variable,
                                     Constraint::Equality {
                                         ty: TypeVariable::Borrow {
                                             ty: Box::new(instantiate_with(
@@ -193,30 +193,73 @@ fn solve_type_constraint_queue(
                             }
                         }
                     }
-                    type_variable => {
-                        return DiagnosticResult::fail(ErrorMessage::new(
-                            match type_variable {
-                                TypeVariable::Named { .. } => {
-                                    "cannot use `.` syntax on data or enum types (yet)"
+                    TypeVariable::Unknown { id } => {
+                        // Check to see if there are any constraints on this type variable left to be processed.
+                        let constraint_left = constraint_queue.iter().any(|(var, constraint)| {
+                            let matches_var = if let TypeVariable::Unknown { id: inner } = var {
+                                *inner == id
+                            } else {
+                                false
+                            };
+                            let matches_constraint = match constraint {
+                                Constraint::Equality { ty, .. } => {
+                                    if let TypeVariable::Unknown { id: inner } = ty {
+                                        *inner == id
+                                    } else {
+                                        false
+                                    }
                                 }
-                                TypeVariable::Function(_, _) => {
-                                    "cannot use `.` syntax on functions"
+                                Constraint::FieldAccess { ty, .. } => {
+                                    if let TypeVariable::Unknown { id: inner } = ty {
+                                        *inner == id
+                                    } else {
+                                        false
+                                    }
+                                }
+                            };
+                            matches_var || matches_constraint
+                        });
+
+                        if constraint_left {
+                            // Process this constraint later.
+                            constraint_queue.push_back((
+                                type_variable,
+                                Constraint::FieldAccess {
+                                    ty: container_ty,
+                                    field,
+                                    reason,
+                                },
+                            ));
+                        } else {
+                            return DiagnosticResult::fail(ErrorMessage::new(
+                                "could not deduce the type of this expression, so cannot deduce the type of its field".to_string(),
+                                Severity::Error,
+                                Diagnostic::at(source_file, &reason.container),
+                            ));
+                        }
+                    }
+                    container_ty => {
+                        return DiagnosticResult::fail(ErrorMessage::new(
+                            match container_ty {
+                                TypeVariable::Named { .. } => {
+                                    "cannot use `.` syntax on data or enum types (yet)".to_string()
+                                }
+                                t @ TypeVariable::Function(_, _) => {
+                                    let mut p = TypeVariablePrinter::new(substitution);
+                                    format!("cannot use `.` syntax on functions; this expression is a function of type {}", p.print(t))
                                 }
                                 TypeVariable::Variable { .. } => {
-                                    "cannot use `.` syntax on type variables"
-                                }
-                                TypeVariable::Unknown { .. } => {
-                                    "could not deduce the type of this expression"
+                                    "cannot use `.` syntax on type variables".to_string()
                                 }
                                 TypeVariable::Primitive(_) => {
-                                    "cannot use `.` syntax on primitive types"
+                                    "cannot use `.` syntax on primitive types".to_string()
                                 }
                                 TypeVariable::Borrow { .. } => {
-                                    "cannot use `.` syntax on borrowed types"
+                                    "cannot use `.` syntax on borrowed types".to_string()
                                 }
+                                TypeVariable::Unknown { .. } => unreachable!(),
                                 TypeVariable::Impl { .. } => unreachable!(),
-                            }
-                            .to_string(),
+                            },
                             Severity::Error,
                             Diagnostic::at(source_file, &reason.container),
                         ));
