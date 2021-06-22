@@ -165,21 +165,19 @@ fn solve_type_constraint_queue(
                                 constraint_queue.push_front((
                                     type_variable,
                                     Constraint::Equality {
-                                        ty: TypeVariable::Borrow {
-                                            ty: Box::new(instantiate_with(
-                                                &field.symbol_type,
-                                                &mut {
-                                                    let mut map = HashMap::new();
-                                                    for (param, var) in
-                                                        aspect.type_variables.iter().zip(parameters)
-                                                    {
-                                                        map.insert(param.name.clone(), var);
-                                                    }
-                                                    map
-                                                },
-                                                &mut HashMap::new(),
-                                            )),
-                                        },
+                                        ty: instantiate_with(
+                                            &field.symbol_type,
+                                            &mut {
+                                                let mut map = HashMap::new();
+                                                for (param, var) in
+                                                    aspect.type_variables.iter().zip(parameters)
+                                                {
+                                                    map.insert(param.name.clone(), var);
+                                                }
+                                                map
+                                            },
+                                            &mut HashMap::new(),
+                                        ),
                                         reason: ConstraintEqualityReason::FieldAccess(reason),
                                     },
                                 ));
