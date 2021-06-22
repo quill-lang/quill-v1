@@ -11,7 +11,11 @@ use quill_type::{PrimitiveType, Type};
 
 use crate::{
     codegen::CodeGenContext,
-    monomorphisation::{FunctionObjectDescriptor, MonomorphisationParameters, MonomorphisedType},
+    monomorphisation::{
+        FunctionObjectDescriptor, MonomorphisationParameters, MonomorphisedAspect,
+        MonomorphisedType,
+    },
+    sort_types::MonomorphisedItem,
 };
 
 use self::{
@@ -29,6 +33,8 @@ pub struct Representations<'a, 'ctx> {
     datas: HashMap<MonomorphisedType, DataRepresentation<'ctx>>,
     enums: HashMap<MonomorphisedType, EnumRepresentation<'ctx>>,
     func_objects: HashMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
+    /// The representation of an arbitrary impl for a given aspect.
+    aspects: HashMap<MonomorphisedAspect, DataRepresentation<'ctx>>,
     /// Use this type for a general function object that you don't know the type of.
     pub general_func_obj_ty: AnyTypeRepresentation<'ctx>,
 }
@@ -38,6 +44,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         codegen: &'a CodeGenContext<'ctx>,
         index: &ProjectIndex,
         mono_types: HashSet<MonomorphisedType>,
+        mono_aspects: HashSet<MonomorphisedAspect>,
     ) -> Self {
         let general_func_obj_ty = codegen.context.opaque_struct_type("fobj");
         general_func_obj_ty.set_body(
@@ -53,6 +60,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             datas: HashMap::new(),
             enums: HashMap::new(),
             func_objects: HashMap::new(),
+            aspects: HashMap::new(),
             general_func_obj_ty: AnyTypeRepresentation::new(
                 codegen,
                 general_func_obj_ty.ptr_type(AddressSpace::Generic).into(),
@@ -73,38 +81,40 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
 
         // Sort the types according to what types are used in what other types.
         // After this step, heap indirections have been added so the exact size of each type is known.
-        let sorted_types = crate::sort_types::sort_types(mono_types, index);
-        // println!("Sorted: {:#?}", sorted_types);
+        let sorted_types = crate::sort_types::sort_types(mono_types, mono_aspects, index);
+        println!("Sorted: {:#?}", sorted_types);
 
         for mono_ty in sorted_types {
-            let decl = &index[&mono_ty.ty.name.source_file].types[&mono_ty.ty.name.name];
-            match &decl.decl_type {
-                TypeDeclarationTypeI::Data(datai) => {
-                    let mut builder = DataRepresentationBuilder::new(&reprs);
-                    builder.add_fields(
-                        &datai.type_ctor,
-                        &datai.type_params,
-                        &mono_ty.ty.mono,
-                        mono_ty.indirected,
-                    );
-                    let repr = builder.build(
-                        &mono_ty.ty.name.source_file,
-                        mono_ty.ty.name.range,
-                        mono_ty.ty.to_string(),
-                    );
-                    reprs.datas.insert(mono_ty.ty, repr);
+            match mono_ty.ty {
+                MonomorphisedItem::Type(ty) => {
+                    let decl = &index[&ty.name.source_file].types[&ty.name.name];
+                    match &decl.decl_type {
+                        TypeDeclarationTypeI::Data(datai) => {
+                            let mut builder = DataRepresentationBuilder::new(&reprs);
+                            builder.add_fields(
+                                &datai.type_ctor,
+                                &datai.type_params,
+                                &ty.mono,
+                                mono_ty.indirected,
+                            );
+                            let repr =
+                                builder.build(&ty.name.source_file, ty.name.range, ty.to_string());
+                            reprs.datas.insert(ty, repr);
+                        }
+                        TypeDeclarationTypeI::Enum(enumi) => {
+                            let repr = EnumRepresentation::new(
+                                &reprs,
+                                codegen,
+                                enumi,
+                                &ty,
+                                mono_ty.indirected,
+                            );
+                            reprs.enums.insert(ty, repr);
+                        }
+                    };
                 }
-                TypeDeclarationTypeI::Enum(enumi) => {
-                    let repr = EnumRepresentation::new(
-                        &reprs,
-                        codegen,
-                        enumi,
-                        &mono_ty.ty,
-                        mono_ty.indirected,
-                    );
-                    reprs.enums.insert(mono_ty.ty, repr);
-                }
-            };
+                MonomorphisedItem::Aspect(asp) => todo!(),
+            }
         }
 
         reprs

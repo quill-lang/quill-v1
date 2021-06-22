@@ -16,7 +16,8 @@ use quill_type_deduce::replace_type_variables;
 use crate::{
     codegen::CodeGenContext,
     debug::source_file_debug_info,
-    monomorphisation::{MonomorphisationParameters, MonomorphisedType},
+    monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType},
+    sort_types::MonomorphisedItem,
 };
 
 use super::{
@@ -263,7 +264,7 @@ impl<'ctx> EnumRepresentation<'ctx> {
         codegen: &CodeGenContext<'ctx>,
         ty: &EnumI,
         mono: &MonomorphisedType,
-        indirected_types: Vec<MonomorphisedType>,
+        indirected_types: Vec<MonomorphisedItem>,
     ) -> Self {
         // Construct each enum variant as a data type with an extra integer discriminant field at the start.
         let variants = ty
@@ -507,20 +508,29 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         type_ctor: &TypeConstructorI,
         type_params: &[TypeParameter],
         mono: &MonomorphisationParameters,
-        indirected_types: Vec<MonomorphisedType>,
+        indirected_types: Vec<MonomorphisedItem>,
     ) {
         for (field_name, field_ty) in &type_ctor.fields {
             let field_ty =
                 replace_type_variables(field_ty.clone(), type_params, &mono.type_parameters);
-            let indirect = if let Type::Named { name, parameters } = &field_ty {
-                indirected_types.contains(&MonomorphisedType {
-                    name: name.clone(),
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters.clone(),
-                    },
-                })
-            } else {
-                false
+            let indirect = match &field_ty {
+                Type::Named { name, parameters } => {
+                    indirected_types.contains(&MonomorphisedItem::Type(MonomorphisedType {
+                        name: name.clone(),
+                        mono: MonomorphisationParameters {
+                            type_parameters: parameters.clone(),
+                        },
+                    }))
+                }
+                Type::Impl { name, parameters } => {
+                    indirected_types.contains(&MonomorphisedItem::Aspect(MonomorphisedAspect {
+                        name: name.clone(),
+                        mono: MonomorphisationParameters {
+                            type_parameters: parameters.clone(),
+                        },
+                    }))
+                }
+                _ => false,
             };
 
             self.add_field(
