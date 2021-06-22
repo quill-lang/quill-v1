@@ -6,7 +6,7 @@ use inkwell::{
     values::PointerValue,
     AddressSpace,
 };
-use quill_index::{ProjectIndex, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
@@ -82,7 +82,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         // Sort the types according to what types are used in what other types.
         // After this step, heap indirections have been added so the exact size of each type is known.
         let sorted_types = crate::sort_types::sort_types(mono_types, mono_aspects, index);
-        println!("Sorted: {:#?}", sorted_types);
+        // println!("Sorted: {:#?}", sorted_types);
 
         for mono_ty in sorted_types {
             match mono_ty.ty {
@@ -113,7 +113,27 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                         }
                     };
                 }
-                MonomorphisedItem::Aspect(asp) => todo!(),
+                MonomorphisedItem::Aspect(asp) => {
+                    let aspect = &index[&asp.name.source_file].aspects[&asp.name.name];
+                    // Make a fake type ctor for the aspect.
+                    let type_ctor = TypeConstructorI {
+                        fields: aspect
+                            .definitions
+                            .iter()
+                            .map(|def| (def.name.clone(), def.symbol_type.clone()))
+                            .collect(),
+                    };
+                    let mut builder = DataRepresentationBuilder::new(&reprs);
+                    builder.add_fields(
+                        &type_ctor,
+                        &aspect.type_variables,
+                        &asp.mono,
+                        mono_ty.indirected,
+                    );
+                    let repr =
+                        builder.build(&asp.name.source_file, asp.name.range, asp.to_string());
+                    reprs.aspects.insert(asp, repr);
+                }
             }
         }
 
@@ -180,7 +200,25 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     repr.di_type,
                 )
             }),
-            Type::Impl { name, parameters } => todo!(),
+            Type::Impl { name, parameters } => {
+                let mono_asp = MonomorphisedAspect {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                if let Some(repr) = self.aspects.get(&mono_asp) {
+                    repr.llvm_repr.as_ref().map(|llvm_repr| {
+                        AnyTypeRepresentation::new_with_alignment(
+                            BasicTypeEnum::StructType(llvm_repr.ty),
+                            repr.di_type,
+                            llvm_repr.abi_alignment,
+                        )
+                    })
+                } else {
+                    unreachable!("ty was {}", mono_asp)
+                }
+            }
         }
     }
 
@@ -205,6 +243,13 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         fobj: DataRepresentation<'ctx>,
     ) {
         self.func_objects.insert(descriptor, fobj);
+    }
+
+    pub fn get_aspect(
+        &self,
+        descriptor: &MonomorphisedAspect,
+    ) -> Option<&DataRepresentation<'ctx>> {
+        self.aspects.get(descriptor)
     }
 
     /// Drops a value of the given type behind the given pointer.
@@ -251,7 +296,32 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             Type::Borrow { .. } => {
                 // Dropping a borrow does nothing. No operation is required.
             }
-            Type::Impl { name, parameters } => todo!(),
+            Type::Impl { name, parameters } => {
+                // We need to call this type's drop function.
+                let repr = self.repr(ty);
+                let mono_asp = MonomorphisedAspect {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("drop/{}", mono_asp))
+                    .unwrap();
+                if repr.is_some() {
+                    self.codegen.builder.build_call(
+                        func,
+                        &[variable_ptr.into()],
+                        &format!("drop_{}", mono_asp),
+                    );
+                } else {
+                    self.codegen
+                        .builder
+                        .build_call(func, &[], &format!("drop_{}", mono_asp));
+                }
+            }
         }
     }
 
@@ -281,6 +351,20 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     &[repr.llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                     false,
                 ),
+                None,
+            );
+        }
+        for (ty, repr) in &self.aspects {
+            self.codegen.module.add_function(
+                &format!("drop/{}", ty),
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    self.codegen.context.void_type().fn_type(
+                        &[llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
+                        false,
+                    )
+                } else {
+                    self.codegen.context.void_type().fn_type(&[], false)
+                },
                 None,
             );
         }
@@ -372,6 +456,30 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             self.codegen
                 .builder
                 .build_switch(disc_loaded, cases[0].1, &cases);
+        }
+        for (ty, repr) in &self.aspects {
+            let func = self
+                .codegen
+                .module
+                .get_function(&format!("drop/{}", ty))
+                .unwrap();
+
+            let block = self.codegen.context.append_basic_block(func, "drop");
+            self.codegen.builder.position_at_end(block);
+
+            if repr.llvm_repr.is_some() {
+                let variable = func.get_first_param().unwrap().into_pointer_value();
+
+                for heap_field in repr.field_names_on_heap() {
+                    let ptr_to_field = repr.load(self.codegen, self, variable, heap_field).unwrap();
+                    let ty = repr.field_ty(heap_field).unwrap().clone();
+                    self.drop_ptr(ty, ptr_to_field);
+                }
+
+                repr.free_fields(self.codegen, variable);
+            }
+
+            self.codegen.builder.build_return(None);
         }
     }
 }

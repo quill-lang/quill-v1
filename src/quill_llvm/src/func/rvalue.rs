@@ -9,7 +9,7 @@ use quill_type_deduce::replace_type_variables;
 
 use crate::{
     codegen::CodeGenContext,
-    monomorphisation::{MonomorphisationParameters, MonomorphisedType},
+    monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType},
     repr::Representations,
 };
 
@@ -128,7 +128,40 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 unreachable!()
                             }
                         }
-                        PlaceSegment::ImplField { field } => todo!(),
+                        PlaceSegment::ImplField { field } => {
+                            // rvalue_ty is an impl of an aspect.
+                            if let Type::Impl { name, parameters } = rvalue_ty {
+                                let aspect = &index[&name.source_file].aspects[&name.name];
+
+                                rvalue_ty = aspect
+                                    .definitions
+                                    .iter()
+                                    .find_map(|def| {
+                                        if def.name.name == field {
+                                            Some(replace_type_variables(
+                                                def.symbol_type.clone(),
+                                                &def.type_variables,
+                                                &parameters,
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap();
+
+                                let data = reprs
+                                    .get_aspect(&MonomorphisedAspect {
+                                        name,
+                                        mono: MonomorphisationParameters {
+                                            type_parameters: parameters,
+                                        },
+                                    })
+                                    .unwrap();
+                                ptr = data.load(codegen, reprs, ptr, &field).unwrap();
+                            } else {
+                                unreachable!()
+                            }
+                        }
                     }
                 }
 
