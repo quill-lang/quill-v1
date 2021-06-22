@@ -61,6 +61,10 @@ pub(crate) struct ExprGeneratedM {
     /// By adding values to this list, the given local variables will be dropped after the surrounding statement (or expression) ends.
     /// In particular, the drop occurs at the next semicolon, or if there is not one, the end of the definition as a whole.
     pub locals_to_drop: Vec<LocalVariableName>,
+    /// If this expression is "temporary", it was created inside an expression
+    /// and will be used exactly once. After its use, it should be dropped.
+    /// Every expression that does not *directly* refer to an argument or local is a temporary.
+    pub temporary: bool,
 }
 
 /// Creates a list of all local or argument variables used inside this expression.
@@ -211,6 +215,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable,
                 locals_to_drop: Vec::new(),
+                temporary: false,
             }
         }
         ExpressionContents::Local(local) => {
@@ -223,6 +228,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable,
                 locals_to_drop: Vec::new(),
+                temporary: false,
             }
         }
         ExpressionContents::Symbol {
@@ -251,6 +257,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+                temporary: true,
             }
         }
         ExpressionContents::Apply(left, right) => {
@@ -312,6 +319,7 @@ pub(crate) fn generate_expr(
                     .into_iter()
                     .chain(right.locals_to_drop)
                     .collect(),
+                temporary: true,
             }
         }
         ExpressionContents::Lambda {
@@ -446,6 +454,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+                temporary: true,
             }
         }
         ExpressionContents::Let {
@@ -507,6 +516,9 @@ pub(crate) fn generate_expr(
                 block: rvalue.block,
                 variable: LocalVariableName::Local(ret),
                 locals_to_drop: rvalue.locals_to_drop,
+                // The result of the let statement is the unit value, which is a temporary
+                // even though the actual value in the let statement is not temporary.
+                temporary: true,
             }
         }
         ExpressionContents::Block { mut statements, .. } => {
@@ -568,6 +580,7 @@ pub(crate) fn generate_expr(
                     block: chain.block,
                     variable: final_expr.variable,
                     locals_to_drop: Vec::new(),
+                    temporary: true,
                 }
             } else {
                 // We need to make a new unit variable since there was no final expression.
@@ -615,6 +628,7 @@ pub(crate) fn generate_expr(
                     block: chain.block,
                     variable: LocalVariableName::Local(variable),
                     locals_to_drop: Vec::new(),
+                    temporary: true,
                 }
             }
         }
@@ -680,6 +694,7 @@ pub(crate) fn generate_expr(
                 block: chain.block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: chain.locals_to_drop,
+                temporary: true,
             }
         }
         ExpressionContents::ConstantValue { value, range } => {
@@ -707,6 +722,7 @@ pub(crate) fn generate_expr(
                 block: initialise_variable,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+                temporary: true,
             }
         }
         ExpressionContents::Borrow { borrow_token, expr } => {
@@ -750,6 +766,7 @@ pub(crate) fn generate_expr(
                 block: inner.block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: inner.locals_to_drop,
+                temporary: true,
             }
         }
         ExpressionContents::Copy { copy_token, expr } => {
@@ -794,6 +811,7 @@ pub(crate) fn generate_expr(
                 block: inner.block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: inner.locals_to_drop,
+                temporary: true,
             }
         }
         ExpressionContents::Impl {
@@ -897,6 +915,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+                temporary: true,
             }
         }
         ExpressionContents::Field {
@@ -942,10 +961,26 @@ pub(crate) fn generate_expr(
                         })),
                     },
                 });
+
+            // If the container was a temporary value, drop it here.
+            if inner.temporary {
+                ctx.control_flow_graph
+                    .basic_blocks
+                    .get_mut(&block)
+                    .unwrap()
+                    .statements
+                    .push(Statement {
+                        range: dot,
+                        kind: StatementKind::Drop {
+                            variable: inner.variable,
+                        },
+                    });
+            }
             ExprGeneratedM {
                 block: inner.block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: inner.locals_to_drop,
+                temporary: true,
             }
         }
     }
