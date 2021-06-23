@@ -106,7 +106,17 @@ impl<'ctx> DataRepresentation<'ctx> {
         field_name: &str,
     ) {
         let dest = self.load(codegen, reprs, ptr, field_name).unwrap();
-        codegen.builder.build_store(dest, value);
+        codegen.builder.build_store(dest, {
+            // If the value was a function object, first cast it to a generic `fobj`.
+            if matches!(self.field_types.get(field_name), Some(Type::Function(_, _))) {
+                codegen
+                    .builder
+                    .build_bitcast(value, reprs.general_func_obj_ty.llvm_type, "fobj_bitcast")
+                    .as_basic_value_enum()
+            } else {
+                value.as_basic_value_enum()
+            }
+        });
     }
 
     /// Stores the value behind the given pointer inside this struct.
@@ -552,20 +562,16 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
     ) -> DataRepresentation<'ctx> {
         let file = source_file_debug_info(self.reprs.codegen, file);
         let Range {
-            start: Location { line, col },
+            start: Location { line, .. },
             end: _,
         } = range;
 
         if self.llvm_field_types.is_empty() {
             let di_type = self.reprs.codegen.di_builder.create_struct_type(
-                self.reprs
-                    .codegen
-                    .di_builder
-                    .create_lexical_block(file.as_debug_info_scope(), file, line + 1, col + 1)
-                    .as_debug_info_scope(),
+                file.as_debug_info_scope(),
                 &name,
                 file,
-                line,
+                line + 1,
                 0,
                 1,
                 DIFlagsConstants::PUBLIC,
@@ -587,14 +593,10 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
             let llvm_ty = self.reprs.codegen.context.opaque_struct_type(&name);
             llvm_ty.set_body(&self.llvm_field_types, false);
             let di_type = self.reprs.codegen.di_builder.create_struct_type(
-                self.reprs
-                    .codegen
-                    .di_builder
-                    .create_lexical_block(file.as_debug_info_scope(), file, line + 1, col + 1)
-                    .as_debug_info_scope(),
+                file.as_debug_info_scope(),
                 &name,
                 file,
-                line,
+                line + 1,
                 0,
                 1,
                 DIFlagsConstants::PUBLIC,
