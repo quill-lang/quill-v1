@@ -3,12 +3,15 @@ use std::collections::HashMap;
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{Range, Ranged, SourceFileIdentifier},
+    name::QualifiedName,
 };
+use quill_index::ProjectIndex;
+use quill_parser::definition::DefinitionBodyP;
 use quill_type::Type;
 
 use crate::{
     hir::expr::{Expression, ExpressionContents, ExpressionContentsT, ExpressionT, TypeVariable},
-    type_check::TypeVariablePrinter,
+    type_check::{TypeChecker, TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
 
@@ -18,6 +21,8 @@ pub(crate) fn substitute(
     substitution: &HashMap<TypeVariableId, TypeVariable>,
     expr: ExpressionT,
     source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
 ) -> DiagnosticResult<Expression> {
     let range = expr.range();
     let ExpressionT {
@@ -45,16 +50,27 @@ pub(crate) fn substitute(
     }
 
     match ty {
-        Some(ty) => substitute_contents(substitution, contents, source_file)
-            .bind(|contents| DiagnosticResult::ok_with_many(Expression { ty, contents }, messages)),
+        Some(ty) => substitute_contents(
+            substitution,
+            contents,
+            &ty,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .bind(|contents| DiagnosticResult::ok_with_many(Expression { ty, contents }, messages)),
         None => DiagnosticResult::fail_many(messages),
     }
 }
 
+/// `ty` is the type of `contents`.
 fn substitute_contents(
     substitution: &HashMap<TypeVariableId, TypeVariable>,
     contents: ExpressionContentsT,
+    ty: &Type,
     source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
 ) -> DiagnosticResult<ExpressionContents> {
     match contents {
         ExpressionContentsT::Argument(a) => DiagnosticResult::ok(ExpressionContents::Argument(a)),
@@ -92,15 +108,24 @@ fn substitute_contents(
                 type_variables,
             })
         }
-        ExpressionContentsT::Apply(l, r) => substitute(substitution, *l, source_file).bind(|l| {
-            substitute(substitution, *r, source_file)
-                .map(|r| ExpressionContents::Apply(Box::new(l), Box::new(r)))
-        }),
+        ExpressionContentsT::Apply(l, r) => {
+            substitute(substitution, *l, source_file, project_index, visible_names).bind(|l| {
+                substitute(substitution, *r, source_file, project_index, visible_names)
+                    .map(|r| ExpressionContents::Apply(Box::new(l), Box::new(r)))
+            })
+        }
         ExpressionContentsT::Lambda {
             lambda_token,
             params,
             expr,
-        } => substitute(substitution, *expr, source_file).bind(|expr| {
+        } => substitute(
+            substitution,
+            *expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .bind(|expr| {
             params
                 .into_iter()
                 .map(|(name, ty)| {
@@ -117,7 +142,14 @@ fn substitute_contents(
             let_token,
             name,
             expr,
-        } => substitute(substitution, *expr, source_file).map(|expr| ExpressionContents::Let {
+        } => substitute(
+            substitution,
+            *expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .map(|expr| ExpressionContents::Let {
             let_token,
             name,
             expr: Box::new(expr),
@@ -128,7 +160,15 @@ fn substitute_contents(
             statements,
         } => statements
             .into_iter()
-            .map(|stmt| substitute(substitution, stmt, source_file))
+            .map(|stmt| {
+                substitute(
+                    substitution,
+                    stmt,
+                    source_file,
+                    project_index,
+                    visible_names,
+                )
+            })
             .collect::<DiagnosticResult<_>>()
             .map(|statements| ExpressionContents::Block {
                 open_bracket,
@@ -144,8 +184,14 @@ fn substitute_contents(
         } => fields
             .into_iter()
             .map(|(field_name, field_expr)| {
-                substitute(substitution, field_expr, source_file)
-                    .map(|field_expr| (field_name, field_expr))
+                substitute(
+                    substitution,
+                    field_expr,
+                    source_file,
+                    project_index,
+                    visible_names,
+                )
+                .map(|field_expr| (field_name, field_expr))
             })
             .collect::<DiagnosticResult<_>>()
             .map(|fields| ExpressionContents::ConstructData {
@@ -158,19 +204,98 @@ fn substitute_contents(
         ExpressionContentsT::ConstantValue { value, range } => {
             DiagnosticResult::ok(ExpressionContents::ConstantValue { value, range })
         }
-        ExpressionContentsT::Borrow { borrow_token, expr } => {
-            substitute(substitution, *expr, source_file).map(|expr| ExpressionContents::Borrow {
-                borrow_token,
-                expr: Box::new(expr),
-            })
+        ExpressionContentsT::Borrow { borrow_token, expr } => substitute(
+            substitution,
+            *expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .map(|expr| ExpressionContents::Borrow {
+            borrow_token,
+            expr: Box::new(expr),
+        }),
+        ExpressionContentsT::Copy { copy_token, expr } => substitute(
+            substitution,
+            *expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .map(|expr| ExpressionContents::Copy {
+            copy_token,
+            expr: Box::new(expr),
+        }),
+        ExpressionContentsT::Impl {
+            impl_token,
+            implementations,
+        } => {
+            // Perform another round of type inference on the contents of this impl.
+            // First, work out the exact type parameters on this impl.
+            let (aspect, parameters) = if let Type::Impl { name, parameters } = ty {
+                (name, parameters)
+            } else {
+                unreachable!()
+            };
+
+            typeck_impl(
+                source_file,
+                project_index,
+                impl_token,
+                aspect,
+                parameters,
+                implementations,
+                visible_names,
+            )
         }
-        ExpressionContentsT::Copy { copy_token, expr } => {
-            substitute(substitution, *expr, source_file).map(|expr| ExpressionContents::Copy {
-                copy_token,
-                expr: Box::new(expr),
-            })
-        }
+        ExpressionContentsT::Field {
+            container,
+            field,
+            dot,
+        } => substitute(
+            substitution,
+            *container,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .map(|container| ExpressionContents::Field {
+            container: Box::new(container),
+            field,
+            dot,
+        }),
     }
+}
+
+fn typeck_impl(
+    source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
+    impl_token: Range,
+    aspect: &QualifiedName,
+    parameters: &Vec<Type>,
+    body: DefinitionBodyP,
+    visible_names: &VisibleNames,
+) -> DiagnosticResult<ExpressionContents> {
+    let cases = match body {
+        DefinitionBodyP::PatternMatch(cases) => cases,
+        DefinitionBodyP::CompilerIntrinsic(range) => {
+            return DiagnosticResult::fail(ErrorMessage::new(
+                "`compiler_intrinsic` not allowed in `impl` expressions".to_string(),
+                Severity::Error,
+                Diagnostic::at(source_file, &range),
+            ));
+        }
+    };
+
+    let aspect = &project_index[&aspect.source_file].aspects[&aspect.name];
+
+    let typeck = TypeChecker {
+        source_file,
+        project_index,
+        messages: Vec::new(),
+    };
+
+    typeck.compute_impl(impl_token, aspect, &parameters, cases, visible_names)
 }
 
 fn substitute_type(
@@ -233,6 +358,13 @@ fn substitute_type(
                 ty: Box::new(ty),
                 borrow: None,
             })
+        }
+        TypeVariable::Impl { name, parameters } => {
+            let parameters = parameters
+                .into_iter()
+                .map(|param| substitute_type(substitution, param, source_file, range))
+                .collect::<DiagnosticResult<Vec<_>>>();
+            parameters.map(|parameters| Type::Impl { name, parameters })
         }
     }
 }

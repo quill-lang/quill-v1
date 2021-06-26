@@ -102,7 +102,19 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
                 DiagnosticResult::sequence_unfail(parsed.into_iter().map(|(file_ident, parsed)| {
                     quill_type_deduce::check(&file_ident, &index, parsed)
                         .deny()
-                        .map(|typeck| quill_mir::to_mir(&index, typeck, &file_ident))
+                        .map(|typeck| {
+                            // Output the HIR to a build file.
+                            let f = invocation.build_info.build_folder.join("ir").join(
+                                fs.file_path(&file_ident)
+                                    .strip_prefix(&invocation.build_info.code_folder)
+                                    .unwrap(),
+                            );
+                            let _ = std::fs::create_dir_all(f.parent().unwrap());
+                            std::fs::write(f.with_extension("hir"), typeck.to_string()).unwrap();
+                            let mir = quill_mir::to_mir(&index, typeck, &file_ident);
+                            std::fs::write(f.with_extension("mir"), mir.to_string()).unwrap();
+                            mir
+                        })
                         .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
                         .map(|mir| (file_ident, mir))
                 }))

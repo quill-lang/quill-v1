@@ -391,6 +391,7 @@ fn reference_place(
                 }
             }
             PlaceSegment::EnumDiscriminant => Pattern::Unknown(pattern.range()),
+            PlaceSegment::ImplField { .. } => Pattern::Unknown(pattern.range()),
         }
     }
 }

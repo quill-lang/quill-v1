@@ -6,7 +6,7 @@ use quill_common::{
 };
 use quill_mir::mir::{
     ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableName,
-    Operand, Rvalue, Statement, StatementKind, TerminatorKind,
+    Operand, Place, Rvalue, Statement, StatementKind, TerminatorKind,
 };
 
 #[derive(Debug, Clone)]
@@ -210,6 +210,28 @@ fn check_ownership_walk(
                         field_value.clone(),
                     );
                 }
+                make_owned(statuses, stmt.range, *target);
+            }
+            StatementKind::ConstructImpl {
+                target,
+                definitions,
+                ..
+            } => {
+                // TODO: For now, we can't pass local variables into impls.
+                // When this is implemented, we can add more things here.
+
+                // Move the definitions out.
+                for def in definitions.values() {
+                    make_rvalue_used(
+                        source_file,
+                        messages,
+                        statuses,
+                        stmt.range,
+                        Rvalue::Use(Operand::Move(Place::new(*def))),
+                    );
+                }
+
+                // The target is now owned.
                 make_owned(statuses, stmt.range, *target);
             }
             _ => unreachable!(),
@@ -471,7 +493,7 @@ fn make_used(
     // Make sure that this variable is currently owned.
     // We shouldn't be able to use an uninitialised or dropped variable because of earlier scope checks.
     match statuses.locals.get(&variable).unwrap() {
-        OwnershipStatus::NotInitialised { .. } => unreachable!(),
+        OwnershipStatus::NotInitialised { .. } => panic!("variable {} uninitialised", variable),
         OwnershipStatus::Owned { .. } => {}
         OwnershipStatus::Moved { moved } => messages.push(ErrorMessage::new_with(
             "this variable has already been moved out, so it cannot be used here".to_string(),

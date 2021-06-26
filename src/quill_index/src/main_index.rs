@@ -14,7 +14,7 @@ use quill_common::{
 use quill_parser::{file::FileP, identifier::NameP};
 use quill_type::Type;
 
-use crate::type_index::{ProjectTypesC, TypeDeclarationC};
+use crate::type_index::{ProjectTypesAspectsC, TypeDeclarationOrAspectC};
 
 /// An index of all top-level items in a file.
 ///
@@ -25,6 +25,7 @@ pub struct FileIndex {
     pub definitions: HashMap<String, DefinitionI>,
     /// Maps enum variant names (True, Left) to the enum that contains them (Bool, Either)
     pub enum_variant_types: HashMap<String, String>,
+    pub aspects: HashMap<String, AspectI>,
 }
 
 pub type ProjectIndex = HashMap<SourceFileIdentifier, FileIndex>;
@@ -90,6 +91,14 @@ pub struct TypeParameter {
     pub parameters: u32,
 }
 
+/// An aspect.
+#[derive(Debug)]
+pub struct AspectI {
+    pub name: NameP,
+    pub type_variables: Vec<TypeParameter>,
+    pub definitions: Vec<DefinitionI>,
+}
+
 /// Returns a generic error message about multiply defined symbols, making sure that the "earlier" symbol
 /// actually was the one that appeared earlier in the file.
 fn name_used_earlier(
@@ -110,9 +119,9 @@ fn name_used_earlier(
 }
 
 /// Represents a type declaration that may be in a different source file.
-pub(crate) struct ForeignTypeDeclarationC<'a> {
+pub(crate) struct ForeignItemDeclarationC<'a> {
     pub source_file: SourceFileIdentifier,
-    pub decl: &'a TypeDeclarationC,
+    pub decl: &'a TypeDeclarationOrAspectC,
 }
 
 pub struct UsedFile {
@@ -177,12 +186,12 @@ pub fn compute_used_files(
     DiagnosticResult::ok_with_many(result, messages)
 }
 
-/// Work out what type names are visible inside a file.
-fn compute_visible_types<'a>(
+/// Work out what type names and aspect names are visible inside a file.
+fn compute_visible_types_and_aspects<'a>(
     source_file: &'a SourceFileIdentifier,
     file_parsed: &'a FileP,
-    project_types: &'a ProjectTypesC,
-) -> DiagnosticResult<HashMap<&'a str, ForeignTypeDeclarationC<'a>>> {
+    project_types: &'a ProjectTypesAspectsC,
+) -> DiagnosticResult<HashMap<&'a str, ForeignItemDeclarationC<'a>>> {
     let mut visible_types = MultiMap::new();
     let mut messages = Vec::new();
 
@@ -195,7 +204,7 @@ fn compute_visible_types<'a>(
         for (ty, decl) in &project_types[&file.file] {
             visible_types.insert(
                 ty.as_str(),
-                ForeignTypeDeclarationC {
+                ForeignItemDeclarationC {
                     source_file: file.file.clone(),
                     decl,
                 },
@@ -230,12 +239,13 @@ fn compute_visible_types<'a>(
 pub fn index(
     source_file: &SourceFileIdentifier,
     file_parsed: &FileP,
-    project_types: &ProjectTypesC,
+    project_types: &ProjectTypesAspectsC,
 ) -> DiagnosticResult<FileIndex> {
     let mut messages = Vec::new();
     let visible_types = {
         let (visible_types, more_messages) =
-            compute_visible_types(source_file, file_parsed, project_types).destructure();
+            compute_visible_types_and_aspects(source_file, file_parsed, project_types)
+                .destructure();
         messages.extend(more_messages);
         visible_types.unwrap()
     };
@@ -243,13 +253,14 @@ pub fn index(
     let mut types = HashMap::<String, TypeDeclarationI>::new();
     let mut definitions = HashMap::<String, DefinitionI>::new();
     let mut enum_variant_types = HashMap::<String, String>::new();
+    let mut aspects = HashMap::<String, AspectI>::new();
 
     for definition in &file_parsed.definitions {
-        match definitions.entry(definition.name.name.clone()) {
+        match definitions.entry(definition.decl.name.name.clone()) {
             Entry::Occupied(occupied) => {
                 messages.push(name_used_earlier(
                     source_file,
-                    definition.name.range,
+                    definition.decl.name.range,
                     occupied.get().name.range,
                 ));
             }
@@ -257,8 +268,9 @@ pub fn index(
                 // Let's add this definition into the map.
                 let symbol_type = crate::type_resolve::resolve_typep(
                     source_file,
-                    &definition.definition_type,
+                    &definition.decl.definition_type,
                     &definition
+                        .decl
                         .type_parameters
                         .iter()
                         .map(|id| id.name.name.clone())
@@ -269,8 +281,9 @@ pub fn index(
                 messages.append(&mut inner_messages);
                 if let Some(symbol_type) = symbol_type {
                     let definition = DefinitionI {
-                        name: definition.name.clone(),
+                        name: definition.decl.name.clone(),
                         type_variables: definition
+                            .decl
                             .type_parameters
                             .iter()
                             .map(|param| TypeParameter {
@@ -433,10 +446,72 @@ pub fn index(
         }
     }
 
+    for aspect in &file_parsed.aspects {
+        match aspects.entry(aspect.identifier.name.clone()) {
+            Entry::Occupied(occupied) => {
+                messages.push(name_used_earlier(
+                    source_file,
+                    aspect.identifier.range,
+                    occupied.get().name.range,
+                ));
+            }
+            Entry::Vacant(vacant) => {
+                // Let's add this aspect into the map.
+                let definitions = aspect
+                    .definitions
+                    .iter()
+                    .map(|def| {
+                        crate::type_resolve::resolve_typep(
+                            source_file,
+                            &def.definition_type,
+                            &aspect
+                                .type_params
+                                .iter()
+                                .chain(def.type_parameters.iter())
+                                .map(|id| id.name.name.clone())
+                                .collect(),
+                            &visible_types,
+                        )
+                        .map(|symbol_type| DefinitionI {
+                            name: def.name.clone(),
+                            type_variables: def
+                                .type_parameters
+                                .iter()
+                                .map(|param| TypeParameter {
+                                    name: param.name.name.clone(),
+                                    parameters: param.parameters,
+                                })
+                                .collect(),
+                            symbol_type,
+                        })
+                    })
+                    .collect::<DiagnosticResult<Vec<_>>>();
+                let (definitions, mut inner_messages) = definitions.destructure();
+                messages.append(&mut inner_messages);
+                if let Some(definitions) = definitions {
+                    let aspect = AspectI {
+                        name: aspect.identifier.clone(),
+                        type_variables: aspect
+                            .type_params
+                            .iter()
+                            .map(|param| TypeParameter {
+                                name: param.name.name.clone(),
+                                parameters: param.parameters,
+                            })
+                            .collect(),
+                        definitions,
+                    };
+                    vacant.insert(aspect);
+                }
+            }
+        }
+    }
+
     let index = FileIndex {
         types,
         definitions,
         enum_variant_types,
+        aspects,
     };
     DiagnosticResult::ok_with_many(index, messages)
 }

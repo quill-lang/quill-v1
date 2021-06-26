@@ -87,6 +87,7 @@ pub fn deduce_expr_type(
             project_index,
             expr_type_check.expr,
             expr_type_check.constraints,
+            visible_names,
         )
     })
 }

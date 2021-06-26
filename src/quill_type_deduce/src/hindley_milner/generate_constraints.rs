@@ -13,7 +13,7 @@ use quill_parser::{
 use quill_type::PrimitiveType;
 
 use crate::{
-    hindley_milner::LetStatementNewVariables,
+    hindley_milner::{constraints::ConstraintFieldAccessReason, LetStatementNewVariables},
     hir::expr::{
         AbstractionVariable, BoundVariable, ExpressionContentsT, ExpressionT, TypeVariable,
     },
@@ -871,6 +871,65 @@ pub(crate) fn generate_constraints(
                 },
             };
             expr
+        }),
+        ExprPatP::Impl { impl_token, body } => {
+            let type_variable = TypeVariableId::default();
+            DiagnosticResult::ok(ExprTypeCheck {
+                expr: ExpressionT {
+                    type_variable: TypeVariable::Unknown { id: type_variable },
+                    contents: ExpressionContentsT::Impl {
+                        impl_token,
+                        implementations: body,
+                    },
+                },
+                type_variable_definition_ranges: {
+                    let mut map = HashMap::new();
+                    map.insert(type_variable, impl_token);
+                    map
+                },
+                assumptions: Assumptions::default(),
+                constraints: Constraints::default(),
+                let_variables: HashMap::new(),
+                new_variables: None,
+            })
+        }
+        ExprPatP::Field {
+            container,
+            field,
+            dot,
+        } => generate_constraints(
+            source_file,
+            project_index,
+            visible_names,
+            args,
+            lambda_variables,
+            let_variables,
+            *container,
+        )
+        .map(|mut container| {
+            let type_variable = TypeVariable::Unknown {
+                id: TypeVariableId::default(),
+            };
+            container.constraints.0.push((
+                type_variable.clone(),
+                Constraint::FieldAccess {
+                    ty: container.expr.type_variable.clone(),
+                    field: field.clone(),
+                    reason: ConstraintFieldAccessReason {
+                        container: container.expr.range(),
+                        field: field.range,
+                    },
+                },
+            ));
+            container.expr = ExpressionT {
+                type_variable,
+                contents: ExpressionContentsT::Field {
+                    container: Box::new(container.expr),
+                    field,
+                    dot,
+                },
+            };
+            container
         }),
     }
 }

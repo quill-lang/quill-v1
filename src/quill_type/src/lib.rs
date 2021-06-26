@@ -25,6 +25,11 @@ pub enum Type {
         /// If we know the borrow condition, give it here.
         borrow: Option<BorrowCondition>,
     },
+    /// An implementation of an aspect.
+    Impl {
+        name: QualifiedName,
+        parameters: Vec<Type>,
+    },
 }
 
 /// Represents the loan conditions of a borrowed value.
@@ -129,6 +134,19 @@ impl Type {
                     write!(f, "{} {}", borrow, ty)?;
                 } else {
                     write!(f, "&{}", ty)?;
+                }
+            }
+            Type::Impl { name, parameters } => {
+                write!(f, "impl {}", name)?;
+                if !parameters.is_empty() {
+                    write!(f, "[")?;
+                    for (i, param) in parameters.iter().enumerate() {
+                        if i != 0 {
+                            write!(f, ", ")?;
+                        }
+                        param.fmt_proper(f, false)?;
+                    }
+                    write!(f, "]")?;
                 }
             }
         };

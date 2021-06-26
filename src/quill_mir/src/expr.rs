@@ -1,5 +1,7 @@
 //! Creates MIR expressions from HIR expressions.
 
+use std::collections::HashMap;
+
 use quill_common::{location::Ranged, name::QualifiedName};
 use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
 use quill_type::{PrimitiveType, Type};
@@ -45,6 +47,8 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::ConstantValue { .. } => {}
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
+        ExpressionContents::Impl { .. } => {}
+        ExpressionContents::Field { container, .. } => initialise_expr(ctx, &*container),
     }
 }
 
@@ -57,6 +61,10 @@ pub(crate) struct ExprGeneratedM {
     /// By adding values to this list, the given local variables will be dropped after the surrounding statement (or expression) ends.
     /// In particular, the drop occurs at the next semicolon, or if there is not one, the end of the definition as a whole.
     pub locals_to_drop: Vec<LocalVariableName>,
+    /// If this expression is "temporary", it was created inside an expression
+    /// and will be used exactly once. After its use, it should be dropped.
+    /// Every expression that does not *directly* refer to an argument or local is a temporary.
+    pub temporary: bool,
 }
 
 /// Creates a list of all local or argument variables used inside this expression.
@@ -104,6 +112,20 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
         ExpressionContents::ConstantValue { .. } => Vec::new(),
         ExpressionContents::Borrow { expr, .. } => list_used_locals(&*expr),
         ExpressionContents::Copy { expr, .. } => list_used_locals(&*expr),
+        ExpressionContents::Impl {
+            implementations, ..
+        } => {
+            /* TODO
+            implementations
+            .values()
+            .flatten()
+            .map(|f| list_used_locals(&*f.replacement))
+            .flatten()
+            .collect()
+            */
+            Vec::new()
+        }
+        ExpressionContents::Field { container, .. } => list_used_locals(&*container),
     }
 }
 
@@ -193,6 +215,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable,
                 locals_to_drop: Vec::new(),
+                temporary: false,
             }
         }
         ExpressionContents::Local(local) => {
@@ -205,6 +228,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable,
                 locals_to_drop: Vec::new(),
+                temporary: false,
             }
         }
         ExpressionContents::Symbol {
@@ -233,6 +257,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+                temporary: true,
             }
         }
         ExpressionContents::Apply(left, right) => {
@@ -294,6 +319,7 @@ pub(crate) fn generate_expr(
                     .into_iter()
                     .chain(right.locals_to_drop)
                     .collect(),
+                temporary: true,
             }
         }
         ExpressionContents::Lambda {
@@ -428,6 +454,7 @@ pub(crate) fn generate_expr(
                 block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+                temporary: true,
             }
         }
         ExpressionContents::Let {
@@ -489,6 +516,9 @@ pub(crate) fn generate_expr(
                 block: rvalue.block,
                 variable: LocalVariableName::Local(ret),
                 locals_to_drop: rvalue.locals_to_drop,
+                // The result of the let statement is the unit value, which is a temporary
+                // even though the actual value in the let statement is not temporary.
+                temporary: true,
             }
         }
         ExpressionContents::Block { mut statements, .. } => {
@@ -550,6 +580,7 @@ pub(crate) fn generate_expr(
                     block: chain.block,
                     variable: final_expr.variable,
                     locals_to_drop: Vec::new(),
+                    temporary: true,
                 }
             } else {
                 // We need to make a new unit variable since there was no final expression.
@@ -597,6 +628,7 @@ pub(crate) fn generate_expr(
                     block: chain.block,
                     variable: LocalVariableName::Local(variable),
                     locals_to_drop: Vec::new(),
+                    temporary: true,
                 }
             }
         }
@@ -662,6 +694,7 @@ pub(crate) fn generate_expr(
                 block: chain.block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: chain.locals_to_drop,
+                temporary: true,
             }
         }
         ExpressionContents::ConstantValue { value, range } => {
@@ -689,6 +722,7 @@ pub(crate) fn generate_expr(
                 block: initialise_variable,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: Vec::new(),
+                temporary: true,
             }
         }
         ExpressionContents::Borrow { borrow_token, expr } => {
@@ -732,6 +766,7 @@ pub(crate) fn generate_expr(
                 block: inner.block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: inner.locals_to_drop,
+                temporary: true,
             }
         }
         ExpressionContents::Copy { copy_token, expr } => {
@@ -776,6 +811,176 @@ pub(crate) fn generate_expr(
                 block: inner.block,
                 variable: LocalVariableName::Local(variable),
                 locals_to_drop: inner.locals_to_drop,
+                temporary: true,
+            }
+        }
+        ExpressionContents::Impl {
+            implementations, ..
+        } => {
+            // Use the new definitions for this impl.
+            // TODO: Move all used variables inside the impl definition.
+            // Look at the implementation of ExpressionContents::Lambda for more info.
+
+            // TODO: HashMap's ordering isn't technically guaranteed to be consistent.
+            // Maybe change to a different intermediate representation?
+
+            let (aspect, type_variables) = if let Type::Impl { name, parameters } = ty.clone() {
+                (name, parameters)
+            } else {
+                unreachable!()
+            };
+
+            // Store the types of the definitions.
+            let def_types = implementations
+                .values()
+                .map(|def| {
+                    let mut symbol_type = def.return_type.clone();
+                    for arg in def.arg_types.iter().rev() {
+                        symbol_type = Type::Function(Box::new(arg.clone()), Box::new(symbol_type));
+                    }
+                    symbol_type
+                })
+                .collect::<Vec<_>>();
+
+            // Store the definition numbers and names.
+            let mut def_numbers = Vec::new();
+            for (name, def) in implementations {
+                def_numbers.push((name, *ctx.lambda_number));
+                *ctx.lambda_number += 1;
+                let (inner, inner_inner) = to_mir_def(
+                    ctx.project_index,
+                    def,
+                    ctx.source_file,
+                    ctx.def_name,
+                    ctx.lambda_number,
+                );
+                ctx.additional_definitions.push(inner);
+                ctx.additional_definitions.extend(inner_inner);
+            }
+
+            // Now that we've created the lambda as a definition, we need to instance this impl into scope.
+
+            let mut statements = Vec::new();
+            let mut definitions = HashMap::new();
+            let variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty,
+                name: None,
+            });
+
+            for ((def_name, def_number), def_type) in def_numbers.into_iter().zip(def_types) {
+                let def_variable = ctx.new_local_variable(LocalVariableInfo {
+                    range,
+                    ty: def_type,
+                    name: None,
+                });
+                definitions.insert(def_name, LocalVariableName::Local(def_variable));
+
+                statements.push(Statement {
+                    range,
+                    kind: StatementKind::InstanceSymbol {
+                        name: QualifiedName {
+                            source_file: ctx.source_file.clone(),
+                            name: format!("{}/lambda/{}", ctx.def_name, def_number),
+                            range,
+                        },
+                        type_variables: ctx
+                            .type_variables
+                            .iter()
+                            .map(|param| Type::Variable {
+                                variable: param.name.clone(),
+                                parameters: Vec::new(),
+                            })
+                            .collect(),
+                        target: LocalVariableName::Local(def_variable),
+                    },
+                });
+            }
+
+            statements.push(Statement {
+                range,
+                kind: StatementKind::ConstructImpl {
+                    aspect,
+                    type_variables,
+                    definitions,
+                    target: LocalVariableName::Local(variable),
+                },
+            });
+
+            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements,
+                terminator,
+            });
+            ExprGeneratedM {
+                block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: Vec::new(),
+                temporary: true,
+            }
+        }
+        ExpressionContents::Field {
+            container,
+            field,
+            dot,
+        } => {
+            let projection = match &container.ty {
+                Type::Named { .. } => PlaceSegment::DataField { field: field.name },
+                Type::Impl { .. } => PlaceSegment::ImplField { field: field.name },
+                _ => panic!("invalid container type"),
+            };
+            let variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty,
+                name: None,
+            });
+            let terminator_range = terminator.range;
+            let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: Vec::new(),
+                terminator,
+            });
+            let inner = generate_expr(
+                ctx,
+                *container,
+                Terminator {
+                    range: terminator_range,
+                    kind: TerminatorKind::Goto(block),
+                },
+            );
+            ctx.control_flow_graph
+                .basic_blocks
+                .get_mut(&block)
+                .unwrap()
+                .statements
+                .push(Statement {
+                    range: dot,
+                    kind: StatementKind::Assign {
+                        target: LocalVariableName::Local(variable),
+                        source: Rvalue::Use(Operand::Copy(Place {
+                            local: inner.variable,
+                            projection: vec![projection],
+                        })),
+                    },
+                });
+
+            // If the container was a temporary value, drop it here.
+            if inner.temporary {
+                ctx.control_flow_graph
+                    .basic_blocks
+                    .get_mut(&block)
+                    .unwrap()
+                    .statements
+                    .push(Statement {
+                        range: dot,
+                        kind: StatementKind::Drop {
+                            variable: inner.variable,
+                        },
+                    });
+            }
+            ExprGeneratedM {
+                block: inner.block,
+                variable: LocalVariableName::Local(variable),
+                locals_to_drop: inner.locals_to_drop,
+                temporary: true,
             }
         }
     }

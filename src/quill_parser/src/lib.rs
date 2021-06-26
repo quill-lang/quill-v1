@@ -57,13 +57,14 @@ impl DerefMut for TokenStream {
     }
 }
 
-/// Any top level item such as a definition or theorem.
+/// Any top level item such as a definition or type.
 #[derive(Debug)]
 enum ItemP {
     Use(UseP),
     Data(DataP),
     Enum(EnumP),
     Definition(DefinitionP),
+    Aspect(AspectP),
 }
 
 /// Parses a source file. This function parses the top-level item declarations, without parsing the contents of items.
@@ -106,12 +107,14 @@ pub fn parse(
         let mut data = Vec::new();
         let mut enums = Vec::new();
         let mut definitions = Vec::new();
+        let mut aspects = Vec::new();
         for item in items {
             match item {
                 ItemP::Use(i) => uses.push(i),
                 ItemP::Data(i) => data.push(i),
                 ItemP::Enum(i) => enums.push(i),
                 ItemP::Definition(i) => definitions.push(i),
+                ItemP::Aspect(i) => aspects.push(i),
             }
         }
         FileP {
@@ -119,6 +122,7 @@ pub fn parse(
             data,
             enums,
             definitions,
+            aspects,
         }
     })
 }
@@ -135,11 +139,15 @@ impl<'input> Parser<'input> {
         // An item starts with an optional visibility declaration.
         let vis = self.parse_visibility();
 
-        // Then we require `use`, `data`, `enum` or `def`.
+        // Then we require one of `use`, `data`, `enum`, `def`, `aspect`.
         let item_type = self.parse_token_maybe(|ty| {
             matches!(
                 ty,
-                TokenType::Use | TokenType::Data | TokenType::Enum | TokenType::Def
+                TokenType::Use
+                    | TokenType::Data
+                    | TokenType::Enum
+                    | TokenType::Def
+                    | TokenType::Aspect
             )
         });
 
@@ -161,11 +169,12 @@ impl<'input> Parser<'input> {
                     TokenType::Data => self.parse_data(vis).map(ItemP::Data),
                     TokenType::Enum => self.parse_enum(vis).map(ItemP::Enum),
                     TokenType::Def => self.parse_def(vis).map(ItemP::Definition),
+                    TokenType::Aspect => self.parse_aspect(vis).map(ItemP::Aspect),
                     _ => unreachable!(),
                 }
             } else {
                 DiagnosticResult::fail(ErrorMessage::new(
-                    "expected `use`, `data`, `enum` or `def`".to_string(),
+                    "expected one of `use`, `data`, `enum`, `def`, `aspect`".to_string(),
                     Severity::Error,
                     Diagnostic::at(self.source_file, &self.tokens.range()),
                 ))
@@ -312,48 +321,54 @@ impl<'input> Parser<'input> {
     }
 }
 
-/////////////////////////////////////
-//// DEFINITIONS AND EXPRESSIONS ////
-/////////////////////////////////////
+/////////////////////
+//// DEFINITIONS ////
+/////////////////////
 
 impl<'input> Parser<'input> {
-    /// `def ::= name named_type_params? ':' ty '{' def_body '}'
+    /// `def ::= def_decl def_body`
     fn parse_def(&mut self, vis: Visibility) -> DiagnosticResult<DefinitionP> {
+        self.parse_def_decl(vis)
+            .bind(|decl| self.parse_def_body().map(|body| DefinitionP { decl, body }))
+    }
+
+    /// `def_decl ::= name named_type_params? ':' ty
+    fn parse_def_decl(&mut self, vis: Visibility) -> DiagnosticResult<DefinitionDeclP> {
         self.parse_name().bind(|name| {
-            let quantifiers = if let Some(tree) = self.parse_tree(BracketType::Square) {
+            let type_parameters = if let Some(tree) = self.parse_tree(BracketType::Square) {
                 self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
             } else {
                 DiagnosticResult::ok(Vec::new())
             };
-            quantifiers.bind(|quantifiers| {
+            type_parameters.bind(|type_parameters| {
                 self.parse_token(|ty| matches!(ty, TokenType::Type), "expected colon")
                     .bind(|_| {
-                        self.parse_type().bind(|definition_type| {
-                            if let Some(tree) = self.parse_tree(BracketType::Brace) {
-                                let body =
-                                    self.parse_in_tree(tree, |parser| parser.parse_def_body());
-                                body.map(|body| DefinitionP {
-                                    vis,
-                                    name,
-                                    type_parameters: quantifiers,
-                                    definition_type,
-                                    body,
-                                })
-                            } else {
-                                DiagnosticResult::fail(ErrorMessage::new(
-                                    "expected brace bracket block".to_string(),
-                                    Severity::Error,
-                                    Diagnostic::at(self.source_file, &self.tokens.range()),
-                                ))
-                            }
+                        self.parse_type().map(|definition_type| DefinitionDeclP {
+                            vis,
+                            name,
+                            type_parameters,
+                            definition_type,
                         })
                     })
             })
         })
     }
 
-    /// `def_body ::= 'compiler_intrinsic' | def_body_pattern_matched`
+    /// `def_body ::= '{' def_body_inner '}'
     fn parse_def_body(&mut self) -> DiagnosticResult<DefinitionBodyP> {
+        if let Some(tree) = self.parse_tree(BracketType::Brace) {
+            self.parse_in_tree(tree, |parser| parser.parse_def_body_inner())
+        } else {
+            DiagnosticResult::fail(ErrorMessage::new(
+                "expected brace bracket block".to_string(),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &self.tokens.range()),
+            ))
+        }
+    }
+
+    /// `def_body_inner ::= 'compiler_intrinsic' | def_body_pattern_matched`
+    fn parse_def_body_inner(&mut self) -> DiagnosticResult<DefinitionBodyP> {
         if let Some(token) = self.parse_token_maybe(|ty| matches!(ty, TokenType::CompilerIntrinsic))
         {
             DiagnosticResult::ok(DefinitionBodyP::CompilerIntrinsic(token.range))
@@ -412,7 +427,7 @@ impl<'input> Parser<'input> {
 ///////////////
 
 impl<'input> Parser<'input> {
-    /// `type ::= type_borrow* (type_name type_args | "(" type ")") ("->" type)?`
+    /// `type ::= type_borrow* (type_name type_args | "(" type ")" | "impl" type_impl) ("->" type)?`
     fn parse_type(&mut self) -> DiagnosticResult<TypeP> {
         self.parse_type_borrow().bind(|borrow| {
             if let Some(borrow) = borrow {
@@ -448,6 +463,15 @@ impl<'input> Parser<'input> {
                         } else {
                             unreachable!()
                         }
+                    }
+                    Some(TokenTree::Token(Token {
+                        token_type: TokenType::Impl,
+                        range: impl_token,
+                    })) => {
+                        let impl_token = *impl_token;
+                        // Consume the `impl` token.
+                        self.tokens.next();
+                        self.parse_type_impl(impl_token)
                     }
                     _ => {
                         self.parse_identifier().bind(|identifier| {
@@ -511,7 +535,23 @@ impl<'input> Parser<'input> {
         }
     }
 
-    /// Parses a list of names for type parameters, e.g. [A, B, C[_]] but not something like [bool] because that is a type not a type parameter name.
+    /// `type_impl ::= aspect ('[' type_params ']')?`
+    fn parse_type_impl(&mut self, impl_token: Range) -> DiagnosticResult<TypeP> {
+        self.parse_identifier().bind(|aspect| {
+            let params = if let Some(tree) = self.parse_tree(BracketType::Square) {
+                self.parse_in_tree(tree, |parser| parser.parse_type_params())
+            } else {
+                DiagnosticResult::ok(Vec::new())
+            };
+            params.map(|params| TypeP::Impl {
+                impl_token,
+                aspect,
+                params,
+            })
+        })
+    }
+
+    /// Parses a list of names for type parameters, e.g. `[A, B, C[_]]` but not something like `[bool]` because that is a type not a type parameter name.
     fn parse_type_param_names(&mut self) -> DiagnosticResult<Vec<TypeParameterP>> {
         self.parse_name().bind(|first_param| {
             // Check if this is a higher-kinded type, i.e. we have parameters for this type variable.
@@ -601,6 +641,7 @@ impl<'input> Parser<'input> {
         // - let: a `let` statement
         // - block: a block of statements followed by a returned value
         // - copy: copy the primitive value behind a reference
+        // - impl: an implementation of an aspect beginning with an `impl` token
         // Any expressions we add to the language in the future must reduce to one of these basic
         // expression types, so that we can apply a Hindley-Milner-like type system solver.
         if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Lambda)) {
@@ -615,6 +656,9 @@ impl<'input> Parser<'input> {
                 copy_token: tk.range,
                 expr: Box::new(expr),
             })
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Impl)) {
+            // This is an impl expression.
+            self.parse_expr_impl(tk.range)
         } else {
             // Default to a variable or application expression, since this will show a decent error message.
             self.parse_expr_app()
@@ -672,7 +716,7 @@ impl<'input> Parser<'input> {
     }
 
     /// Parses a let expression.
-    /// `expr_let ::= name '=' expr ';'`
+    /// `expr_let ::= name '=' expr ','`
     fn parse_expr_let(&mut self, let_token: Range) -> DiagnosticResult<ExprPatP> {
         self.parse_name().bind(|name| {
             self.parse_token(
@@ -687,6 +731,12 @@ impl<'input> Parser<'input> {
                 })
             })
         })
+    }
+
+    /// Parses an impl expression.
+    fn parse_expr_impl(&mut self, impl_token: Range) -> DiagnosticResult<ExprPatP> {
+        self.parse_def_body()
+            .map(|body| ExprPatP::Impl { impl_token, body })
     }
 
     /// Parses a single term from an expression by consuming either zero or one token trees from the input.
@@ -775,6 +825,22 @@ impl<'input> Parser<'input> {
                         DiagnosticResult::ok(ExprPatP::Variable(identifier))
                     }
                 }
+            }).bind(|expr| {
+                // If followed by a dot `.`, we are referencing some object contained inside this expression.
+                // This is a field of a data type, or a definition in an impl.
+                let mut nested_fields = Vec::new();
+                while let Some(dot) = self.parse_token_maybe(|tk| matches!(tk, TokenType::Dot)) {
+                    nested_fields.push((dot, self.parse_name()));
+                }
+                let mut result = DiagnosticResult::ok(expr);
+                for (dot, field) in nested_fields {
+                    result = result.bind(|expr| field.map(|field| ExprPatP::Field {
+                        container: Box::new(expr),
+                        field,
+                        dot: dot.range,
+                    }))
+                }
+                result
             }))
         }
     }
@@ -1087,6 +1153,63 @@ fn collapse_func_application(terms: Vec<(Option<Operator>, ExprPatP)>) -> Functi
     }
     result.push((active_operator, active_application));
     result
+}
+
+/////////////////
+//// ASPECTS ////
+/////////////////
+
+impl<'input> Parser<'input> {
+    /// `aspect ::= name named_type_params? '{' aspect_body '}'
+    fn parse_aspect(&mut self, vis: Visibility) -> DiagnosticResult<AspectP> {
+        self.parse_name().bind(|identifier| {
+            let type_params = if let Some(tree) = self.parse_tree(BracketType::Square) {
+                self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
+            } else {
+                // TODO: emit a nicer error message if the user omits square brackets around the aspect type name(s).
+                DiagnosticResult::ok(Vec::new())
+            };
+
+            type_params.bind(|type_params| {
+                if let Some(tree) = self.parse_tree(BracketType::Brace) {
+                    self.parse_in_tree(tree, |parser| {
+                        parser.parse_aspect_body(vis).map(|definitions| AspectP {
+                            vis,
+                            identifier,
+                            type_params,
+                            definitions,
+                        })
+                    })
+                } else {
+                    DiagnosticResult::fail(ErrorMessage::new(
+                        "expected brace bracket block".to_string(),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &self.tokens.range()),
+                    ))
+                }
+            })
+        })
+    }
+
+    /// `aspect_body ::= ( def_decl ',' aspect_body? )?`
+    fn parse_aspect_body(&mut self, vis: Visibility) -> DiagnosticResult<Vec<DefinitionDeclP>> {
+        if self.tokens.peek().is_none() {
+            return DiagnosticResult::ok(Vec::new());
+        }
+
+        self.parse_def_decl(vis).bind(|decl| {
+            self.parse_token(
+                |tk| matches!(tk, TokenType::EndOfLine { .. }),
+                "expected end of line after function in aspect",
+            )
+            .bind(|_| {
+                self.parse_aspect_body(vis).map(|mut remaining| {
+                    remaining.insert(0, decl);
+                    remaining
+                })
+            })
+        })
+    }
 }
 
 /////////////////////////

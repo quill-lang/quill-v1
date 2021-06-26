@@ -399,6 +399,15 @@ pub enum StatementKind {
         fields: HashMap<String, Rvalue>,
         target: LocalVariableName,
     },
+    /// Creates an impl of an aspect from a set of definitions.
+    /// The definitions are instanced symbols.
+    /// They are considered to be "moved into" the impl for ownership purposes.
+    ConstructImpl {
+        aspect: QualifiedName,
+        type_variables: Vec<Type>,
+        definitions: HashMap<String, LocalVariableName>,
+        target: LocalVariableName,
+    },
 }
 
 impl Display for StatementKind {
@@ -500,6 +509,30 @@ impl Display for StatementKind {
                 }
                 write!(f, "}}")
             }
+            StatementKind::ConstructImpl {
+                aspect,
+                type_variables,
+                definitions,
+                target,
+            } => {
+                write!(f, "{} = impl {}", target, aspect)?;
+                if !type_variables.is_empty() {
+                    write!(f, " with")?;
+                    for ty_var in type_variables {
+                        write!(f, " {}", ty_var)?;
+                    }
+                }
+                if !definitions.is_empty() {
+                    write!(f, " using ")?;
+                    for (i, (def_name, def_local)) in definitions.iter().enumerate() {
+                        if i != 0 {
+                            write!(f, "; ")?;
+                        }
+                        write!(f, "{} = {}", def_name, def_local)?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -542,6 +575,7 @@ pub enum PlaceSegment {
     DataField { field: String },
     EnumField { variant: String, field: String },
     EnumDiscriminant,
+    ImplField { field: String },
 }
 
 impl Display for PlaceSegment {
@@ -550,6 +584,7 @@ impl Display for PlaceSegment {
             PlaceSegment::DataField { field } => write!(f, ".{}", field),
             PlaceSegment::EnumField { variant, field } => write!(f, ".<{}>.{}", variant, field),
             PlaceSegment::EnumDiscriminant => write!(f, ".discriminant"),
+            PlaceSegment::ImplField { field } => write!(f, ".<impl>.{}", field),
         }
     }
 }

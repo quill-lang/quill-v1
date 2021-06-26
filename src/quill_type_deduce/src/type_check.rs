@@ -6,16 +6,19 @@ use multimap::MultiMap;
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{Range, Ranged, SourceFileIdentifier},
+    name::QualifiedName,
 };
 use quill_index::{
-    compute_used_files, DefinitionI, ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI,
+    compute_used_files, AspectI, DefinitionI, ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI,
     TypeParameter,
 };
 use quill_parser::{
-    definition::{DefinitionBodyP, DefinitionCaseP},
+    definition::{DefinitionBodyP, DefinitionCaseP, DefinitionDeclP, DefinitionP, TypeParameterP},
     expr_pat::ExprPatP,
     file::FileP,
-    identifier::NameP,
+    identifier::{IdentifierP, NameP},
+    types::TypeP,
+    visibility::Visibility,
 };
 use quill_type::{PrimitiveType, Type};
 
@@ -23,7 +26,7 @@ use crate::{
     hindley_milner::deduce_expr_type,
     hir::{
         definition::{Definition, DefinitionBody, DefinitionCase},
-        expr::{BoundVariable, Expression, TypeVariable},
+        expr::{BoundVariable, Expression, ExpressionContents, TypeVariable},
         pattern::Pattern,
         SourceFileHIR,
     },
@@ -44,11 +47,11 @@ pub fn check(
     type_checker.compute(project_index, file_parsed)
 }
 
-struct TypeChecker<'a> {
-    source_file: &'a SourceFileIdentifier,
-    project_index: &'a ProjectIndex,
+pub(crate) struct TypeChecker<'a> {
+    pub(crate) source_file: &'a SourceFileIdentifier,
+    pub(crate) project_index: &'a ProjectIndex,
 
-    messages: Vec<ErrorMessage>,
+    pub(crate) messages: Vec<ErrorMessage>,
 }
 
 /// A utility for printing type variables to screen.
@@ -115,6 +118,20 @@ impl TypeVariablePrinter {
             TypeVariable::Borrow { ty } => {
                 format!("&{}", self.print(*ty))
             }
+            TypeVariable::Impl { name, parameters } => {
+                let mut result = format!("impl {}", name);
+                if !parameters.is_empty() {
+                    result += "[";
+                    for (i, param) in parameters.into_iter().enumerate() {
+                        if i != 0 {
+                            result += ", ";
+                        }
+                        result += &self.print(param);
+                    }
+                    result += "]";
+                }
+                result
+            }
         }
     }
 
@@ -168,10 +185,11 @@ pub struct VisibleNames<'a> {
     pub types: HashMap<&'a str, ForeignDeclaration<&'a TypeDeclarationI>>,
     pub enum_variants: HashMap<&'a str, ForeignDeclaration<&'a str>>,
     pub definitions: HashMap<&'a str, ForeignDeclaration<&'a DefinitionI>>,
+    pub aspects: HashMap<&'a str, ForeignDeclaration<&'a AspectI>>,
 }
 
 /// Work out what names are visible inside a file.
-/// This is the counterpart to `compute_visible_types` once we've got the full project index.
+/// This is the counterpart to `compute_visible_types_and_aspects` once we've got the full project index.
 fn compute_visible_names<'a>(
     source_file: &'a SourceFileIdentifier,
     file_parsed: &FileP,
@@ -181,6 +199,7 @@ fn compute_visible_names<'a>(
     let mut visible_types = MultiMap::new();
     let mut visible_enum_variants = MultiMap::new();
     let mut visible_defs = MultiMap::new();
+    let mut visible_aspects = MultiMap::new();
 
     let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
         project_index.contains_key(name)
@@ -188,7 +207,7 @@ fn compute_visible_names<'a>(
     .destructure();
     assert!(
         more_messages.is_empty(),
-        "should have errored in `compute_visible_types`"
+        "should have errored in `compute_visible_types_and_aspects`"
     );
     for file in used_files.unwrap() {
         let file_index = &project_index[&file.file];
@@ -212,6 +231,15 @@ fn compute_visible_names<'a>(
         }
         for (name, def) in &file_index.definitions {
             visible_defs.insert(
+                name.as_str(),
+                ForeignDeclaration {
+                    source_file: file.file.clone(),
+                    decl: def,
+                },
+            );
+        }
+        for (name, def) in &file_index.aspects {
+            visible_aspects.insert(
                 name.as_str(),
                 ForeignDeclaration {
                     source_file: file.file.clone(),
@@ -269,12 +297,31 @@ fn compute_visible_names<'a>(
         }
     })
         .collect();
+    let aspects = visible_aspects.into_iter().filter_map(|(key, mut decls)| {
+            if decls.len() == 1 {
+                Some((key, decls.pop().unwrap()))
+            } else {
+                messages.push(ErrorMessage::new_with_many(
+                    format!("an aspect with name `{}` was imported from multiple locations, which could cause ambiguity, so this name will not be usable in this file", key),
+                    Severity::Warning,
+                    Diagnostic::in_file(source_file),
+                    decls.into_iter().map(|decl| HelpMessage {
+                        message: format!("defined in {} here", decl.source_file),
+                        help_type: HelpType::Note,
+                        diagnostic: Diagnostic::at(&decl.source_file, &decl.decl.name.range),
+                    }).collect()
+                ));
+                None
+            }
+        })
+            .collect();
 
     DiagnosticResult::ok_with_many(
         VisibleNames {
             types,
             enum_variants,
             definitions,
+            aspects,
         },
         messages,
     )
@@ -296,99 +343,117 @@ impl<'a> TypeChecker<'a> {
         let mut definitions = HashMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
-            let def_name = definition.name;
-            let type_parameters = definition.type_parameters;
-
-            let symbol = &self.project_index[self.source_file].definitions[&def_name.name];
+            let symbol =
+                &self.project_index[self.source_file].definitions[&definition.decl.name.name];
             let symbol_type = &symbol.symbol_type;
 
-            match definition.body {
-                DefinitionBodyP::PatternMatch(cases) => {
-                    // We need to check pattern exhaustiveness in the definition's cases.
-                    // Let's resolve each case's patterns and expressions.
-                    let cases = cases
-                        .into_iter()
-                        .map(|case| self.resolve_case(&visible_names, &def_name.name, case))
-                        .collect::<DiagnosticResult<_>>();
-
-                    // Now we can check whether the patterns are valid.
-                    let cases_validated = cases.bind(|cases| {
-                        cases
-                            .into_iter()
-                            .map(|(range, args, replacement)| {
-                                self.validate_case(
-                                    &visible_names,
-                                    symbol_type,
-                                    range,
-                                    args,
-                                    replacement,
-                                    def_name.range,
-                                )
-                            })
-                            .collect::<DiagnosticResult<_>>()
-                    });
-                    // Check that the patterns we have generated are exhaustive.
-                    let validated = cases_validated.deny().map(|cases_validated| {
-                        let arity = cases_validated[0].1.len();
-                        (cases_validated, arity)
-                    });
-
-                    let (definition_parsed, mut inner_messages) = validated.destructure();
-                    self.messages.append(&mut inner_messages);
-                    if let Some((cases, arity)) = definition_parsed {
-                        let (arg_types, return_type) = get_args_of_type_arity(symbol_type, arity);
-                        definitions.insert(
-                            def_name.name,
-                            Definition {
-                                range: def_name.range,
-                                type_variables: type_parameters
-                                    .into_iter()
-                                    .map(|id| TypeParameter {
-                                        name: id.name.name,
-                                        parameters: id.parameters,
-                                    })
-                                    .collect(),
-                                arg_types,
-                                return_type,
-                                body: DefinitionBody::PatternMatch(
-                                    cases
-                                        .into_iter()
-                                        .map(|(range, arg_patterns, replacement)| DefinitionCase {
-                                            range,
-                                            arg_patterns,
-                                            replacement,
-                                        })
-                                        .collect(),
-                                ),
-                            },
-                        );
-                    }
-                }
-                DefinitionBodyP::CompilerIntrinsic(_) => {
-                    // There's no type checking to be done for a compiler intrinsic.
-                    // All compiler intrinsics have the maximal possible arity.
-                    let (arg_types, return_type) = get_args_of_type(symbol_type);
-                    definitions.insert(
-                        def_name.name,
-                        Definition {
-                            range: def_name.range,
-                            type_variables: type_parameters
-                                .into_iter()
-                                .map(|id| TypeParameter {
-                                    name: id.name.name,
-                                    parameters: id.parameters,
-                                })
-                                .collect(),
-                            arg_types,
-                            return_type,
-                            body: DefinitionBody::CompilerIntrinsic,
-                        },
-                    );
-                }
+            if let Some((name, def)) =
+                self.compute_definition(&visible_names, definition, symbol_type)
+            {
+                definitions.insert(name, def);
             }
         }
 
         DiagnosticResult::ok_with_many(SourceFileHIR { definitions }, self.messages)
+    }
+
+    /// Returns a string for the definition name, along with the fully type checked definition.
+    /// Appends messages to the inner message log.
+    fn compute_definition(
+        &mut self,
+        visible_names: &VisibleNames,
+        definition: DefinitionP,
+        symbol_type: &Type,
+    ) -> Option<(String, Definition)> {
+        let def_name = definition.decl.name;
+        let type_parameters = definition.decl.type_parameters;
+
+        match definition.body {
+            DefinitionBodyP::PatternMatch(cases) => {
+                // We need to check pattern exhaustiveness in the definition's cases.
+                // Let's resolve each case's patterns and expressions.
+                let cases = cases
+                    .into_iter()
+                    .map(|case| self.resolve_case(visible_names, &def_name.name, case))
+                    .collect::<DiagnosticResult<_>>();
+
+                // Now we can check whether the patterns are valid.
+                let cases_validated = cases.bind(|cases| {
+                    cases
+                        .into_iter()
+                        .map(|(range, args, replacement)| {
+                            self.validate_case(
+                                visible_names,
+                                symbol_type,
+                                range,
+                                args,
+                                replacement,
+                                def_name.range,
+                            )
+                        })
+                        .collect::<DiagnosticResult<_>>()
+                });
+                // Check that the patterns we have generated are exhaustive.
+                let validated = cases_validated.deny().map(|cases_validated| {
+                    let arity = cases_validated[0].1.len();
+                    (cases_validated, arity)
+                });
+
+                let (definition_parsed, mut inner_messages) = validated.destructure();
+                self.messages.append(&mut inner_messages);
+                if let Some((cases, arity)) = definition_parsed {
+                    let (arg_types, return_type) = get_args_of_type_arity(symbol_type, arity);
+
+                    let def = Definition {
+                        range: def_name.range,
+                        type_variables: type_parameters
+                            .into_iter()
+                            .map(|id| TypeParameter {
+                                name: id.name.name,
+                                parameters: id.parameters,
+                            })
+                            .collect(),
+                        arg_types,
+                        return_type,
+                        body: DefinitionBody::PatternMatch(
+                            cases
+                                .into_iter()
+                                .map(|(range, arg_patterns, replacement)| DefinitionCase {
+                                    range,
+                                    arg_patterns,
+                                    replacement,
+                                })
+                                .collect(),
+                        ),
+                    };
+
+                    Some((def_name.name, def))
+                } else {
+                    None
+                }
+            }
+            DefinitionBodyP::CompilerIntrinsic(_) => {
+                // There's no type checking to be done for a compiler intrinsic.
+                // All compiler intrinsics have the maximal possible arity.
+                let (arg_types, return_type) = get_args_of_type(symbol_type);
+
+                let def = Definition {
+                    range: def_name.range,
+                    type_variables: type_parameters
+                        .into_iter()
+                        .map(|id| TypeParameter {
+                            name: id.name.name,
+                            parameters: id.parameters,
+                        })
+                        .collect(),
+                    arg_types,
+                    return_type,
+                    body: DefinitionBody::CompilerIntrinsic,
+                };
+
+                Some((def_name.name, def))
+            }
+        }
     }
 
     fn resolve_case(
@@ -606,6 +671,13 @@ impl<'a> TypeChecker<'a> {
                             variables
                         })
                 }
+                Type::Impl { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    String::from(
+                        "expected a name for an aspect implementation, not a type constructor",
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &type_ctor.range),
+                )),
             },
             Pattern::Unknown(_) => DiagnosticResult::ok(HashMap::new()),
             Pattern::Function { .. } => unimplemented!(),
@@ -697,6 +769,16 @@ impl<'a> TypeChecker<'a> {
                 String::from("data constructors are not allowed in function patterns"),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &data_constructor),
+            )),
+            ExprPatP::Impl { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("`impl` blocks are not allowed in function patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &impl_token),
+            )),
+            ExprPatP::Field { dot, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("fields are not allowed in function patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &dot),
             )),
         }
     }
@@ -835,7 +917,91 @@ impl<'a> TypeChecker<'a> {
                         })
                 })
             }
+            ExprPatP::Impl { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("`impl` expressions are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &impl_token),
+            )),
+            ExprPatP::Field { dot, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("fields are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &dot),
+            )),
         }
+    }
+
+    /// Type check the implementation of an aspect.
+    pub(crate) fn compute_impl(
+        mut self,
+        impl_token: Range,
+        aspect: &AspectI,
+        parameters: &[Type],
+        cases: Vec<DefinitionCaseP>,
+        visible_names: &VisibleNames,
+    ) -> DiagnosticResult<ExpressionContents> {
+        // Split apart each definition in the impl body.
+        let mut cases_by_func_name = HashMap::<String, Vec<DefinitionCaseP>>::new();
+        for case in cases {
+            let func_name = get_func_name(&case.pattern);
+            cases_by_func_name.entry(func_name).or_default().push(case);
+        }
+
+        let mut implementations = HashMap::new();
+
+        for def in &aspect.definitions {
+            let symbol_type =
+                replace_type_variables(def.symbol_type.clone(), &aspect.type_variables, parameters);
+
+            let implementation = DefinitionP {
+                decl: DefinitionDeclP {
+                    vis: Visibility::Private,
+                    name: NameP {
+                        name: def.name.name.clone(),
+                        range: impl_token,
+                    },
+                    type_parameters: def
+                        .type_variables
+                        .iter()
+                        .map(|param| TypeParameterP {
+                            name: NameP {
+                                name: param.name.clone(),
+                                range: impl_token,
+                            },
+                            parameters: param.parameters,
+                        })
+                        .collect(),
+                    definition_type: to_typep(&symbol_type, impl_token),
+                },
+                body: DefinitionBodyP::PatternMatch(
+                    cases_by_func_name
+                        .remove(&def.name.name)
+                        .unwrap_or_default(),
+                ),
+            };
+
+            // Type check this implementation.
+            let result = self.compute_definition(visible_names, implementation, &symbol_type);
+            if let Some((k, v)) = result {
+                implementations.insert(k, v);
+            }
+        }
+
+        DiagnosticResult::ok_with_many(
+            ExpressionContents::Impl {
+                impl_token,
+                implementations,
+            },
+            std::mem::take(&mut self.messages),
+        )
+    }
+}
+
+/// Retrieves the function name defined by this function pattern.
+fn get_func_name(pattern: &ExprPatP) -> String {
+    match pattern {
+        ExprPatP::Variable(name) => name.segments[0].name.clone(),
+        ExprPatP::Apply(left, _) => get_func_name(&*left),
+        _ => unreachable!(),
     }
 }
 
@@ -901,4 +1067,54 @@ fn get_args_of_type_arity(symbol_type: &Type, num_args: usize) -> (Vec<Type>, Ty
     }
 
     (symbol_args, result)
+}
+
+/// A hack to allow us to feed known types back into the type inference engine.
+fn to_typep(ty: &Type, range: Range) -> TypeP {
+    let qualified_to_identifier = |name: &QualifiedName| IdentifierP {
+        segments: name
+            .source_file
+            .module
+            .segments
+            .iter()
+            .map(|segment| segment.0.clone())
+            .chain(std::iter::once(name.source_file.file.0.clone()))
+            .chain(std::iter::once(name.name.clone()))
+            .map(|s| NameP { name: s, range })
+            .collect(),
+    };
+
+    match ty {
+        Type::Named { name, parameters } => TypeP::Named {
+            identifier: qualified_to_identifier(name),
+            params: parameters.iter().map(|ty| to_typep(ty, range)).collect(),
+        },
+        Type::Variable {
+            variable,
+            parameters,
+        } => TypeP::Named {
+            identifier: IdentifierP {
+                segments: vec![NameP {
+                    name: variable.clone(),
+                    range,
+                }],
+            },
+            params: parameters.iter().map(|ty| to_typep(ty, range)).collect(),
+        },
+        Type::Function(l, r) => TypeP::Function(
+            Box::new(to_typep(&*l, range)),
+            Box::new(to_typep(&*r, range)),
+        ),
+        Type::Primitive(prim) => TypeP::Named {
+            identifier: IdentifierP {
+                segments: vec![NameP {
+                    name: prim.to_string(),
+                    range,
+                }],
+            },
+            params: Vec::new(),
+        },
+        Type::Borrow { ty, borrow } => todo!(),
+        Type::Impl { name, parameters } => todo!(),
+    }
 }
