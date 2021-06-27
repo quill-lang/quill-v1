@@ -281,9 +281,7 @@ impl SemanticTokenGenerator {
                 self.gen_def_body(body);
             }
             ExprPatP::Field {
-                container,
-                field,
-                dot,
+                container, field, ..
             } => {
                 self.gen_expr(*container, conditions);
                 self.push_token(

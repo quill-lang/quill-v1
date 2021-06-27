@@ -1114,7 +1114,7 @@ fn to_typep(ty: &Type, range: Range) -> TypeP {
             },
             params: Vec::new(),
         },
-        Type::Borrow { ty, borrow } => todo!(),
-        Type::Impl { name, parameters } => todo!(),
+        Type::Borrow { .. } => todo!(),
+        Type::Impl { .. } => todo!(),
     }
 }
