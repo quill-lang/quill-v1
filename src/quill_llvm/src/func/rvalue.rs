@@ -289,7 +289,7 @@ pub fn get_type_of_rvalue(
                             unreachable!()
                         }
                     }
-                    PlaceSegment::ImplField { field } => todo!(),
+                    PlaceSegment::ImplField { .. } => todo!(),
                 }
             }
 

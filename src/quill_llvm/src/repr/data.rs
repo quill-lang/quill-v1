@@ -8,7 +8,7 @@ use inkwell::{
     values::{BasicValue, PointerValue},
     AddressSpace,
 };
-use quill_common::location::{Location, Range, SourceFileIdentifier};
+use quill_common::location::{Range, SourceFileIdentifier};
 use quill_index::{EnumI, TypeConstructorI, TypeParameter};
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;

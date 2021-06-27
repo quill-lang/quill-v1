@@ -13,7 +13,7 @@ aspect Print[T] {
 }
 
 def print_list: impl Print[List[Int]] {
-    print_list = impl {    
+    print_list = impl {
         print Cons { value, list } = (
             putchar value
             print_list.print list
