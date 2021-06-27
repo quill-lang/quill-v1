@@ -24,7 +24,7 @@ use super::{
     any_type::AnyTypeRepresentation, llvm_struct::LLVMStructRepresentation, Representations,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DataRepresentation<'ctx> {
     /// The LLVM representation of the data structure, if it requires a representation at all.
     pub llvm_repr: Option<LLVMStructRepresentation<'ctx>>,
@@ -41,7 +41,7 @@ pub struct DataRepresentation<'ctx> {
     field_types: HashMap<String, Type>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum FieldIndex {
     /// The field is inside the struct at this position.
     Literal(u32),

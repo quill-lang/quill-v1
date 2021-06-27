@@ -532,7 +532,7 @@ fn create_real_func_body_cfg<'ctx>(
                         .unwrap();
                     for (field_name, field_rvalue) in definitions {
                         if data_repr.has_field(field_name) {
-                            data_repr.store(
+                            data_repr.store_ptr(
                                 ctx.codegen,
                                 ctx.reprs,
                                 target_value,

@@ -2,7 +2,7 @@ use inkwell::types::StructType;
 
 use crate::codegen::CodeGenContext;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LLVMStructRepresentation<'ctx> {
     pub ty: StructType<'ctx>,
     /// For some types, they require a higher alignment than LLVM says they do.
