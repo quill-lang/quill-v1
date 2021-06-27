@@ -53,6 +53,7 @@ fn create_real_func_body_cfg<'ctx>(
     type_variables: &[TypeParameter],
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
+    println!("making cfg");
     // Create new LLVM basic blocks for each MIR basic block.
     let blocks = cfg
         .basic_blocks
@@ -82,6 +83,8 @@ fn create_real_func_body_cfg<'ctx>(
                     None,
                 ),
             );
+
+            println!("stmt {}", stmt);
 
             match &stmt.kind {
                 StatementKind::Assign { target, source } => {
@@ -162,7 +165,9 @@ fn create_real_func_body_cfg<'ctx>(
                             .builder
                             .build_alloca(target_repr.llvm_type, &target.to_string());
                         ctx.locals.insert(*target, target_value);
+                        println!("bb");
                         lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
+                        println!("cc");
                         let call_site_value = ctx.codegen.builder.build_call(
                             func,
                             &args,

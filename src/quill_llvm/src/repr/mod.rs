@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
+use data::FieldIndex;
 use inkwell::{
-    debug_info::DIFlagsConstants,
+    debug_info::{AsDIScope, DIDerivedType, DIFlagsConstants},
     types::{BasicType, BasicTypeEnum},
     values::PointerValue,
     AddressSpace,
@@ -154,7 +155,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     repr.llvm_repr.as_ref().map(|llvm_repr| {
                         AnyTypeRepresentation::new_with_alignment(
                             BasicTypeEnum::StructType(llvm_repr.ty),
-                            repr.di_type,
+                            repr.di_type.as_type(),
                             llvm_repr.abi_alignment,
                         )
                     })
@@ -179,7 +180,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 BasicTypeEnum::IntType(self.codegen.context.bool_type()),
                 self.codegen
                     .di_builder
-                    .create_basic_type("Bool", 1, 5, DIFlagsConstants::PUBLIC)
+                    .create_basic_type("Bool", 1, 2, DIFlagsConstants::PUBLIC)
                     .unwrap()
                     .as_type(),
             )),
@@ -211,7 +212,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     repr.llvm_repr.as_ref().map(|llvm_repr| {
                         AnyTypeRepresentation::new_with_alignment(
                             BasicTypeEnum::StructType(llvm_repr.ty),
-                            repr.di_type,
+                            repr.di_type.as_type(),
                             llvm_repr.abi_alignment,
                         )
                     })
@@ -481,5 +482,133 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
 
             self.codegen.builder.build_return(None);
         }
+    }
+
+    /// Adds debug information for data types.
+    pub fn create_debug_info(&mut self) {
+        // Compute all the replacements from placeholder DITypes to real DIType values.
+        let mut data_replacements = Vec::new();
+        for repr in self.datas.values() {
+            data_replacements.push(self.create_repr_debug_info(repr));
+        }
+        let mut enum_replacements = Vec::new();
+        for repr in self.enums.values() {
+            enum_replacements.push(self.create_enum_repr_debug_info(repr));
+        }
+        let mut asp_replacements = Vec::new();
+        for repr in self.aspects.values() {
+            asp_replacements.push(self.create_repr_debug_info(repr));
+        }
+        let mut fobj_replacements = Vec::new();
+        for repr in self.func_objects.values() {
+            fobj_replacements.push(self.create_repr_debug_info(repr));
+        }
+
+        // Now apply all the replacements.
+        for (repr, replacement) in self.datas.values_mut().zip(data_replacements) {
+            unsafe {
+                self.codegen
+                    .di_builder
+                    .replace_placeholder_derived_type(repr.di_type, replacement);
+            }
+            repr.di_type = replacement;
+        }
+        for (repr, replacement) in self.enums.values_mut().zip(enum_replacements) {
+            for (variant, replacement) in repr.variants.values_mut().zip(replacement) {
+                unsafe {
+                    self.codegen
+                        .di_builder
+                        .replace_placeholder_derived_type(variant.di_type, replacement);
+                }
+                variant.di_type = replacement;
+            }
+        }
+        for (repr, replacement) in self.aspects.values_mut().zip(asp_replacements) {
+            unsafe {
+                self.codegen
+                    .di_builder
+                    .replace_placeholder_derived_type(repr.di_type, replacement);
+            }
+            repr.di_type = replacement;
+        }
+        for (repr, replacement) in self.func_objects.values_mut().zip(fobj_replacements) {
+            unsafe {
+                self.codegen
+                    .di_builder
+                    .replace_placeholder_derived_type(repr.di_type, replacement);
+            }
+            repr.di_type = replacement;
+        }
+    }
+
+    /// Returns the new DIType associated with this repr.
+    /// This is used later with `replace_placeholder_derived_type`
+    /// to update all of the uses of this DIType across the program.
+    fn create_repr_debug_info(&self, repr: &DataRepresentation<'ctx>) -> DIDerivedType<'ctx> {
+        // Maps field indices to their DIType.
+        let mut field_map = BTreeMap::new();
+        for (name, idx) in repr.field_indices() {
+            match idx {
+                FieldIndex::Literal(i) => {
+                    if let Some(repr) = repr
+                        .field_types()
+                        .get(name)
+                        .cloned()
+                        .and_then(|ty| self.repr(ty))
+                    {
+                        field_map.insert(*i, repr.di_type);
+                    }
+                }
+                FieldIndex::Heap(i) => {
+                    if let Some(repr) = repr
+                        .field_types()
+                        .get(name)
+                        .cloned()
+                        .and_then(|ty| self.repr(ty))
+                    {
+                        // TODO: how to signal that this field is behind a pointer?
+                        field_map.insert(*i, repr.di_type);
+                    }
+                }
+            }
+        }
+
+        let fields = field_map.into_iter().map(|(_i, ty)| ty).collect::<Vec<_>>();
+
+        let di_type = self.codegen.di_builder.create_struct_type(
+            repr.di_file.as_debug_info_scope(),
+            &repr.name,
+            repr.di_file,
+            repr.range.start.line + 1,
+            0,
+            1,
+            DIFlagsConstants::PUBLIC,
+            None,
+            &fields,
+            0,
+            None,
+            &repr.name,
+        );
+
+        let di_type = self.codegen.di_builder.create_typedef(
+            di_type.as_type(),
+            &repr.name,
+            repr.di_file,
+            repr.range.start.line + 1,
+            repr.di_file.as_debug_info_scope(),
+            1,
+        );
+
+        di_type
+    }
+
+    fn create_enum_repr_debug_info(
+        &self,
+        repr: &EnumRepresentation<'ctx>,
+    ) -> Vec<DIDerivedType<'ctx>> {
+        repr.variants
+            .values()
+            .map(|variant| self.create_repr_debug_info(variant))
+            .collect()
     }
 }

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use inkwell::{
-    debug_info::{AsDIScope, DIFlagsConstants, DIType},
+    debug_info::{AsDIScope, DIDerivedType, DIFile, DIFlagsConstants, DIType},
     types::BasicTypeEnum,
     values::{BasicValue, PointerValue},
     AddressSpace,
@@ -28,12 +28,17 @@ use super::{
 pub struct DataRepresentation<'ctx> {
     /// The LLVM representation of the data structure, if it requires a representation at all.
     pub llvm_repr: Option<LLVMStructRepresentation<'ctx>>,
-    pub di_type: DIType<'ctx>,
+    pub di_type: DIDerivedType<'ctx>,
+    /// Which file defined this data type?
+    pub di_file: DIFile<'ctx>,
+    /// Where in the file was this type defined?
+    pub range: Range,
+    pub name: String,
+
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
     /// If this contains *any* fields, `llvm_repr` is Some.
     field_indices: HashMap<String, FieldIndex>,
     field_types: HashMap<String, Type>,
-    name: String,
 }
 
 #[derive(Copy, Clone)]
@@ -252,6 +257,16 @@ impl<'ctx> DataRepresentation<'ctx> {
                     .unwrap_right();
             }
         }
+    }
+
+    /// Get a reference to the data representation's field indices.
+    pub fn field_indices(&self) -> &HashMap<String, FieldIndex> {
+        &self.field_indices
+    }
+
+    /// Get a reference to the data representation's field types.
+    pub fn field_types(&self) -> &HashMap<String, Type> {
+        &self.field_types
     }
 }
 
@@ -560,55 +575,33 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         range: Range,
         name: String,
     ) -> DataRepresentation<'ctx> {
-        let file = source_file_debug_info(self.reprs.codegen, file);
-        let Range {
-            start: Location { line, .. },
-            end: _,
-        } = range;
+        let di_file = source_file_debug_info(self.reprs.codegen, file);
+
+        let di_type = unsafe {
+            self.reprs
+                .codegen
+                .di_builder
+                .create_placeholder_derived_type(self.reprs.codegen.context)
+        };
 
         if self.llvm_field_types.is_empty() {
-            let di_type = self.reprs.codegen.di_builder.create_struct_type(
-                file.as_debug_info_scope(),
-                &name,
-                file,
-                line + 1,
-                0,
-                1,
-                DIFlagsConstants::PUBLIC,
-                None,
-                &[],
-                0,
-                None,
-                &name,
-            );
             DataRepresentation {
                 llvm_repr: None,
-                di_type: di_type.as_type(),
+                di_type,
+                di_file,
+                range,
                 field_indices: self.field_indices,
                 field_types: self.field_types,
                 name,
             }
         } else {
-            // TODO add fields.
             let llvm_ty = self.reprs.codegen.context.opaque_struct_type(&name);
             llvm_ty.set_body(&self.llvm_field_types, false);
-            let di_type = self.reprs.codegen.di_builder.create_struct_type(
-                file.as_debug_info_scope(),
-                &name,
-                file,
-                line + 1,
-                0,
-                1,
-                DIFlagsConstants::PUBLIC,
-                None,
-                &[],
-                0,
-                None,
-                &name,
-            );
             DataRepresentation {
                 llvm_repr: Some(LLVMStructRepresentation::new(self.reprs.codegen, llvm_ty)),
-                di_type: di_type.as_type(),
+                di_type,
+                di_file,
+                range,
                 field_indices: self.field_indices,
                 field_types: self.field_types,
                 name,
