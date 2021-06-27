@@ -26,7 +26,7 @@ pub fn compile_function<'ctx>(
     mir: &ProjectMIR,
     func: MonomorphisedFunction,
 ) {
-    println!("func {}", func);
+    // println!("func {}", func);
     let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
 

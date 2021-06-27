@@ -17,14 +17,14 @@ use quill_type::Type;
 pub struct ArgumentIndex(pub u64);
 impl Display for ArgumentIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}arg", self.0)
+        write!(f, "_{}arg", self.0)
     }
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct LocalVariableId(pub u64);
 impl Display for LocalVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}local", self.0)
+        write!(f, "_{}local", self.0)
     }
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]

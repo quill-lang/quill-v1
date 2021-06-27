@@ -29,6 +29,13 @@
             "console": "externalTerminal"
         },
         {
+            "name": "(Linux) Launch core",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/stdlib/core/build/core",
+            "args": [],
+        },
+        {
             "type": "extensionHost",
             "request": "launch",
             "name": "Launch Client",

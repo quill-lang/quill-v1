@@ -88,11 +88,9 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     reprs.create_drop_funcs();
     reprs.create_debug_info();
     codegen.di_builder.finalize();
-    println!("done");
     for func in &mono.functions {
         func::compile_function(&codegen, &reprs, mir, func.clone());
     }
-    println!("done2");
 
     // Now introduce the main function.
     let main_func =
