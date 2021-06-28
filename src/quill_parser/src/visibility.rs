@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use quill_common::location::Range;
 
+#[derive(Clone, Copy)]
 pub enum Visibility {
     Public(Range),
     Private,

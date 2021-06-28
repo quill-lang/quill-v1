@@ -5,12 +5,17 @@ use crate::{expr_pat::ExprPatP, identifier::NameP, types::TypeP, visibility::Vis
 /// A `def` block. Defines a symbol's type and what values it takes under what circumstances.
 #[derive(Debug)]
 pub struct DefinitionP {
+    pub decl: DefinitionDeclP,
+    pub body: DefinitionBodyP,
+}
+
+#[derive(Debug)]
+pub struct DefinitionDeclP {
     pub vis: Visibility,
     pub name: NameP,
     /// This definition might be defined with certain quantified type variables, e.g. foo[A, B].
     pub type_parameters: Vec<TypeParameterP>,
     pub definition_type: TypeP,
-    pub body: DefinitionBodyP,
 }
 
 #[derive(Debug)]

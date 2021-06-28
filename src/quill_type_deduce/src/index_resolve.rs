@@ -141,6 +141,15 @@ pub fn replace_type_variables(
             )),
             borrow,
         },
+        Type::Impl { name, parameters } => Type::Impl {
+            name,
+            parameters: parameters
+                .into_iter()
+                .map(|param| {
+                    replace_type_variables(param, named_type_parameters, concrete_type_parameters)
+                })
+                .collect(),
+        },
     }
 }
 
@@ -214,6 +223,13 @@ pub fn instantiate_with(
         Type::Borrow { ty, .. } => TypeVariable::Borrow {
             ty: Box::new(instantiate_with(&*ty, ids, higher_kinded_ids)),
         },
+        Type::Impl { name, parameters } => TypeVariable::Impl {
+            name: name.clone(),
+            parameters: parameters
+                .iter()
+                .map(|p| instantiate_with(p, ids, higher_kinded_ids))
+                .collect::<Vec<_>>(),
+        },
     }
 }
 
@@ -247,6 +263,13 @@ pub fn as_variable(ty: &Type) -> TypeVariable {
         Type::Primitive(prim) => TypeVariable::Primitive(*prim),
         Type::Borrow { ty, .. } => TypeVariable::Borrow {
             ty: Box::new(as_variable(&*ty)),
+        },
+        Type::Impl { name, parameters } => TypeVariable::Impl {
+            name: name.clone(),
+            parameters: parameters
+                .iter()
+                .map(|p| as_variable(p))
+                .collect::<Vec<_>>(),
         },
     }
 }

@@ -4,14 +4,20 @@ use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
-use crate::monomorphisation::{MonomorphisationParameters, MonomorphisedType};
+use crate::monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MonomorphisedItem {
+    Type(MonomorphisedType),
+    Aspect(MonomorphisedAspect),
+}
 
 /// A monomorphised type, where some of its fields may have a layer of heap indirection.
 #[derive(Debug)]
 pub(crate) struct IndirectedMonomorphisedType {
-    pub ty: MonomorphisedType,
+    pub ty: MonomorphisedItem,
     /// The list of types that, when included as a field inside this type, require a level of heap indirection.
-    pub indirected: Vec<MonomorphisedType>,
+    pub indirected: Vec<MonomorphisedItem>,
 }
 
 /// Sorts a set of types based on a "used-in" relationship.
@@ -25,12 +31,18 @@ pub(crate) struct IndirectedMonomorphisedType {
 /// connected components algorithm.
 pub(crate) fn sort_types(
     types: HashSet<MonomorphisedType>,
+    aspects: HashSet<MonomorphisedAspect>,
     index: &ProjectIndex,
 ) -> Vec<IndirectedMonomorphisedType> {
     // First, construct the directed graph.
     let mut types_to_indices = HashMap::new();
     let mut vertices = Vec::new();
-    for (i, ty) in types.into_iter().enumerate() {
+    for (i, ty) in types
+        .into_iter()
+        .map(MonomorphisedItem::Type)
+        .chain(aspects.into_iter().map(MonomorphisedItem::Aspect))
+        .enumerate()
+    {
         vertices.push(ty.clone());
         types_to_indices.insert(ty, i);
     }
@@ -48,40 +60,83 @@ pub(crate) fn sort_types(
                 let concrete_field_type = replace_type_variables(
                     field_type.clone(),
                     type_params,
-                    &vertex.mono.type_parameters,
+                    match vertex {
+                        MonomorphisedItem::Type(ty) => &ty.mono.type_parameters,
+                        MonomorphisedItem::Aspect(asp) => &asp.mono.type_parameters,
+                    },
                 );
-                if let Type::Named {
-                    name: field_type_name,
-                    parameters: field_type_parameters,
-                } = concrete_field_type
-                {
-                    let monomorphised_field_type = MonomorphisedType {
+
+                match concrete_field_type {
+                    Type::Named {
                         name: field_type_name,
-                        mono: MonomorphisationParameters {
-                            type_parameters: field_type_parameters,
-                        },
-                    };
-                    // Find this other type in the graph, and connect them with an edge.
-                    // The edge leads from the child vertex to the parent vertex, so that the topological sort
-                    // gives all child vertices before all parent vertices.
-                    let child_vertex_index =
-                        *types_to_indices.get(&monomorphised_field_type).unwrap();
-                    edges
-                        .entry(child_vertex_index)
-                        .or_default()
-                        .insert(vertex_index);
+                        parameters: field_type_parameters,
+                    } => {
+                        let monomorphised_field_type = MonomorphisedItem::Type(MonomorphisedType {
+                            name: field_type_name,
+                            mono: MonomorphisationParameters {
+                                type_parameters: field_type_parameters,
+                            },
+                        });
+                        // Find this other type in the graph, and connect them with an edge.
+                        // The edge leads from the child vertex to the parent vertex, so that the topological sort
+                        // gives all child vertices before all parent vertices.
+                        let child_vertex_index =
+                            *types_to_indices.get(&monomorphised_field_type).unwrap();
+                        edges
+                            .entry(child_vertex_index)
+                            .or_default()
+                            .insert(vertex_index);
+                    }
+                    Type::Impl {
+                        name: field_type_name,
+                        parameters: field_type_parameters,
+                    } => {
+                        let monomorphised_field_type =
+                            MonomorphisedItem::Aspect(MonomorphisedAspect {
+                                name: field_type_name,
+                                mono: MonomorphisationParameters {
+                                    type_parameters: field_type_parameters,
+                                },
+                            });
+                        // Find this other type in the graph, and connect them with an edge.
+                        // The edge leads from the child vertex to the parent vertex, so that the topological sort
+                        // gives all child vertices before all parent vertices.
+                        let child_vertex_index =
+                            *types_to_indices.get(&monomorphised_field_type).unwrap();
+                        edges
+                            .entry(child_vertex_index)
+                            .or_default()
+                            .insert(vertex_index);
+                    }
+                    _ => {}
                 }
             }
         };
 
-        match &index[&vertex.name.source_file].types[&vertex.name.name].decl_type {
-            TypeDeclarationTypeI::Data(datai) => {
-                fill_graph(&datai.type_ctor, &datai.type_params);
-            }
-            TypeDeclarationTypeI::Enum(enumi) => {
-                for variant in &enumi.variants {
-                    fill_graph(&variant.type_ctor, &enumi.type_params);
+        match vertex {
+            MonomorphisedItem::Type(ty) => {
+                match &index[&ty.name.source_file].types[&ty.name.name].decl_type {
+                    TypeDeclarationTypeI::Data(datai) => {
+                        fill_graph(&datai.type_ctor, &datai.type_params);
+                    }
+                    TypeDeclarationTypeI::Enum(enumi) => {
+                        for variant in &enumi.variants {
+                            fill_graph(&variant.type_ctor, &enumi.type_params);
+                        }
+                    }
                 }
+            }
+            MonomorphisedItem::Aspect(asp) => {
+                let aspect = &index[&asp.name.source_file].aspects[&asp.name.name];
+                // Make a fake type constructor for the aspect.
+                let type_ctor = TypeConstructorI {
+                    fields: aspect
+                        .definitions
+                        .iter()
+                        .map(|def| (def.name.clone(), def.symbol_type.clone()))
+                        .collect(),
+                };
+                fill_graph(&type_ctor, &aspect.type_variables);
             }
         }
     }

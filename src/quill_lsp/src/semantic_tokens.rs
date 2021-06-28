@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use lspower::lsp::*;
 use quill_common::location::Ranged;
 use quill_parser::{
-    definition::{DefinitionBodyP, TypeParameterP},
+    definition::{DefinitionBodyP, DefinitionP, TypeParameterP},
     expr_pat::ExprPatP,
     file::FileP,
     types::TypeP,
@@ -85,38 +85,46 @@ impl SemanticTokenGenerator {
 
     fn gen(&mut self, file: FileP) {
         for def in file.definitions {
-            self.push_token(
-                def.name.range,
-                SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION],
-                0,
-            );
-            for param in def.type_parameters {
-                self.gen_type_parameter(param);
+            self.gen_def(def);
+        }
+    }
+
+    fn gen_def(&mut self, def: DefinitionP) {
+        self.push_token(
+            def.decl.name.range,
+            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION],
+            0,
+        );
+        for param in def.decl.type_parameters {
+            self.gen_type_parameter(param);
+        }
+        self.gen_type(def.decl.definition_type);
+        self.gen_def_body(def.body);
+    }
+
+    fn gen_def_body(&mut self, def_body: DefinitionBodyP) {
+        match def_body {
+            DefinitionBodyP::PatternMatch(pm) => {
+                for case in pm {
+                    let parameters = get_named_parameters(&case.pattern, true);
+                    self.gen_expr(
+                        case.pattern,
+                        SemanticExprConditions {
+                            is_function: true,
+                            parameters: parameters.clone(),
+                        },
+                    );
+                    self.gen_expr(
+                        case.replacement,
+                        SemanticExprConditions {
+                            parameters,
+                            ..Default::default()
+                        },
+                    );
+                }
             }
-            self.gen_type(def.definition_type);
-            match def.body {
-                DefinitionBodyP::PatternMatch(pm) => {
-                    for case in pm {
-                        let parameters = get_named_parameters(&case.pattern, true);
-                        self.gen_expr(
-                            case.pattern,
-                            SemanticExprConditions {
-                                is_function: true,
-                                parameters: parameters.clone(),
-                            },
-                        );
-                        self.gen_expr(
-                            case.replacement,
-                            SemanticExprConditions {
-                                parameters,
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
-                DefinitionBodyP::CompilerIntrinsic(range) => {
-                    self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::MACRO], 0);
-                }
+            DefinitionBodyP::CompilerIntrinsic(range) => {
+                self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::MACRO], 0);
             }
         }
     }
@@ -147,6 +155,25 @@ impl SemanticTokenGenerator {
             }
             TypeP::Borrow { ty, .. } => {
                 self.gen_type(*ty);
+            }
+            TypeP::Impl {
+                impl_token,
+                aspect,
+                params,
+            } => {
+                self.push_token(
+                    impl_token,
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::KEYWORD],
+                    0,
+                );
+                self.push_token(
+                    aspect.range(),
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE],
+                    0,
+                );
+                for param in params {
+                    self.gen_type(param);
+                }
             }
         }
     }
@@ -245,6 +272,24 @@ impl SemanticTokenGenerator {
             ExprPatP::Unknown(_) => {}
             ExprPatP::Borrow { expr, .. } => self.gen_expr(*expr, conditions),
             ExprPatP::Copy { expr, .. } => self.gen_expr(*expr, conditions),
+            ExprPatP::Impl { impl_token, body } => {
+                self.push_token(
+                    impl_token,
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::KEYWORD],
+                    0,
+                );
+                self.gen_def_body(body);
+            }
+            ExprPatP::Field {
+                container, field, ..
+            } => {
+                self.gen_expr(*container, conditions);
+                self.push_token(
+                    field.range,
+                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PROPERTY],
+                    0,
+                )
+            }
         }
     }
 }
@@ -281,6 +326,8 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
         ExprPatP::Unknown(_) => Vec::new(),
         ExprPatP::Borrow { .. } => unreachable!(),
         ExprPatP::Copy { .. } => unreachable!(),
+        ExprPatP::Impl { .. } => unreachable!(),
+        ExprPatP::Field { .. } => unreachable!(),
     }
 }
 
@@ -300,6 +347,7 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
 lazy_static::lazy_static! {
     static ref SEMANTIC_TOKEN_LEGEND_VEC: Vec<SemanticTokenType> = {
         vec![
+            SemanticTokenType::KEYWORD,
             SemanticTokenType::FUNCTION,
             SemanticTokenType::VARIABLE,
             SemanticTokenType::TYPE,

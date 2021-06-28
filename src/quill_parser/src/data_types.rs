@@ -1,4 +1,9 @@
-use crate::{definition::TypeParameterP, identifier::NameP, types::TypeP, visibility::Visibility};
+use crate::{
+    definition::{DefinitionDeclP, TypeParameterP},
+    identifier::NameP,
+    types::TypeP,
+    visibility::Visibility,
+};
 
 /// A `data` block, used to define product types.
 #[derive(Debug)]
@@ -38,4 +43,13 @@ pub struct EnumP {
 pub struct EnumVariantP {
     pub name: NameP,
     pub type_ctor: TypeConstructorP,
+}
+
+/// An `aspect` definition.
+#[derive(Debug)]
+pub struct AspectP {
+    pub vis: Visibility,
+    pub identifier: NameP,
+    pub type_params: Vec<TypeParameterP>,
+    pub definitions: Vec<DefinitionDeclP>,
 }

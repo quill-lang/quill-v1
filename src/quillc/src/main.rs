@@ -2,6 +2,7 @@
 /// Rather, the `quill` driver program should supply correct arguments to `quillc` in the form of JSON.
 #[tokio::main]
 async fn main() {
+    println!("running with {}", std::env::args().nth(1).unwrap());
     let invocation: quillc_api::QuillcInvocation =
         serde_json::from_str(&std::env::args().nth(1).unwrap()).unwrap();
 

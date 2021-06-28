@@ -3,12 +3,12 @@
 use std::collections::{HashMap, HashSet};
 
 use inkwell::{
-    debug_info::{AsDIScope, DIFlagsConstants, DIType},
+    debug_info::{AsDIScope, DIDerivedType, DIFile, DIFlagsConstants, DIType},
     types::BasicTypeEnum,
     values::{BasicValue, PointerValue},
     AddressSpace,
 };
-use quill_common::location::{Location, Range, SourceFileIdentifier};
+use quill_common::location::{Range, SourceFileIdentifier};
 use quill_index::{EnumI, TypeConstructorI, TypeParameter};
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
@@ -16,26 +16,32 @@ use quill_type_deduce::replace_type_variables;
 use crate::{
     codegen::CodeGenContext,
     debug::source_file_debug_info,
-    monomorphisation::{MonomorphisationParameters, MonomorphisedType},
+    monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType},
+    sort_types::MonomorphisedItem,
 };
 
 use super::{
     any_type::AnyTypeRepresentation, llvm_struct::LLVMStructRepresentation, Representations,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DataRepresentation<'ctx> {
     /// The LLVM representation of the data structure, if it requires a representation at all.
     pub llvm_repr: Option<LLVMStructRepresentation<'ctx>>,
-    pub di_type: DIType<'ctx>,
+    pub di_type: DIDerivedType<'ctx>,
+    /// Which file defined this data type?
+    pub di_file: DIFile<'ctx>,
+    /// Where in the file was this type defined?
+    pub range: Range,
+    pub name: String,
+
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
     /// If this contains *any* fields, `llvm_repr` is Some.
     field_indices: HashMap<String, FieldIndex>,
     field_types: HashMap<String, Type>,
-    name: String,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum FieldIndex {
     /// The field is inside the struct at this position.
     Literal(u32),
@@ -105,7 +111,17 @@ impl<'ctx> DataRepresentation<'ctx> {
         field_name: &str,
     ) {
         let dest = self.load(codegen, reprs, ptr, field_name).unwrap();
-        codegen.builder.build_store(dest, value);
+        codegen.builder.build_store(dest, {
+            // If the value was a function object, first cast it to a generic `fobj`.
+            if matches!(self.field_types.get(field_name), Some(Type::Function(_, _))) {
+                codegen
+                    .builder
+                    .build_bitcast(value, reprs.general_func_obj_ty.llvm_type, "fobj_bitcast")
+                    .as_basic_value_enum()
+            } else {
+                value.as_basic_value_enum()
+            }
+        });
     }
 
     /// Stores the value behind the given pointer inside this struct.
@@ -242,6 +258,16 @@ impl<'ctx> DataRepresentation<'ctx> {
             }
         }
     }
+
+    /// Get a reference to the data representation's field indices.
+    pub fn field_indices(&self) -> &HashMap<String, FieldIndex> {
+        &self.field_indices
+    }
+
+    /// Get a reference to the data representation's field types.
+    pub fn field_types(&self) -> &HashMap<String, Type> {
+        &self.field_types
+    }
 }
 
 pub struct EnumRepresentation<'ctx> {
@@ -263,7 +289,7 @@ impl<'ctx> EnumRepresentation<'ctx> {
         codegen: &CodeGenContext<'ctx>,
         ty: &EnumI,
         mono: &MonomorphisedType,
-        indirected_types: Vec<MonomorphisedType>,
+        indirected_types: Vec<MonomorphisedItem>,
     ) -> Self {
         // Construct each enum variant as a data type with an extra integer discriminant field at the start.
         let variants = ty
@@ -507,20 +533,29 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         type_ctor: &TypeConstructorI,
         type_params: &[TypeParameter],
         mono: &MonomorphisationParameters,
-        indirected_types: Vec<MonomorphisedType>,
+        indirected_types: Vec<MonomorphisedItem>,
     ) {
         for (field_name, field_ty) in &type_ctor.fields {
             let field_ty =
                 replace_type_variables(field_ty.clone(), type_params, &mono.type_parameters);
-            let indirect = if let Type::Named { name, parameters } = &field_ty {
-                indirected_types.contains(&MonomorphisedType {
-                    name: name.clone(),
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters.clone(),
-                    },
-                })
-            } else {
-                false
+            let indirect = match &field_ty {
+                Type::Named { name, parameters } => {
+                    indirected_types.contains(&MonomorphisedItem::Type(MonomorphisedType {
+                        name: name.clone(),
+                        mono: MonomorphisationParameters {
+                            type_parameters: parameters.clone(),
+                        },
+                    }))
+                }
+                Type::Impl { name, parameters } => {
+                    indirected_types.contains(&MonomorphisedItem::Aspect(MonomorphisedAspect {
+                        name: name.clone(),
+                        mono: MonomorphisationParameters {
+                            type_parameters: parameters.clone(),
+                        },
+                    }))
+                }
+                _ => false,
             };
 
             self.add_field(
@@ -540,63 +575,33 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         range: Range,
         name: String,
     ) -> DataRepresentation<'ctx> {
-        let file = source_file_debug_info(self.reprs.codegen, file);
-        let Range {
-            start: Location { line, col },
-            end: _,
-        } = range;
+        let di_file = source_file_debug_info(self.reprs.codegen, file);
+
+        let di_type = unsafe {
+            self.reprs
+                .codegen
+                .di_builder
+                .create_placeholder_derived_type(self.reprs.codegen.context)
+        };
 
         if self.llvm_field_types.is_empty() {
-            let di_type = self.reprs.codegen.di_builder.create_struct_type(
-                self.reprs
-                    .codegen
-                    .di_builder
-                    .create_lexical_block(file.as_debug_info_scope(), file, line + 1, col + 1)
-                    .as_debug_info_scope(),
-                &name,
-                file,
-                line,
-                0,
-                1,
-                DIFlagsConstants::PUBLIC,
-                None,
-                &[],
-                0,
-                None,
-                &name,
-            );
             DataRepresentation {
                 llvm_repr: None,
-                di_type: di_type.as_type(),
+                di_type,
+                di_file,
+                range,
                 field_indices: self.field_indices,
                 field_types: self.field_types,
                 name,
             }
         } else {
-            // TODO add fields.
             let llvm_ty = self.reprs.codegen.context.opaque_struct_type(&name);
             llvm_ty.set_body(&self.llvm_field_types, false);
-            let di_type = self.reprs.codegen.di_builder.create_struct_type(
-                self.reprs
-                    .codegen
-                    .di_builder
-                    .create_lexical_block(file.as_debug_info_scope(), file, line + 1, col + 1)
-                    .as_debug_info_scope(),
-                &name,
-                file,
-                line,
-                0,
-                1,
-                DIFlagsConstants::PUBLIC,
-                None,
-                &[],
-                0,
-                None,
-                &name,
-            );
             DataRepresentation {
                 llvm_repr: Some(LLVMStructRepresentation::new(self.reprs.codegen, llvm_ty)),
-                di_type: di_type.as_type(),
+                di_type,
+                di_file,
+                range,
                 field_indices: self.field_indices,
                 field_types: self.field_types,
                 name,

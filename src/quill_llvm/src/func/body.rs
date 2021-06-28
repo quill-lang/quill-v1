@@ -5,7 +5,7 @@ use inkwell::{basic_block::BasicBlock, debug_info::DIScope, types::BasicTypeEnum
 use quill_index::TypeParameter;
 use quill_mir::mir::{
     ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Operand,
-    PlaceSegment, Rvalue, StatementKind, TerminatorKind,
+    Place, PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
@@ -18,7 +18,9 @@ use crate::{
         monomorphise::monomorphise,
         rvalue::{get_pointer_to_rvalue, get_pointer_to_rvalue_arg},
     },
-    monomorphisation::{MonomorphisationParameters, MonomorphisedFunction, MonomorphisedType},
+    monomorphisation::{
+        MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
+    },
 };
 
 pub fn create_real_func_body<'ctx>(
@@ -51,6 +53,7 @@ fn create_real_func_body_cfg<'ctx>(
     type_variables: &[TypeParameter],
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
+    // println!("making cfg");
     // Create new LLVM basic blocks for each MIR basic block.
     let blocks = cfg
         .basic_blocks
@@ -80,6 +83,9 @@ fn create_real_func_body_cfg<'ctx>(
                     None,
                 ),
             );
+
+            // println!("stmt {}", stmt);
+
             match &stmt.kind {
                 StatementKind::Assign { target, source } => {
                     // Create a new local variable in LLVM for this assignment target.
@@ -477,6 +483,79 @@ fn create_real_func_body_cfg<'ctx>(
 
                     for field_value in fields.values() {
                         lifetime_end_if_moved(&ctx, local_variable_names, field_value);
+                    }
+                }
+                StatementKind::ConstructImpl {
+                    definitions,
+                    target,
+                    ..
+                } => {
+                    let target_ty = local_variable_names[target].ty.clone();
+                    let target_repr = ctx.reprs.repr(target_ty.clone()).unwrap();
+                    let target_value = ctx
+                        .codegen
+                        .builder
+                        .build_alloca(target_repr.llvm_type, &target.to_string());
+                    ctx.locals.insert(*target, target_value);
+                    lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
+
+                    // If any elements of this type are indirect, `malloc` some space for the fields.
+                    if let Type::Impl { name, parameters } = target_ty.clone() {
+                        let mono_asp = MonomorphisedAspect {
+                            name,
+                            mono: MonomorphisationParameters {
+                                type_parameters: parameters,
+                            },
+                        };
+                        if let Some(repr) = ctx.reprs.get_aspect(&mono_asp) {
+                            repr.malloc_fields(ctx.codegen, ctx.reprs, target_value);
+                        } else {
+                            panic!("aspect had no repr");
+                        }
+                    }
+
+                    // Memcpy all the definition implementations into the new struct.
+                    let (name, parameters) = if let Type::Impl { name, parameters } = target_ty {
+                        (name.clone(), parameters.clone())
+                    } else {
+                        unreachable!()
+                    };
+
+                    let data_repr = ctx
+                        .reprs
+                        .get_aspect(&MonomorphisedAspect {
+                            name,
+                            mono: MonomorphisationParameters {
+                                type_parameters: parameters,
+                            },
+                        })
+                        .unwrap();
+                    for (field_name, field_rvalue) in definitions {
+                        if data_repr.has_field(field_name) {
+                            data_repr.store_ptr(
+                                ctx.codegen,
+                                ctx.reprs,
+                                target_value,
+                                get_pointer_to_rvalue(
+                                    ctx.codegen,
+                                    ctx.index,
+                                    ctx.reprs,
+                                    &ctx.locals,
+                                    local_variable_names,
+                                    &Rvalue::Use(Operand::Move(Place::new(*field_rvalue))),
+                                )
+                                .unwrap(),
+                                field_name,
+                            );
+                        }
+                    }
+
+                    for field_value in definitions.values() {
+                        lifetime_end_if_moved(
+                            &ctx,
+                            local_variable_names,
+                            &Rvalue::Use(Operand::Move(Place::new(*field_value))),
+                        );
                     }
                 }
                 _ => {}

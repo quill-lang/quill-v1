@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
@@ -53,15 +53,14 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     )
     .unwrap();
 
-    let fs = PackageFileSystem::new({
+    let fs = Arc::new(PackageFileSystem::new({
         let mut map = HashMap::new();
         map.insert(
             project_config.name.clone(),
             invocation.build_info.code_folder.clone(),
         );
         map
-    });
-    let mut error_emitter = ErrorEmitter::new(&fs);
+    }));
 
     // Find all the source files.
     let source_files = find_all_source_files(
@@ -86,8 +85,11 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
             .deny()
     };
 
-    let parsed =
-        lexed.bind(|lexed| {
+    let fs2 = Arc::clone(&fs);
+    let build_info = invocation.build_info.clone();
+    let project_config_name = project_config.name.clone();
+    let mir: DiagnosticResult<ProjectMIR> = tokio::task::spawn_blocking(move || {
+        let parsed = lexed.bind(|lexed| {
             DiagnosticResult::sequence_unfail(lexed.into_iter().map(|(file, lexed)| {
                 quill_parser::parse(lexed, &file).map(|parsed| (file, parsed))
             }))
@@ -95,55 +97,83 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
             .deny()
         });
 
-    let mir = parsed
-        .bind(|parsed| {
-            quill_index::index_project(&parsed).bind(|index| {
-                // Now that we have the index, run type deduction and MIR generation.
-                DiagnosticResult::sequence_unfail(parsed.into_iter().map(|(file_ident, parsed)| {
-                    quill_type_deduce::check(&file_ident, &index, parsed)
-                        .deny()
-                        .map(|typeck| quill_mir::to_mir(&index, typeck, &file_ident))
-                        .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
-                        .map(|mir| (file_ident, mir))
-                }))
-                .map(|results| results.into_iter().collect::<HashMap<_, _>>())
-                .deny()
-                .map(|result| (result, index))
+        parsed
+            .bind(|parsed| {
+                quill_index::index_project(&parsed).bind(|index| {
+                    // Now that we have the index, run type deduction and MIR generation.
+                    DiagnosticResult::sequence_unfail(parsed.into_iter().map(
+                        |(file_ident, parsed)| {
+                            quill_type_deduce::check(&file_ident, &index, parsed)
+                                .deny()
+                                .map(|typeck| {
+                                    // Output the HIR to a build file.
+                                    let f = build_info.build_folder.join("ir").join(
+                                        fs2.file_path(&file_ident)
+                                            .strip_prefix(&build_info.code_folder)
+                                            .unwrap(),
+                                    );
+                                    let _ = std::fs::create_dir_all(f.parent().unwrap());
+                                    std::fs::write(f.with_extension("hir"), typeck.to_string())
+                                        .unwrap();
+                                    let mir = quill_mir::to_mir(&index, typeck, &file_ident);
+                                    std::fs::write(f.with_extension("mir"), mir.to_string())
+                                        .unwrap();
+                                    mir
+                                })
+                                .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
+                                .map(|mir| (file_ident, mir))
+                        },
+                    ))
+                    .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                    .deny()
+                    .map(|result| (result, index))
+                })
             })
-        })
-        .deny()
-        .map(|(mir, index)| ProjectMIR {
-            files: mir,
-            entry_point: QualifiedName {
-                source_file: SourceFileIdentifier {
-                    module: ModuleIdentifier {
-                        segments: vec![project_config.name.clone().into()],
+            .deny()
+            .map(|(mir, index)| ProjectMIR {
+                files: mir,
+                entry_point: QualifiedName {
+                    source_file: SourceFileIdentifier {
+                        module: ModuleIdentifier {
+                            segments: vec![project_config_name.clone().into()],
+                        },
+                        file: "main".to_string().into(),
+                        file_type: SourceFileType::Quill,
                     },
-                    file: "main".to_string().into(),
-                    file_type: SourceFileType::Quill,
+                    name: "main".to_string(),
+                    range: Location { line: 0, col: 0 }.into(),
                 },
-                name: "main".to_string(),
-                range: Location { line: 0, col: 0 }.into(),
-            },
-            index,
-        })
-        .bind(|mir| validate(&mir).map(|_| (mir)));
+                index,
+            })
+            .bind(|mir| validate(&mir).map(|_| (mir)))
+    })
+    .await
+    .unwrap();
 
+    let mut error_emitter = ErrorEmitter::new(&fs);
     let mir = error_emitter.consume_diagnostic(mir);
+
     if error_emitter.emit_all().await {
-        return Err(());
+        Err(())
+    } else {
+        tokio::task::spawn_blocking(move || {
+            let mut mir = mir.unwrap();
+
+            quill_func_objects::convert_func_objects(&mut mir);
+
+            // println!("building");
+            quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
+            // println!("linking");
+            quill_link::link(
+                &project_config.name,
+                &invocation.zig_compiler,
+                invocation.build_info,
+            );
+            // println!("linked");
+        })
+        .await
+        .unwrap();
+
+        Ok(())
     }
-
-    let mut mir = mir.unwrap();
-
-    quill_func_objects::convert_func_objects(&mut mir);
-
-    quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
-    quill_link::link(
-        &project_config.name,
-        &invocation.zig_compiler,
-        invocation.build_info,
-    );
-
-    Ok(())
 }

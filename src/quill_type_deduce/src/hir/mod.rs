@@ -20,9 +20,16 @@ impl Display for SourceFileHIR {
         for (def_name, def) in &self.definitions {
             writeln!(
                 f,
-                "  {} : {:?} -> {}",
-                def_name, def.arg_types, def.return_type
+                "---\n{} : ({}) -> {}",
+                def_name,
+                def.arg_types
+                    .iter()
+                    .map(|ty| ty.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                def.return_type
             )?;
+            writeln!(f, "{:#?}", def.body)?;
         }
         Ok(())
     }

@@ -4,10 +4,12 @@ use quill_common::{
     location::{Range, Ranged},
     name::QualifiedName,
 };
-use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
+use quill_parser::{definition::DefinitionBodyP, expr_pat::ConstantValue, identifier::NameP};
 use quill_type::{PrimitiveType, Type};
 
 use crate::type_resolve::TypeVariableId;
+
+use super::definition::Definition;
 
 /// The Expression type is central to the HIR, or high-level intermediate representation.
 /// In an expression in HIR, the type of each object is known.
@@ -25,9 +27,10 @@ impl Ranged for Expression {
 
 /// Represents the contents of an expression (which may or may not have been already type checked).
 /// The type `V` represents the type variables that we are substituting into this symbol.
+/// The type `I` represents the contents of an `impl` expression.
 /// You should use `ExpressionContents` or `ExpressionContentsT` instead of this enum directly.
 #[derive(Debug)]
-pub enum ExpressionContentsGeneric<E, T, V> {
+pub enum ExpressionContentsGeneric<E, T, V, I> {
     /// An argument to this function e.g. `x`.
     Argument(NameP),
     /// A local variable declared by a `lambda` or `let` expression.
@@ -79,9 +82,32 @@ pub enum ExpressionContentsGeneric<E, T, V> {
     Borrow { borrow_token: Range, expr: Box<E> },
     /// A copy of a borrowed value.
     Copy { copy_token: Range, expr: Box<E> },
+    /// An implementation of an aspect.
+    Impl {
+        /// Maps names of definitions to their implementations.
+        impl_token: Range,
+        implementations: I,
+    },
+    /// Getting a field from an object.
+    Field {
+        container: Box<E>,
+        field: NameP,
+        dot: Range,
+    },
 }
 
-impl<E, T, V> Ranged for ExpressionContentsGeneric<E, T, V>
+/// Represents a case of a definition in an impl expression.
+#[derive(Debug)]
+pub struct DefinitionCaseGeneric<E> {
+    pub range: Range,
+    /// WHich definition are we defining a pattern replacement for?
+    pub def_name: NameP,
+    /// TODO: This should probably be changed to some other pattern type.
+    pub arg_patterns: Vec<super::pattern::Pattern>,
+    pub replacement: Box<E>,
+}
+
+impl<E, T, V, I> Ranged for ExpressionContentsGeneric<E, T, V, I>
 where
     E: Ranged,
 {
@@ -114,13 +140,22 @@ where
             ExpressionContentsGeneric::Copy {
                 copy_token, expr, ..
             } => copy_token.union(expr.range()),
+            ExpressionContentsGeneric::Impl { impl_token, .. } => *impl_token,
+            ExpressionContentsGeneric::Field {
+                container, field, ..
+            } => container.range().union(field.range),
         }
     }
 }
 
-pub type ExpressionContents = ExpressionContentsGeneric<Expression, Type, Vec<Type>>;
-pub type ExpressionContentsT =
-    ExpressionContentsGeneric<ExpressionT, TypeVariable, HashMap<String, TypeVariable>>;
+pub type ExpressionContents =
+    ExpressionContentsGeneric<Expression, Type, Vec<Type>, HashMap<String, Definition>>;
+pub type ExpressionContentsT = ExpressionContentsGeneric<
+    ExpressionT,
+    TypeVariable,
+    HashMap<String, TypeVariable>,
+    DefinitionBodyP,
+>;
 
 /// A variable bound by the definition of a function.
 #[derive(Debug, Clone)]
@@ -174,5 +209,10 @@ pub enum TypeVariable {
     /// Borrow conditions are checked later.
     Borrow {
         ty: Box<TypeVariable>,
+    },
+    /// An explicitly named implementation of an aspect possibly with type parameters.
+    Impl {
+        name: QualifiedName,
+        parameters: Vec<TypeVariable>,
     },
 }

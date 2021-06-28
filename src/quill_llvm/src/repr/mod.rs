@@ -1,17 +1,22 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
+use data::FieldIndex;
 use inkwell::{
-    debug_info::DIFlagsConstants,
+    debug_info::{AsDIScope, DIDerivedType, DIFlagsConstants},
     types::{BasicType, BasicTypeEnum},
     values::PointerValue,
     AddressSpace,
 };
-use quill_index::{ProjectIndex, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
     codegen::CodeGenContext,
-    monomorphisation::{FunctionObjectDescriptor, MonomorphisationParameters, MonomorphisedType},
+    monomorphisation::{
+        FunctionObjectDescriptor, MonomorphisationParameters, MonomorphisedAspect,
+        MonomorphisedType,
+    },
+    sort_types::MonomorphisedItem,
 };
 
 use self::{
@@ -29,6 +34,8 @@ pub struct Representations<'a, 'ctx> {
     datas: HashMap<MonomorphisedType, DataRepresentation<'ctx>>,
     enums: HashMap<MonomorphisedType, EnumRepresentation<'ctx>>,
     func_objects: HashMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
+    /// The representation of an arbitrary impl for a given aspect.
+    aspects: HashMap<MonomorphisedAspect, DataRepresentation<'ctx>>,
     /// Use this type for a general function object that you don't know the type of.
     pub general_func_obj_ty: AnyTypeRepresentation<'ctx>,
 }
@@ -38,6 +45,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         codegen: &'a CodeGenContext<'ctx>,
         index: &ProjectIndex,
         mono_types: HashSet<MonomorphisedType>,
+        mono_aspects: HashSet<MonomorphisedAspect>,
     ) -> Self {
         let general_func_obj_ty = codegen.context.opaque_struct_type("fobj");
         general_func_obj_ty.set_body(
@@ -53,6 +61,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             datas: HashMap::new(),
             enums: HashMap::new(),
             func_objects: HashMap::new(),
+            aspects: HashMap::new(),
             general_func_obj_ty: AnyTypeRepresentation::new(
                 codegen,
                 general_func_obj_ty.ptr_type(AddressSpace::Generic).into(),
@@ -73,38 +82,60 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
 
         // Sort the types according to what types are used in what other types.
         // After this step, heap indirections have been added so the exact size of each type is known.
-        let sorted_types = crate::sort_types::sort_types(mono_types, index);
+        let sorted_types = crate::sort_types::sort_types(mono_types, mono_aspects, index);
         // println!("Sorted: {:#?}", sorted_types);
 
         for mono_ty in sorted_types {
-            let decl = &index[&mono_ty.ty.name.source_file].types[&mono_ty.ty.name.name];
-            match &decl.decl_type {
-                TypeDeclarationTypeI::Data(datai) => {
+            match mono_ty.ty {
+                MonomorphisedItem::Type(ty) => {
+                    let decl = &index[&ty.name.source_file].types[&ty.name.name];
+                    match &decl.decl_type {
+                        TypeDeclarationTypeI::Data(datai) => {
+                            let mut builder = DataRepresentationBuilder::new(&reprs);
+                            builder.add_fields(
+                                &datai.type_ctor,
+                                &datai.type_params,
+                                &ty.mono,
+                                mono_ty.indirected,
+                            );
+                            let repr =
+                                builder.build(&ty.name.source_file, ty.name.range, ty.to_string());
+                            reprs.datas.insert(ty, repr);
+                        }
+                        TypeDeclarationTypeI::Enum(enumi) => {
+                            let repr = EnumRepresentation::new(
+                                &reprs,
+                                codegen,
+                                enumi,
+                                &ty,
+                                mono_ty.indirected,
+                            );
+                            reprs.enums.insert(ty, repr);
+                        }
+                    };
+                }
+                MonomorphisedItem::Aspect(asp) => {
+                    let aspect = &index[&asp.name.source_file].aspects[&asp.name.name];
+                    // Make a fake type ctor for the aspect.
+                    let type_ctor = TypeConstructorI {
+                        fields: aspect
+                            .definitions
+                            .iter()
+                            .map(|def| (def.name.clone(), def.symbol_type.clone()))
+                            .collect(),
+                    };
                     let mut builder = DataRepresentationBuilder::new(&reprs);
                     builder.add_fields(
-                        &datai.type_ctor,
-                        &datai.type_params,
-                        &mono_ty.ty.mono,
+                        &type_ctor,
+                        &aspect.type_variables,
+                        &asp.mono,
                         mono_ty.indirected,
                     );
-                    let repr = builder.build(
-                        &mono_ty.ty.name.source_file,
-                        mono_ty.ty.name.range,
-                        mono_ty.ty.to_string(),
-                    );
-                    reprs.datas.insert(mono_ty.ty, repr);
+                    let repr =
+                        builder.build(&asp.name.source_file, asp.name.range, asp.to_string());
+                    reprs.aspects.insert(asp, repr);
                 }
-                TypeDeclarationTypeI::Enum(enumi) => {
-                    let repr = EnumRepresentation::new(
-                        &reprs,
-                        codegen,
-                        enumi,
-                        &mono_ty.ty,
-                        mono_ty.indirected,
-                    );
-                    reprs.enums.insert(mono_ty.ty, repr);
-                }
-            };
+            }
         }
 
         reprs
@@ -124,7 +155,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     repr.llvm_repr.as_ref().map(|llvm_repr| {
                         AnyTypeRepresentation::new_with_alignment(
                             BasicTypeEnum::StructType(llvm_repr.ty),
-                            repr.di_type,
+                            repr.di_type.as_type(),
                             llvm_repr.abi_alignment,
                         )
                     })
@@ -149,7 +180,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 BasicTypeEnum::IntType(self.codegen.context.bool_type()),
                 self.codegen
                     .di_builder
-                    .create_basic_type("Bool", 1, 5, DIFlagsConstants::PUBLIC)
+                    .create_basic_type("Bool", 1, 2, DIFlagsConstants::PUBLIC)
                     .unwrap()
                     .as_type(),
             )),
@@ -170,6 +201,25 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     repr.di_type,
                 )
             }),
+            Type::Impl { name, parameters } => {
+                let mono_asp = MonomorphisedAspect {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                if let Some(repr) = self.aspects.get(&mono_asp) {
+                    repr.llvm_repr.as_ref().map(|llvm_repr| {
+                        AnyTypeRepresentation::new_with_alignment(
+                            BasicTypeEnum::StructType(llvm_repr.ty),
+                            repr.di_type.as_type(),
+                            llvm_repr.abi_alignment,
+                        )
+                    })
+                } else {
+                    unreachable!("ty was {}", mono_asp)
+                }
+            }
         }
     }
 
@@ -194,6 +244,13 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         fobj: DataRepresentation<'ctx>,
     ) {
         self.func_objects.insert(descriptor, fobj);
+    }
+
+    pub fn get_aspect(
+        &self,
+        descriptor: &MonomorphisedAspect,
+    ) -> Option<&DataRepresentation<'ctx>> {
+        self.aspects.get(descriptor)
     }
 
     /// Drops a value of the given type behind the given pointer.
@@ -240,6 +297,32 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             Type::Borrow { .. } => {
                 // Dropping a borrow does nothing. No operation is required.
             }
+            Type::Impl { name, parameters } => {
+                // We need to call this type's drop function.
+                let repr = self.repr(ty);
+                let mono_asp = MonomorphisedAspect {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("drop/{}", mono_asp))
+                    .unwrap();
+                if repr.is_some() {
+                    self.codegen.builder.build_call(
+                        func,
+                        &[variable_ptr.into()],
+                        &format!("drop_{}", mono_asp),
+                    );
+                } else {
+                    self.codegen
+                        .builder
+                        .build_call(func, &[], &format!("drop_{}", mono_asp));
+                }
+            }
         }
     }
 
@@ -269,6 +352,20 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     &[repr.llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                     false,
                 ),
+                None,
+            );
+        }
+        for (ty, repr) in &self.aspects {
+            self.codegen.module.add_function(
+                &format!("drop/{}", ty),
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    self.codegen.context.void_type().fn_type(
+                        &[llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
+                        false,
+                    )
+                } else {
+                    self.codegen.context.void_type().fn_type(&[], false)
+                },
                 None,
             );
         }
@@ -361,5 +458,157 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 .builder
                 .build_switch(disc_loaded, cases[0].1, &cases);
         }
+        for (ty, repr) in &self.aspects {
+            let func = self
+                .codegen
+                .module
+                .get_function(&format!("drop/{}", ty))
+                .unwrap();
+
+            let block = self.codegen.context.append_basic_block(func, "drop");
+            self.codegen.builder.position_at_end(block);
+
+            if repr.llvm_repr.is_some() {
+                let variable = func.get_first_param().unwrap().into_pointer_value();
+
+                for heap_field in repr.field_names_on_heap() {
+                    let ptr_to_field = repr.load(self.codegen, self, variable, heap_field).unwrap();
+                    let ty = repr.field_ty(heap_field).unwrap().clone();
+                    self.drop_ptr(ty, ptr_to_field);
+                }
+
+                repr.free_fields(self.codegen, variable);
+            }
+
+            self.codegen.builder.build_return(None);
+        }
+    }
+
+    /// Adds debug information for data types.
+    pub fn create_debug_info(&mut self) {
+        // Compute all the replacements from placeholder DITypes to real DIType values.
+        let mut data_replacements = Vec::new();
+        for repr in self.datas.values() {
+            data_replacements.push(self.create_repr_debug_info(repr));
+        }
+        let mut enum_replacements = Vec::new();
+        for repr in self.enums.values() {
+            enum_replacements.push(self.create_enum_repr_debug_info(repr));
+        }
+        let mut asp_replacements = Vec::new();
+        for repr in self.aspects.values() {
+            asp_replacements.push(self.create_repr_debug_info(repr));
+        }
+        let mut fobj_replacements = Vec::new();
+        for repr in self.func_objects.values() {
+            fobj_replacements.push(self.create_repr_debug_info(repr));
+        }
+
+        // Now apply all the replacements.
+        for (repr, replacement) in self.datas.values_mut().zip(data_replacements) {
+            unsafe {
+                self.codegen
+                    .di_builder
+                    .replace_placeholder_derived_type(repr.di_type, replacement);
+            }
+            repr.di_type = replacement;
+        }
+        for (repr, replacement) in self.enums.values_mut().zip(enum_replacements) {
+            for (variant, replacement) in repr.variants.values_mut().zip(replacement) {
+                unsafe {
+                    self.codegen
+                        .di_builder
+                        .replace_placeholder_derived_type(variant.di_type, replacement);
+                }
+                variant.di_type = replacement;
+            }
+        }
+        for (repr, replacement) in self.aspects.values_mut().zip(asp_replacements) {
+            unsafe {
+                self.codegen
+                    .di_builder
+                    .replace_placeholder_derived_type(repr.di_type, replacement);
+            }
+            repr.di_type = replacement;
+        }
+        for (repr, replacement) in self.func_objects.values_mut().zip(fobj_replacements) {
+            unsafe {
+                self.codegen
+                    .di_builder
+                    .replace_placeholder_derived_type(repr.di_type, replacement);
+            }
+            repr.di_type = replacement;
+        }
+    }
+
+    /// Returns the new DIType associated with this repr.
+    /// This is used later with `replace_placeholder_derived_type`
+    /// to update all of the uses of this DIType across the program.
+    fn create_repr_debug_info(&self, repr: &DataRepresentation<'ctx>) -> DIDerivedType<'ctx> {
+        // Maps field indices to their DIType.
+        let mut field_map = BTreeMap::new();
+        for (name, idx) in repr.field_indices() {
+            match idx {
+                FieldIndex::Literal(i) => {
+                    if let Some(repr) = repr
+                        .field_types()
+                        .get(name)
+                        .cloned()
+                        .and_then(|ty| self.repr(ty))
+                    {
+                        field_map.insert(*i, repr.di_type);
+                    }
+                }
+                FieldIndex::Heap(i) => {
+                    if let Some(repr) = repr
+                        .field_types()
+                        .get(name)
+                        .cloned()
+                        .and_then(|ty| self.repr(ty))
+                    {
+                        // TODO: how to signal that this field is behind a pointer?
+                        field_map.insert(*i, repr.di_type);
+                    }
+                }
+            }
+        }
+
+        let fields = field_map.into_iter().map(|(_i, ty)| ty).collect::<Vec<_>>();
+
+        let di_type = self.codegen.di_builder.create_struct_type(
+            repr.di_file.as_debug_info_scope(),
+            &repr.name,
+            repr.di_file,
+            repr.range.start.line + 1,
+            0,
+            1,
+            DIFlagsConstants::PUBLIC,
+            None,
+            &fields,
+            0,
+            None,
+            &repr.name,
+        );
+
+        let di_type = self.codegen.di_builder.create_typedef(
+            di_type.as_type(),
+            &repr.name,
+            repr.di_file,
+            repr.range.start.line + 1,
+            repr.di_file.as_debug_info_scope(),
+            1,
+        );
+
+        di_type
+    }
+
+    fn create_enum_repr_debug_info(
+        &self,
+        repr: &EnumRepresentation<'ctx>,
+    ) -> Vec<DIDerivedType<'ctx>> {
+        repr.variants
+            .values()
+            .map(|variant| self.create_repr_debug_info(variant))
+            .collect()
     }
 }

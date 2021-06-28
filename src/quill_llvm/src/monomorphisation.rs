@@ -25,6 +25,9 @@ use crate::{
 pub struct Monomorphisation {
     pub types: HashSet<MonomorphisedType>,
     pub functions: HashSet<MonomorphisedFunction>,
+    /// Tracks which monomorphisations of aspects have been used.
+    /// This does *not* track which impls have been used.
+    pub aspects: HashSet<MonomorphisedAspect>,
 }
 
 impl Monomorphisation {
@@ -35,6 +38,7 @@ impl Monomorphisation {
         let mut mono = Self {
             types: HashSet::new(),
             functions: HashSet::new(),
+            aspects: HashSet::new(),
         };
 
         mono.track_def(
@@ -156,13 +160,24 @@ impl Monomorphisation {
     }
 
     fn track_type(&mut self, ty: Type) {
-        if let Type::Named { name, parameters } = ty {
-            self.types.insert(MonomorphisedType {
-                name,
-                mono: MonomorphisationParameters {
-                    type_parameters: parameters,
-                },
-            });
+        match ty {
+            Type::Named { name, parameters } => {
+                self.types.insert(MonomorphisedType {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                });
+            }
+            Type::Impl { name, parameters } => {
+                self.aspects.insert(MonomorphisedAspect {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                });
+            }
+            _ => {}
         }
     }
 }
@@ -235,6 +250,26 @@ impl Display for MonomorphisedFunction {
         } else {
             write!(f, "i")
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MonomorphisedAspect {
+    pub name: QualifiedName,
+    pub mono: MonomorphisationParameters,
+}
+
+impl Display for MonomorphisedAspect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a/{}", self.name)?;
+        if !self.mono.type_parameters.is_empty() {
+            write!(f, "[")?;
+            for ty_param in &self.mono.type_parameters {
+                write!(f, "{},", ty_param)?;
+            }
+            write!(f, "]")?;
+        }
+        Ok(())
     }
 }
 

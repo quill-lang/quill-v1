@@ -8,7 +8,8 @@ use quill_index::ProjectIndex;
 
 use crate::{
     hir::expr::{Expression, ExpressionT, TypeVariable},
-    type_check::TypeVariablePrinter,
+    index_resolve::instantiate_with,
+    type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
 
@@ -27,6 +28,7 @@ pub(crate) fn solve_type_constraints(
     project_index: &ProjectIndex,
     expr: ExpressionT,
     constraints: Constraints,
+    visible_names: &VisibleNames,
 ) -> DiagnosticResult<Expression> {
     // println!("Deducing type of {:#?}", expr);
     // println!("Constraints: {:#?}", constraints);
@@ -48,6 +50,7 @@ pub(crate) fn solve_type_constraints(
                 }
                 _ => mid_priority_constraints.push_back(constraint),
             },
+            Constraint::FieldAccess { .. } => mid_priority_constraints.push_back(constraint),
         }
     }
     // To solve the constraints, we will pop entries off the front of the queue, process them, and if needed push them to the back of the queue.
@@ -78,7 +81,13 @@ pub(crate) fn solve_type_constraints(
     .bind(|substitution| {
         // println!("Sub was:");
         // println!("{:#?}", substitution);
-        substitute::substitute(&substitution, expr, source_file)
+        substitute::substitute(
+            &substitution,
+            expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
     })
 }
 
@@ -133,6 +142,124 @@ fn solve_type_constraint_queue(
                             error,
                             reason,
                             substitution,
+                        ));
+                    }
+                }
+            }
+            Constraint::FieldAccess {
+                ty: container_ty,
+                field,
+                reason,
+            } => {
+                // This constraint specifies that `type_variable` has a field named `field` with type `field_ty`.
+                // At this point, we should know the container's type.
+                match container_ty {
+                    TypeVariable::Impl { name, parameters } => {
+                        let aspect = &project_index[&name.source_file].aspects[&name.name];
+                        match aspect
+                            .definitions
+                            .iter()
+                            .find(|def| def.name.name == field.name)
+                        {
+                            Some(field) => {
+                                constraint_queue.push_front((
+                                    type_variable,
+                                    Constraint::Equality {
+                                        ty: instantiate_with(
+                                            &field.symbol_type,
+                                            &mut {
+                                                let mut map = HashMap::new();
+                                                for (param, var) in
+                                                    aspect.type_variables.iter().zip(parameters)
+                                                {
+                                                    map.insert(param.name.clone(), var);
+                                                }
+                                                map
+                                            },
+                                            &mut HashMap::new(),
+                                        ),
+                                        reason: ConstraintEqualityReason::FieldAccess(reason),
+                                    },
+                                ));
+                            }
+                            None => {
+                                return DiagnosticResult::fail(ErrorMessage::new(
+                                    format!("aspect `{}` has no definition `{}`", name, field),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &reason.field),
+                                ));
+                            }
+                        }
+                    }
+                    TypeVariable::Unknown { id } => {
+                        // Check to see if there are any constraints on this type variable left to be processed.
+                        let constraint_left = constraint_queue.iter().any(|(var, constraint)| {
+                            let matches_var = if let TypeVariable::Unknown { id: inner } = var {
+                                *inner == id
+                            } else {
+                                false
+                            };
+                            let matches_constraint = match constraint {
+                                Constraint::Equality { ty, .. } => {
+                                    if let TypeVariable::Unknown { id: inner } = ty {
+                                        *inner == id
+                                    } else {
+                                        false
+                                    }
+                                }
+                                Constraint::FieldAccess { ty, .. } => {
+                                    if let TypeVariable::Unknown { id: inner } = ty {
+                                        *inner == id
+                                    } else {
+                                        false
+                                    }
+                                }
+                            };
+                            matches_var || matches_constraint
+                        });
+
+                        if constraint_left {
+                            // Process this constraint later.
+                            constraint_queue.push_back((
+                                type_variable,
+                                Constraint::FieldAccess {
+                                    ty: container_ty,
+                                    field,
+                                    reason,
+                                },
+                            ));
+                        } else {
+                            return DiagnosticResult::fail(ErrorMessage::new(
+                                "could not deduce the type of this expression, so cannot deduce the type of its field".to_string(),
+                                Severity::Error,
+                                Diagnostic::at(source_file, &reason.container),
+                            ));
+                        }
+                    }
+                    container_ty => {
+                        return DiagnosticResult::fail(ErrorMessage::new(
+                            match container_ty {
+                                TypeVariable::Named { .. } => {
+                                    "cannot use `.` syntax on data or enum types (yet)".to_string()
+                                }
+                                t @ TypeVariable::Function(_, _) => {
+                                    let mut p = TypeVariablePrinter::new(substitution);
+                                    format!("cannot use `.` syntax on functions; this expression is a function of type {}", p.print(t))
+                                }
+                                TypeVariable::Variable { .. } => {
+                                    "cannot use `.` syntax on type variables".to_string()
+                                }
+                                TypeVariable::Primitive(_) => {
+                                    "cannot use `.` syntax on primitive types".to_string()
+                                }
+                                TypeVariable::Borrow { .. } => {
+                                    "cannot use `.` syntax on borrowed types".to_string()
+                                }
+                                TypeVariable::Unknown { .. } => unreachable!(),
+                                TypeVariable::Impl { .. } => unreachable!(),
+                            },
+                            Severity::Error,
+                            Diagnostic::at(source_file, &reason.container),
                         ));
                     }
                 }
@@ -194,6 +321,7 @@ fn contains_id(v: &TypeVariable, id: &TypeVariableId) -> bool {
         TypeVariable::Unknown { id: other_id } => other_id == id,
         TypeVariable::Primitive(_) => false,
         TypeVariable::Borrow { ty, .. } => contains_id(&*ty, id),
+        TypeVariable::Impl { parameters, .. } => parameters.iter().any(|p| contains_id(p, id)),
     }
 }
 
@@ -372,6 +500,7 @@ fn apply_substitution_to_constraints(
         apply_substitution(mgu, ty);
         match constraint {
             Constraint::Equality { ty: other, .. } => apply_substitution(mgu, other),
+            Constraint::FieldAccess { ty, .. } => apply_substitution(mgu, ty),
         }
     }
 }
@@ -382,6 +511,35 @@ fn apply_substitution(sub: &HashMap<TypeVariableId, TypeVariable>, ty: &mut Type
             *ty = sub_value.clone();
         }
     }
+
+    // match ty {
+    //     TypeVariable::Unknown { id } => {
+    //         if let Some(sub_value) = sub.get(id) {
+    //             *ty = sub_value.clone();
+    //         }
+    //     }
+    //     TypeVariable::Named { parameters, .. } => {
+    //         for param in parameters {
+    //             apply_substitution(sub, param);
+    //         }
+    //     }
+    //     TypeVariable::Function(l, r) => {
+    //         apply_substitution(sub, &mut *l);
+    //         apply_substitution(sub, &mut *r);
+    //     }
+    //     TypeVariable::Variable { parameters, .. } => {
+    //         for param in parameters {
+    //             apply_substitution(sub, param);
+    //         }
+    //     }
+    //     TypeVariable::Primitive(_) => {}
+    //     TypeVariable::Borrow { ty } => apply_substitution(sub, &mut *ty),
+    //     TypeVariable::Impl { parameters, .. } => {
+    //         for param in parameters {
+    //             apply_substitution(sub, param);
+    //         }
+    //     }
+    // }
 }
 
 enum UnificationError {
@@ -576,6 +734,80 @@ fn most_general_unifier(
                 actual,
             }),
         },
+        TypeVariable::Impl {
+            name: left_name,
+            parameters: left_parameters,
+        } => {
+            match actual {
+                TypeVariable::Impl {
+                    name: right_name,
+                    parameters: right_parameters,
+                } => {
+                    // Both type variables are impl types.
+                    // Check that they are the same.
+                    if left_name == right_name {
+                        // Unify the type parameters.
+                        // The lists must have equal length, since the names matched.
+                        let mut mgu = HashMap::new();
+                        for (left_param, right_param) in
+                            left_parameters.into_iter().zip(right_parameters)
+                        {
+                            let inner_mgu =
+                                most_general_unifier(project_index, left_param, right_param)?;
+                            mgu = unify(project_index, mgu, inner_mgu)?;
+                        }
+                        Ok(mgu)
+                    } else {
+                        Err(UnificationError::ExpectedDifferent {
+                            expected: TypeVariable::Impl {
+                                name: left_name,
+                                parameters: left_parameters,
+                            },
+                            actual: TypeVariable::Impl {
+                                name: right_name,
+                                parameters: right_parameters,
+                            },
+                        })
+                    }
+                }
+                TypeVariable::Unknown { id: right } => {
+                    let mut map = HashMap::new();
+                    map.insert(
+                        right,
+                        TypeVariable::Impl {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                    );
+                    Ok(map)
+                }
+                TypeVariable::Function(right_param, right_result) => {
+                    Err(UnificationError::ExpectedDifferent {
+                        expected: TypeVariable::Impl {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                        actual: TypeVariable::Function(right_param, right_result),
+                    })
+                }
+                TypeVariable::Variable { variable, .. } => {
+                    Err(UnificationError::ExpectedVariable {
+                        actual: TypeVariable::Impl {
+                            name: left_name,
+                            parameters: left_parameters,
+                        },
+                        variable,
+                    })
+                }
+                actual => Err(UnificationError::ExpectedDifferent {
+                    expected: TypeVariable::Impl {
+                        name: left_name,
+                        parameters: left_parameters,
+                    },
+                    actual,
+                }),
+            }
+        }
     }
 }
 

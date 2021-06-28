@@ -29,6 +29,7 @@ pub fn lifetime_start<'ctx>(
 
     // Initialise debug info for the variable.
     // TODO: make the scope be the actual scope of the variable.
+    // println!("ty: {:?}", repr.llvm_type);
     ctx.codegen.di_builder.insert_declare_at_end(
         ptr,
         Some(ctx.codegen.di_builder.create_auto_variable(
