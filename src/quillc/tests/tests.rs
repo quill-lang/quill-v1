@@ -17,6 +17,8 @@ use test_case::test_case;
 
 use quillc::invoke;
 
+quillc_test_macros::generate_tests!();
+
 #[allow(clippy::unused_unit)]
 #[test_case("io_putchar/ascii")]
 #[tokio::test]
