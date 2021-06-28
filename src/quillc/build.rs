@@ -30,15 +30,23 @@ fn scan_dir(f: &mut impl Write, root: &Path, suffix: &Path) {
                 // Yes. Add a unit test.
                 let directory = this_suffix.to_string_lossy().replace('\\', "/");
                 let name = directory.replace("/", "_");
+                // Ignore the WASM test by default.
                 write!(
                     f,
                     r#"
                     #[tokio::test]
-                    async fn {}() {{
-                        run_test("{}").await;
+                    async fn {name}() {{
+                        run_test("{directory}", TargetTriple::default_triple()).await;
+                    }}
+
+                    #[tokio::test]
+                    #[ignore]
+                    async fn {name}_wasm() {{
+                        run_test("{directory}", TargetTriple::wasm32_wasi()).await;
                     }}
                     "#,
-                    name, directory
+                    name = name,
+                    directory = directory,
                 )
                 .unwrap();
             } else {

@@ -18,7 +18,7 @@ use quillc::invoke;
 include!(concat!(env!("OUT_DIR"), "/tests.rs"));
 
 /// Harness for all automated tests.
-async fn run_test(directory: &str) {
+async fn run_test(directory: &str, target_triple: TargetTriple) {
     let code_folder = PathBuf::from("tests")
         .join(directory)
         .canonicalize()
@@ -31,7 +31,7 @@ async fn run_test(directory: &str) {
     // Invoke quillc.
     let compile_result = invoke(QuillcInvocation {
         build_info: BuildInfo {
-            target_triple: TargetTriple::default_triple(),
+            target_triple,
             code_folder: code_folder.clone(),
             build_folder: build_folder.clone(),
         },
@@ -64,11 +64,21 @@ async fn run_test(directory: &str) {
             let expected_code = expected_code.unwrap_or(0);
             let output = tokio::time::timeout(
                 Duration::from_secs(10),
-                tokio::process::Command::new(build_folder.join(if cfg!(target_os = "windows") {
-                    "test.exe"
+                if let quill_target::TargetArchitecture::Wasm32 = target_triple.arch {
+                    // Run the WASM using `wasmtime`.
+                    let mut command = tokio::process::Command::new("wasmtime");
+                    command.arg(build_folder.join("test.wasm"));
+                    command
                 } else {
-                    "test"
-                }))
+                    // Run the executable directly.
+                    tokio::process::Command::new(build_folder.join(
+                        if cfg!(target_os = "windows") {
+                            "test.exe"
+                        } else {
+                            "test"
+                        },
+                    ))
+                }
                 .output(),
             )
             .await
