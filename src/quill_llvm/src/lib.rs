@@ -144,12 +144,12 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
 
     Target::initialize_all(&InitializationConfig::default());
 
-    let target = Target::from_name("x86-64").unwrap();
+    let target = Target::from_triple(&target_triple).unwrap();
     let target_machine = target
         .create_target_machine(
             &target_triple,
-            "x86-64",
-            "+avx2",
+            &build_info.target_triple.arch.to_string(),
+            "", //"+avx2", // This was included from the tutorial.
             OptimizationLevel::None,
             RelocMode::PIC,
             CodeModel::Default,
