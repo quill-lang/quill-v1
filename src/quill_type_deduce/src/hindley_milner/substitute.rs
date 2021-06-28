@@ -272,7 +272,7 @@ fn typeck_impl(
     project_index: &ProjectIndex,
     impl_token: Range,
     aspect: &QualifiedName,
-    parameters: &Vec<Type>,
+    parameters: &[Type],
     body: DefinitionBodyP,
     visible_names: &VisibleNames,
 ) -> DiagnosticResult<ExpressionContents> {

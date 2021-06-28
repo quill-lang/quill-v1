@@ -112,9 +112,7 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
         ExpressionContents::ConstantValue { .. } => Vec::new(),
         ExpressionContents::Borrow { expr, .. } => list_used_locals(&*expr),
         ExpressionContents::Copy { expr, .. } => list_used_locals(&*expr),
-        ExpressionContents::Impl {
-            implementations, ..
-        } => {
+        ExpressionContents::Impl { .. } => {
             /* TODO
             implementations
             .values()
