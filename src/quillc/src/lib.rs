@@ -97,7 +97,7 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
             .deny()
         });
 
-        let mir = parsed
+        parsed
             .bind(|parsed| {
                 quill_index::index_project(&parsed).bind(|index| {
                     // Now that we have the index, run type deduction and MIR generation.
@@ -145,9 +145,7 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
                 },
                 index,
             })
-            .bind(|mir| validate(&mir).map(|_| (mir)));
-
-        mir
+            .bind(|mir| validate(&mir).map(|_| (mir)))
     })
     .await
     .unwrap();
