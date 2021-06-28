@@ -153,7 +153,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     let target_machine = target
         .create_target_machine(
             &target_triple,
-            &build_info.target_triple.arch.to_string(),
+            "",
             "", //"+avx2", // This was included from the tutorial.
             OptimizationLevel::None,
             RelocMode::PIC,
