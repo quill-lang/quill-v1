@@ -1,6 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    convert::TryFrom,
+};
 
-use inkwell::{basic_block::BasicBlock, debug_info::DIScope, types::BasicTypeEnum, AddressSpace};
+use inkwell::{
+    basic_block::BasicBlock, debug_info::DIScope, types::BasicTypeEnum, values::CallableValue,
+    AddressSpace,
+};
 
 use quill_index::TypeParameter;
 use quill_mir::mir::{
@@ -331,7 +337,7 @@ fn create_real_func_body_cfg<'ctx>(
                         ctx.locals.insert(*target, target_value);
                         lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
                         let call_site_value = ctx.codegen.builder.build_call(
-                            fptr,
+                            CallableValue::try_from(fptr).unwrap(),
                             &args,
                             &format!("{}_call", target),
                         );
@@ -341,9 +347,11 @@ fn create_real_func_body_cfg<'ctx>(
                                 .build_store(target_value, call_site_value);
                         }
                     } else {
-                        ctx.codegen
-                            .builder
-                            .build_call(fptr, &args, &target.to_string());
+                        ctx.codegen.builder.build_call(
+                            CallableValue::try_from(fptr).unwrap(),
+                            &args,
+                            &target.to_string(),
+                        );
                     }
 
                     for arg in additional_arguments {

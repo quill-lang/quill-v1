@@ -50,6 +50,10 @@ jobs:
         with:
           version: master
 
+      - name: Install wasmtime if on Ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        run: curl https://wasmtime.dev/install.sh -sSf | bash
+
       # Cache is disabled since we're using the nightly compiler. It will probably just slow everything down.
       # - name: Cache compiler artifacts
       #   uses: Swatinem/rust-cache@v1
@@ -66,11 +70,24 @@ jobs:
           command: clippy
           args: --release -- -Dwarnings
 
-      - name: Run test suite
+      - name: Run test suite excluding quillc
         uses: actions-rs/cargo@v1.0.3
         with:
           command: test
-          args: --release --no-fail-fast
+          args: --workspace --exclude quillc --release --no-fail-fast -- --test-threads=1
+
+      - name: Run quillc test suite
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: test
+          args: --package quillc --release --no-fail-fast -- --test-threads=1
+
+      - name: Run quillc test suite (on WASM)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: test
+          args: --package quillc --release --no-fail-fast -- --test-threads=1 --ignored
 
       # We also build the rustdoc in this action so that we avoid recompilation.
 
