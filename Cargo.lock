@@ -1319,10 +1319,8 @@ dependencies = [
  "quill_type",
  "quill_type_deduce",
  "quillc_api",
- "quillc_test_macros",
  "serde",
  "serde_json",
- "test-case",
  "tokio",
  "toml",
 ]
@@ -1333,13 +1331,6 @@ version = "0.1.0"
 dependencies = [
  "quill_target",
  "serde",
-]
-
-[[package]]
-name = "quillc_test_macros"
-version = "0.1.0"
-dependencies = [
- "quote",
 ]
 
 [[package]]
@@ -1751,19 +1742,6 @@ checksum = "633c1a546cee861a1a6d0dc69ebeca693bf4296661ba7852b9d21d159e0506df"
 dependencies = [
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "test-case"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b114ece25254e97bf48dd4bfc2a12bad0647adacfe4cae1247a9ca6ad302cec"
-dependencies = [
- "cfg-if",
- "proc-macro2",
- "quote",
- "syn",
- "version_check",
 ]
 
 [[package]]
