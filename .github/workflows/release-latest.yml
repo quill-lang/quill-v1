@@ -70,7 +70,7 @@ jobs:
         uses: actions-rs/cargo@v1.0.3
         with:
           command: test
-          args: --release --no-fail-fast
+          args: --release --no-fail-fast -- --test-threads=1
 
       # We also build the rustdoc in this action so that we avoid recompilation.
 
