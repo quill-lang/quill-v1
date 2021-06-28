@@ -7,10 +7,12 @@ use inkwell::{
     execution_engine::ExecutionEngine,
     module::Module,
     targets::TargetData,
-    values::{FunctionValue, PointerValue},
+    types::BasicType,
+    values::{BasicValue, FunctionValue, PointerValue},
 };
 use quill_index::ProjectIndex;
 use quill_mir::mir::LocalVariableName;
+use quill_target::{TargetArchitecture, TargetTriple};
 
 use crate::{monomorphisation::MonomorphisedFunction, repr::Representations};
 
@@ -37,17 +39,60 @@ pub struct BodyCreationContext<'a, 'ctx> {
 
 /// Adds definitions to the LLVM module to assert that certain libc functions
 /// like `malloc` exist, and declare their types so we can use them later.
-fn declare_libc<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {
-    module.add_function(
+/// Some functions require some wrappers, for instance `malloc`, so for consistency
+/// every libc function `f` is wrapped by some ABI-independent function called `libc::f`.
+fn declare_libc<'ctx>(
+    triple: TargetTriple,
+    context: &'ctx Context,
+    module: &Module<'ctx>,
+    builder: &Builder<'ctx>,
+) {
+    // This line of code doesn't work for wasm32; it returns i64.
+    // let size_t = context.ptr_sized_int_type(execution_engine.get_target_data(), None);
+    let size_t = match triple.arch {
+        TargetArchitecture::X86_64 => context.i64_type(),
+        TargetArchitecture::Wasm32 => context.i32_type(),
+    };
+
+    let malloc = module.add_function(
         "malloc",
+        context
+            .i8_type()
+            .ptr_type(inkwell::AddressSpace::Generic)
+            .fn_type(&[size_t.as_basic_type_enum()], false),
+        None,
+    );
+    // Wrap `malloc` so that we can always call it with an `i64` regardless of the target's pointer size.
+    let malloc_wrapper = module.add_function(
+        "libc::malloc",
         context
             .i8_type()
             .ptr_type(inkwell::AddressSpace::Generic)
             .fn_type(&[context.i64_type().into()], false),
         None,
     );
+    {
+        let block = context.append_basic_block(malloc_wrapper, "call_malloc");
+        builder.position_at_end(block);
+        let result = builder
+            .build_call(
+                malloc,
+                &[builder
+                    .build_int_cast(
+                        malloc_wrapper.get_first_param().unwrap().into_int_value(),
+                        size_t,
+                        "as_ptr_sized_int",
+                    )
+                    .as_basic_value_enum()],
+                "result",
+            )
+            .try_as_basic_value()
+            .left()
+            .unwrap();
+        builder.build_return(Some(&result));
+    }
 
-    module.add_function(
+    let free = module.add_function(
         "free",
         context.void_type().fn_type(
             &[context
@@ -58,6 +103,23 @@ fn declare_libc<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {
         ),
         None,
     );
+    let free_wrapper = module.add_function(
+        "libc::free",
+        context.void_type().fn_type(
+            &[context
+                .i8_type()
+                .ptr_type(inkwell::AddressSpace::Generic)
+                .into()],
+            false,
+        ),
+        None,
+    );
+    {
+        let block = context.append_basic_block(free_wrapper, "call_free");
+        builder.position_at_end(block);
+        builder.build_call(free, &[free_wrapper.get_first_param().unwrap()], "result");
+        builder.build_return(None);
+    }
 }
 
 fn declare_lifetime_intrinsics<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {
@@ -94,8 +156,16 @@ fn declare_lifetime_intrinsics<'ctx>(context: &'ctx Context, module: &Module<'ct
 
 /// Creates declarations of useful functions from libc.
 impl<'a, 'ctx> CodeGenContext<'ctx> {
-    pub fn new(context: &'ctx Context, module: Module<'ctx>, project_root: PathBuf) -> Self {
-        declare_libc(context, &module);
+    pub fn new(
+        triple: TargetTriple,
+        context: &'ctx Context,
+        module: Module<'ctx>,
+        project_root: PathBuf,
+    ) -> Self {
+        let builder = context.create_builder();
+        let execution_engine = module.create_interpreter_execution_engine().unwrap();
+
+        declare_libc(triple, context, &module, &builder);
         declare_lifetime_intrinsics(context, &module);
 
         let debug_metadata_version = context.i32_type().const_int(3, false);
@@ -138,8 +208,6 @@ impl<'a, 'ctx> CodeGenContext<'ctx> {
             "test_sdk",
         );
 
-        let builder = context.create_builder();
-        let execution_engine = module.create_interpreter_execution_engine().unwrap();
         Self {
             context,
             module,
@@ -153,7 +221,9 @@ impl<'a, 'ctx> CodeGenContext<'ctx> {
 
     /// Gets a function from libc with this name.
     pub fn libc(&self, name: &str) -> FunctionValue<'ctx> {
-        self.module.get_function(name).unwrap()
+        self.module
+            .get_function(&format!("libc::{}", name))
+            .unwrap()
     }
 
     pub fn target_data(&self) -> &TargetData {

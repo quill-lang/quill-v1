@@ -324,9 +324,10 @@ fn string_to_target(target: &str) -> TargetTriple {
             os: TargetOS::Linux,
             env: Some(TargetEnvironment::Gnu),
         },
+        "wasm32" => TargetTriple::wasm32_wasi(),
         other => clap::Error {
             message: format!(
-                "'{}' was not a valid target, expected one of 'win', 'linux'",
+                "'{}' was not a valid target, expected one of 'win', 'linux', 'wasm32'",
                 other
             ),
             kind: clap::ErrorKind::ValueValidation,

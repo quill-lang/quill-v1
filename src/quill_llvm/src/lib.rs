@@ -76,7 +76,12 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     let context = Context::create();
     let module = context.create_module(project_name);
     module.set_triple(&target_triple);
-    let codegen = codegen::CodeGenContext::new(&context, module, build_info.code_folder.clone());
+    let codegen = codegen::CodeGenContext::new(
+        build_info.target_triple,
+        &context,
+        module,
+        build_info.code_folder.clone(),
+    );
 
     let mono = Monomorphisation::new(mir);
     let mut reprs = Representations::new(&codegen, &mir.index, mono.types, mono.aspects);
@@ -144,12 +149,12 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
 
     Target::initialize_all(&InitializationConfig::default());
 
-    let target = Target::from_name("x86-64").unwrap();
+    let target = Target::from_triple(&target_triple).unwrap();
     let target_machine = target
         .create_target_machine(
             &target_triple,
-            "x86-64",
-            "+avx2",
+            "",
+            "", //"+avx2", // This was included from the tutorial.
             OptimizationLevel::None,
             RelocMode::PIC,
             CodeModel::Default,

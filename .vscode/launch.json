@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/target/debug/quillc.exe",
             "args": [
-                "{\"build_info\":{\"target_triple\":{\"arch\":\"X86_64\",\"vendor\":\"Pc\",\"os\":\"Windows\",\"env\":\"Gnu\"},\"code_folder\":\"stdlib/core\",\"build_folder\":\"stdlib/core/build\"},\"zig_compiler\":\"zig\"}"
+                "{\"build_info\":{\"target_triple\":{\"arch\":\"Wasm32\",\"vendor\":\"Unknown\",\"os\":\"Unknown\",\"env\":\"Wasi\"},\"code_folder\":\"stdlib/core\",\"build_folder\":\"stdlib/core/build\"},\"zig_compiler\":\"zig\"}"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

@@ -204,7 +204,7 @@ impl<'ctx> DataRepresentation<'ctx> {
                 let malloc = codegen
                     .builder
                     .build_call(
-                        codegen.module.get_function("malloc").unwrap(),
+                        codegen.libc("malloc"),
                         &[codegen
                             .context
                             .i64_type()
