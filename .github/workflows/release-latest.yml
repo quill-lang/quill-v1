@@ -52,7 +52,9 @@ jobs:
 
       - name: Install wasmtime if on Ubuntu
         if: matrix.os == 'ubuntu-latest'
-        run: curl https://wasmtime.dev/install.sh -sSf | bash
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "${HOME}/.wasmtime/bin" >> $GITHUB_PATH
 
       # Cache is disabled since we're using the nightly compiler. It will probably just slow everything down.
       # - name: Cache compiler artifacts
