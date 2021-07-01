@@ -76,20 +76,20 @@ jobs:
         uses: actions-rs/cargo@v1.0.3
         with:
           command: test
-          args: --workspace --exclude quillc --release --no-fail-fast -- --test-threads=1
+          args: --workspace --exclude quillc --release --no-fail-fast
 
       - name: Run quillc test suite
         uses: actions-rs/cargo@v1.0.3
         with:
           command: test
-          args: --package quillc --release --no-fail-fast -- --test-threads=1
+          args: --package quillc --release --no-fail-fast
 
       - name: Run quillc test suite (on WASM)
         if: matrix.os == 'ubuntu-latest'
         uses: actions-rs/cargo@v1.0.3
         with:
           command: test
-          args: --package quillc --release --no-fail-fast -- --test-threads=1 --ignored
+          args: --package quillc --release --no-fail-fast --ignored
 
       # We also build the rustdoc in this action so that we avoid recompilation.
 
