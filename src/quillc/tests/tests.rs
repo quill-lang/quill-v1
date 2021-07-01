@@ -41,10 +41,10 @@ fn run_test(directory: &str, target_triple: TargetTriple) {
     // If there was a file named `should_fail` in the project root, this
     // test was expected to fail.
     if code_folder.join("should_fail").exists() {
-        compile_result.unwrap_err()
+        assert!(compile_result);
     } else {
         // The code should have compiled successfully.
-        compile_result.unwrap();
+        assert!(!compile_result);
 
         // Check to see if we need to run the test's executable.
         // If the `output.txt` or `error_code.txt` file exists, we need to

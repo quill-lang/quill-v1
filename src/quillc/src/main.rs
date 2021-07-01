@@ -5,7 +5,7 @@ fn main() {
     let invocation: quillc_api::QuillcInvocation =
         serde_json::from_str(&std::env::args().nth(1).unwrap()).unwrap();
 
-    if quillc::invoke(invocation).is_err() {
+    if !quillc::invoke(invocation) {
         std::process::exit(1);
     }
 }

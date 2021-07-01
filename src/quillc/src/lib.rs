@@ -10,12 +10,12 @@ use quill_source_file::{find_all_source_files, PackageFileSystem};
 use quill_type::{PrimitiveType, Type};
 use quillc_api::{ProjectInfo, QuillcInvocation};
 
-/// Returns an Err if an error was emitted.
+/// Returns false if an error was emitted.
 /// Messages are printed to stdout to communicate with the `quill` executable.
 /// Messages are prefixed with one of the following tags:
 /// - `status`: a status message telling `quill` the compilation stage
 /// - `message`: an [ErrorMessage] to be relayed to the user, serialised into JSON
-pub fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
+pub fn invoke(invocation: QuillcInvocation) -> bool {
     println!("status initialised");
 
     // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
@@ -140,7 +140,7 @@ pub fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     }
 
     if emitted_error {
-        Err(())
+        false
     } else {
         let mut mir = mir.unwrap();
 
@@ -162,7 +162,7 @@ pub fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
 
         println!("status finished");
 
-        Ok(())
+        true
     }
 }
 
