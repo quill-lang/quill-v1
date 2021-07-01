@@ -19,6 +19,7 @@ use std::{
 };
 
 use clap::ArgMatches;
+use console::style;
 use indicatif::ProgressStyle;
 use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, Severity},
@@ -76,6 +77,16 @@ enum CompilerLocation {
     Installed { host: HostType, root: PathBuf },
 }
 
+lazy_static::lazy_static! {
+    static ref SPINNER_TEMPLATE: String = format!(
+        "[{}] {} {}: {}",
+        style("{elapsed}").black().bright(),
+        style("{spinner}").black().bright(),
+        "{prefix}",
+        style("{msg}").bright()
+    );
+}
+
 impl CompilerLocation {
     fn invoke_quillc(
         &self,
@@ -113,10 +124,13 @@ impl CompilerLocation {
         let stdout = BufReader::new(spawned.stdout.take().unwrap()).lines();
 
         // Make a progress bar.
-        let progress = indicatif::ProgressBar::new_spinner().with_style(
-            ProgressStyle::default_spinner().template("[{elapsed}] {spinner} {prefix}: {msg}"),
-        );
-        progress.set_prefix(format!("compiling {}", project_config.project_info.name));
+        let progress = indicatif::ProgressBar::new_spinner()
+            .with_style(ProgressStyle::default_spinner().template(&SPINNER_TEMPLATE));
+        progress.set_prefix(format!(
+            "{} {}",
+            style("compiling").green(),
+            project_config.project_info.name
+        ));
         progress.enable_steady_tick(50);
 
         let fs = PackageFileSystem::new({
