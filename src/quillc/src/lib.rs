@@ -10,39 +10,13 @@ use quill_source_file::{find_all_source_files, ErrorEmitter, PackageFileSystem};
 use quill_type::{PrimitiveType, Type};
 use quillc_api::{ProjectInfo, QuillcInvocation};
 
-/// Perform some basic validation that must pass in order to complete monomorphisation and code emission.
-fn validate(mir: &ProjectMIR) -> DiagnosticResult<()> {
-    if let Some(file) = mir.files.get(&mir.entry_point.source_file) {
-        if let Some(main) = file.definitions.get("main") {
-            // Check that the main function has the correct signature.
-            if main.arity == 0 && matches!(main.return_type, Type::Primitive(PrimitiveType::Unit)) {
-                DiagnosticResult::ok(())
-            } else {
-                DiagnosticResult::fail(ErrorMessage::new(
-                    "`main` function had incorrect function signature, expected unit type"
-                        .to_string(),
-                    Severity::Error,
-                    Diagnostic::at(&mir.entry_point.source_file, main),
-                ))
-            }
-        } else {
-            DiagnosticResult::fail(ErrorMessage::new(
-                "could not find `main` function in main source file".to_string(),
-                Severity::Error,
-                Diagnostic::in_file(&mir.entry_point.source_file),
-            ))
-        }
-    } else {
-        DiagnosticResult::fail(ErrorMessage::new(
-            "could not find main source file".to_string(),
-            Severity::Error,
-            Diagnostic::in_file(&mir.entry_point.source_file),
-        ))
-    }
-}
-
 /// Returns an Err if an error was emitted.
+/// Error messages are printed to `stdout`.
+/// This function prints some diagnostic information to `stderr`.
+/// This will be picked up by `quill`, which can parse it to relay some of this information to the user.
 pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
+    println!("##quillc##: initialised");
+
     // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
     // (This is excluding the annoying case where the file changes after being parsed by `quill`, and before this program is executed.)
     let project_config = toml::from_str::<ProjectInfo>(
@@ -52,6 +26,8 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
         .unwrap(),
     )
     .unwrap();
+
+    println!("##quillc##: parsed project config");
 
     let fs = Arc::new(PackageFileSystem::new({
         let mut map = HashMap::new();
@@ -71,6 +47,8 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     )
     .await;
 
+    println!("##quillc##: found source files");
+
     let lexed = {
         let mut results = Vec::new();
         for file_ident in source_files.iter() {
@@ -84,6 +62,8 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
             .map(|results| results.into_iter().collect::<HashMap<_, _>>())
             .deny()
     };
+
+    println!("##quillc##: lexed sources");
 
     let fs2 = Arc::clone(&fs);
     let build_info = invocation.build_info.clone();
@@ -145,10 +125,12 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
                 },
                 index,
             })
-            .bind(|mir| validate(&mir).map(|_| (mir)))
+            .bind(|mir| validate(&mir).map(|_| mir))
     })
     .await
     .unwrap();
+
+    println!("##quillc##: generated mir");
 
     let mut error_emitter = ErrorEmitter::new(&fs);
     let mir = error_emitter.consume_diagnostic(mir);
@@ -159,21 +141,58 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
         tokio::task::spawn_blocking(move || {
             let mut mir = mir.unwrap();
 
+            println!("##quillc##: converting function objects");
+
             quill_func_objects::convert_func_objects(&mut mir);
 
-            // println!("building");
+            println!("##quillc##: building llvm ir");
+
             quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
-            // println!("linking");
+
+            println!("##quillc##: linking");
+
             quill_link::link(
                 &project_config.name,
                 &invocation.zig_compiler,
                 invocation.build_info,
             );
-            // println!("linked");
+
+            println!("##quillc##: finished");
         })
         .await
         .unwrap();
 
         Ok(())
+    }
+}
+
+/// Perform some basic validation that must pass in order to complete monomorphisation and code emission.
+fn validate(mir: &ProjectMIR) -> DiagnosticResult<()> {
+    if let Some(file) = mir.files.get(&mir.entry_point.source_file) {
+        if let Some(main) = file.definitions.get("main") {
+            // Check that the main function has the correct signature.
+            if main.arity == 0 && matches!(main.return_type, Type::Primitive(PrimitiveType::Unit)) {
+                DiagnosticResult::ok(())
+            } else {
+                DiagnosticResult::fail(ErrorMessage::new(
+                    "`main` function had incorrect function signature, expected unit type"
+                        .to_string(),
+                    Severity::Error,
+                    Diagnostic::at(&mir.entry_point.source_file, main),
+                ))
+            }
+        } else {
+            DiagnosticResult::fail(ErrorMessage::new(
+                "could not find `main` function in main source file".to_string(),
+                Severity::Error,
+                Diagnostic::in_file(&mir.entry_point.source_file),
+            ))
+        }
+    } else {
+        DiagnosticResult::fail(ErrorMessage::new(
+            "could not find main source file".to_string(),
+            Severity::Error,
+            Diagnostic::in_file(&mir.entry_point.source_file),
+        ))
     }
 }

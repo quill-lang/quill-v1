@@ -9,6 +9,6 @@ def empty[T]: List[T] {
 }
 
 def concat[T]: List[T] -> List[T] -> List[T] {
-    concat Empty {} list = list
+    concat Empty {} list = lists
     concat Cons { value, list } other = Cons { value, list = concat list other }
 }

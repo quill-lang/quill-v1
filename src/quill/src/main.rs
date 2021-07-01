@@ -13,10 +13,13 @@
 use std::{
     collections::HashMap,
     fmt::Display,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 use clap::ArgMatches;
+use indicatif::ProgressStyle;
 use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, Severity},
     location::{Location, SourceFileIdentifier, SourceFileType},
@@ -26,7 +29,6 @@ use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
 use quillc_api::{ProjectInfo, QuillcInvocation};
-use tokio::process::Command;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -75,7 +77,12 @@ enum CompilerLocation {
 }
 
 impl CompilerLocation {
-    async fn invoke_quillc(&self, verbose: bool, invocation: &QuillcInvocation) {
+    async fn invoke_quillc(
+        &self,
+        verbose: bool,
+        project_config: &ProjectConfig,
+        invocation: &QuillcInvocation,
+    ) {
         let json = serde_json::to_string(invocation).unwrap();
         let mut command = match self {
             CompilerLocation::Cargo { source } => {
@@ -95,10 +102,37 @@ impl CompilerLocation {
             }
         };
         command.arg(json);
+        command.stdout(Stdio::piped());
+
         info!("Executing {:#?}", command);
-        let status = command.status().await.unwrap();
+
+        let mut spawned = command.spawn().unwrap();
+
+        // Messages are given to stdout.
+        let stdout = BufReader::new(spawned.stdout.take().unwrap()).lines();
+
+        // Make a progress bar.
+        let progress = indicatif::ProgressBar::new_spinner()
+            .with_style(ProgressStyle::default_spinner().template("{spinner} {prefix}: {msg}"));
+        progress.set_prefix(format!("compiling {}", project_config.project_info.name));
+        progress.enable_steady_tick(50);
+
+        for line in stdout {
+            let line = line.unwrap();
+            if let Some(status) = line.strip_prefix("##quillc##: ") {
+                // This is a quillc status message.
+                progress.set_message(status.to_owned());
+            } else {
+                // This is just a typical user-facing message.
+                println!("{}", line);
+            }
+        }
+
+        let status = spawned.wait().unwrap();
         if !status.success() {
             std::process::exit(1);
+        } else {
+            progress.finish_with_message("done");
         }
     }
 
@@ -130,14 +164,13 @@ fn error<S: Display>(message: S) -> ! {
     std::process::exit(1);
 }
 
-async fn exit(mut emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
+fn exit(mut emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
     emitter.process(vec![error_message]);
-    emitter.emit_all().await;
+    futures::executor::block_on(emitter.emit_all());
     std::process::exit(1)
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let yaml = clap::load_yaml!("cli.yml");
     let args = clap::App::from_yaml(yaml).get_matches();
 
@@ -145,12 +178,10 @@ async fn main() {
 
     match args.subcommand() {
         ("build", Some(sub_args)) => {
-            process_build(&cli_config, &gen_project_config(&args).await, sub_args).await
+            process_build(&cli_config, &gen_project_config(&args), sub_args)
         }
-        ("run", Some(sub_args)) => {
-            process_run(&cli_config, &gen_project_config(&args).await, sub_args).await
-        }
-        ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args).await,
+        ("run", Some(sub_args)) => process_run(&cli_config, &gen_project_config(&args), sub_args),
+        ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args),
         ("", _) => {
             clap::App::from_yaml(yaml).print_help().unwrap();
             println!();
@@ -197,7 +228,7 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
     }
 }
 
-async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
+fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     let provided_code_folder = args
         .value_of_os("project")
         .map_or_else(|| Path::new("."), Path::new);
@@ -221,16 +252,14 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     {
         match std::str::from_utf8(&project_config_str) {
             Ok(project_config_str) => {
-                dummy_fs
-                    .overwrite_source_file(
-                        SourceFileIdentifier {
-                            module: vec![].into(),
-                            file: "quill".into(),
-                            file_type: SourceFileType::Toml,
-                        },
-                        project_config_str.to_string(),
-                    )
-                    .await;
+                futures::executor::block_on(dummy_fs.overwrite_source_file(
+                    SourceFileIdentifier {
+                        module: vec![].into(),
+                        file: "quill".into(),
+                        file_type: SourceFileType::Toml,
+                    },
+                    project_config_str.to_string(),
+                ));
                 match toml::from_str::<ProjectInfo>(project_config_str) {
                     Ok(toml) => toml,
                     Err(err) => {
@@ -253,7 +282,6 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                                 ),
                             ),
                         )
-                        .await
                     }
                 }
             }
@@ -281,7 +309,6 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                         }),
                     ),
                 )
-                .await
             }
         }
     } else {
@@ -297,7 +324,6 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                 }),
             ),
         )
-        .await
     };
 
     std::fs::create_dir_all(code_folder.join("build")).unwrap();
@@ -337,11 +363,7 @@ fn string_to_target(target: &str) -> TargetTriple {
     }
 }
 
-async fn process_build(
-    cli_config: &CliConfig,
-    project_config: &ProjectConfig,
-    args: &ArgMatches<'_>,
-) {
+fn process_build(cli_config: &CliConfig, project_config: &ProjectConfig, args: &ArgMatches<'_>) {
     let targets_str = args.values_of_lossy("target");
     let targets = targets_str
         .map(|targets_str| {
@@ -358,41 +380,35 @@ async fn process_build(
             code_folder: project_config.code_folder.clone(),
             build_folder: project_config.build_folder.clone(),
         };
-        build(cli_config, project_config, build_info).await;
+        build(cli_config, project_config, build_info);
     }
 }
 
-async fn process_run(
-    cli_config: &CliConfig,
-    project_config: &ProjectConfig,
-    _args: &ArgMatches<'_>,
-) {
+fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &ArgMatches<'_>) {
     let info = BuildInfo {
         target_triple: TargetTriple::default_triple(),
         code_folder: project_config.code_folder.clone(),
         build_folder: project_config.build_folder.clone(),
     };
-    run(cli_config, project_config, info).await;
+    run(cli_config, project_config, info);
 }
 
-async fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: BuildInfo) {
-    cli_config
-        .compiler_location
-        .invoke_quillc(
-            cli_config.verbose,
-            &QuillcInvocation {
-                build_info,
-                zig_compiler: cli_config.compiler_location.zig_compiler(),
-            },
-        )
-        .await;
+fn build(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
+    futures::executor::block_on(cli_config.compiler_location.invoke_quillc(
+        cli_config.verbose,
+        project_config,
+        &QuillcInvocation {
+            build_info,
+            zig_compiler: cli_config.compiler_location.zig_compiler(),
+        },
+    ));
 }
 
-async fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
-    build(cli_config, project_config, build_info.clone()).await;
+fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
+    build(cli_config, project_config, build_info.clone());
     let mut command = Command::new(build_info.executable(&project_config.project_info.name));
     command.current_dir(build_info.code_folder);
-    let status = command.status().await.unwrap();
+    let status = command.status().unwrap();
     if !status.success() {
         if let Some(code) = status.code() {
             error(format!("program terminated with error code {}", code))
