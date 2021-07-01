@@ -1142,6 +1142,9 @@ dependencies = [
 [[package]]
 name = "quill_common"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "quill_func_objects"

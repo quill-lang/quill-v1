@@ -117,11 +117,24 @@ impl CompilerLocation {
         progress.set_prefix(format!("compiling {}", project_config.project_info.name));
         progress.enable_steady_tick(50);
 
+        let fs = PackageFileSystem::new({
+            let mut map = HashMap::new();
+            map.insert(
+                project_config.project_info.name.clone(),
+                invocation.build_info.code_folder.clone(),
+            );
+            map
+        });
+        let error_emitter = ErrorEmitter::new(&fs);
+
         for line in stdout {
             let line = line.unwrap();
-            if let Some(status) = line.strip_prefix("##quillc##: ") {
+            if let Some(status) = line.strip_prefix("status ") {
                 // This is a quillc status message.
                 progress.set_message(status.to_owned());
+            } else if let Some(message) = line.strip_prefix("message ") {
+                let message: ErrorMessage = serde_json::from_str(message).unwrap();
+                error_emitter.emit(message);
             } else {
                 // This is just a typical user-facing message.
                 println!("{}", line);
@@ -164,9 +177,8 @@ fn error<S: Display>(message: S) -> ! {
     std::process::exit(1);
 }
 
-fn exit(mut emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
-    emitter.process(vec![error_message]);
-    futures::executor::block_on(emitter.emit_all());
+fn exit(emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
+    emitter.emit(error_message);
     std::process::exit(1)
 }
 
@@ -252,14 +264,14 @@ fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     {
         match std::str::from_utf8(&project_config_str) {
             Ok(project_config_str) => {
-                futures::executor::block_on(dummy_fs.overwrite_source_file(
+                dummy_fs.overwrite_source_file(
                     SourceFileIdentifier {
                         module: vec![].into(),
                         file: "quill".into(),
                         file_type: SourceFileType::Toml,
                     },
                     project_config_str.to_string(),
-                ));
+                );
                 match toml::from_str::<ProjectInfo>(project_config_str) {
                     Ok(toml) => toml,
                     Err(err) => {

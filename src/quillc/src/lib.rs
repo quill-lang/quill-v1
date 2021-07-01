@@ -6,16 +6,17 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_mir::ProjectMIR;
-use quill_source_file::{find_all_source_files, ErrorEmitter, PackageFileSystem};
+use quill_source_file::{find_all_source_files, PackageFileSystem};
 use quill_type::{PrimitiveType, Type};
 use quillc_api::{ProjectInfo, QuillcInvocation};
 
 /// Returns an Err if an error was emitted.
-/// Error messages are printed to `stdout`.
-/// This function prints some diagnostic information to `stderr`.
-/// This will be picked up by `quill`, which can parse it to relay some of this information to the user.
+/// Messages are printed to stdout to communicate with the `quill` executable.
+/// Messages are prefixed with one of the following tags:
+/// - `status`: a status message telling `quill` the compilation stage
+/// - `message`: an [ErrorMessage] to be relayed to the user, serialised into JSON
 pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
-    println!("##quillc##: initialised");
+    println!("status initialised");
 
     // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
     // (This is excluding the annoying case where the file changes after being parsed by `quill`, and before this program is executed.)
@@ -27,7 +28,7 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     )
     .unwrap();
 
-    println!("##quillc##: parsed project config");
+    println!("status parsed project config");
 
     let fs = Arc::new(PackageFileSystem::new({
         let mut map = HashMap::new();
@@ -44,26 +45,22 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
             segments: vec![project_config.name.clone().into()],
         },
         &invocation.build_info.code_folder,
-    )
-    .await;
+    );
 
-    println!("##quillc##: found source files");
+    println!("status found source files");
 
     let lexed = {
         let mut results = Vec::new();
         for file_ident in source_files.iter() {
-            results.push(
-                quill_lexer::lex(&fs, file_ident)
-                    .await
-                    .map(|lexed| (file_ident.clone(), lexed)),
-            );
+            results
+                .push(quill_lexer::lex(&fs, file_ident).map(|lexed| (file_ident.clone(), lexed)));
         }
         DiagnosticResult::sequence_unfail(results)
             .map(|results| results.into_iter().collect::<HashMap<_, _>>())
             .deny()
     };
 
-    println!("##quillc##: lexed sources");
+    println!("status lexed sources");
 
     let fs2 = Arc::clone(&fs);
     let build_info = invocation.build_info.clone();
@@ -130,26 +127,35 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     .await
     .unwrap();
 
-    println!("##quillc##: generated mir");
+    println!("status generated mir");
 
-    let mut error_emitter = ErrorEmitter::new(&fs);
-    let mir = error_emitter.consume_diagnostic(mir);
+    // Emit the error messages to the user.
 
-    if error_emitter.emit_all().await {
+    let (mir, messages) = mir.destructure();
+
+    let mut emitted_error = false;
+    for message in messages {
+        if message.severity == Severity::Error {
+            emitted_error = true;
+        }
+        println!("message {}", serde_json::to_string(&message).unwrap());
+    }
+
+    if emitted_error {
         Err(())
     } else {
         tokio::task::spawn_blocking(move || {
             let mut mir = mir.unwrap();
 
-            println!("##quillc##: converting function objects");
+            println!("status converting function objects");
 
             quill_func_objects::convert_func_objects(&mut mir);
 
-            println!("##quillc##: building llvm ir");
+            println!("status building llvm ir");
 
             quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
 
-            println!("##quillc##: linking");
+            println!("status linking");
 
             quill_link::link(
                 &project_config.name,
@@ -157,7 +163,7 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
                 invocation.build_info,
             );
 
-            println!("##quillc##: finished");
+            println!("status finished");
         })
         .await
         .unwrap();

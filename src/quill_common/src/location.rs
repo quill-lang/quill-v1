@@ -3,7 +3,9 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Location {
     /// A 0-indexed line number.
     pub line: u32,
@@ -23,7 +25,7 @@ impl Display for Location {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Range {
     /// The start of this range of characters, inclusive.
     pub start: Location,
@@ -70,7 +72,7 @@ impl Ranged for Range {
 
 /// A fragment of the canonical name for a source file.
 /// This does not include things like slashes to separate directories, double periods to denote going up a directory, or file extensions.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceFileIdentifierSegment(pub String);
 
 impl Debug for SourceFileIdentifierSegment {
@@ -94,7 +96,7 @@ where
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleIdentifier {
     pub segments: Vec<SourceFileIdentifierSegment>,
 }
@@ -138,14 +140,14 @@ impl From<ModuleIdentifier> for PathBuf {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceFileIdentifier {
     pub module: ModuleIdentifier,
     pub file: SourceFileIdentifierSegment,
     pub file_type: SourceFileType,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SourceFileType {
     Quill,
     Toml,
