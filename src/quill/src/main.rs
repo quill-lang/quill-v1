@@ -103,6 +103,7 @@ impl CompilerLocation {
         };
         command.arg(json);
         command.stdout(Stdio::piped());
+        command.stderr(Stdio::inherit());
 
         info!("Executing {:#?}", command);
 
@@ -112,8 +113,9 @@ impl CompilerLocation {
         let stdout = BufReader::new(spawned.stdout.take().unwrap()).lines();
 
         // Make a progress bar.
-        let progress = indicatif::ProgressBar::new_spinner()
-            .with_style(ProgressStyle::default_spinner().template("{spinner} {prefix}: {msg}"));
+        let progress = indicatif::ProgressBar::new_spinner().with_style(
+            ProgressStyle::default_spinner().template("[{elapsed}] {spinner} {prefix}: {msg}"),
+        );
         progress.set_prefix(format!("compiling {}", project_config.project_info.name));
         progress.enable_steady_tick(50);
 
