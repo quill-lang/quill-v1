@@ -35,14 +35,14 @@ fn scan_dir(f: &mut impl Write, root: &Path, suffix: &Path) {
                     f,
                     r#"
                     #[test]
-                    #[ntest::timeout(10_000)]
+                    #[ntest::timeout(30_000)]
                     fn {name}() {{
                         run_test("{directory}", TargetTriple::default_triple());
                     }}
 
                     #[test]
                     #[ignore]
-                    #[ntest::timeout(10_000)]
+                    #[ntest::timeout(30_000)]
                     fn {name}_wasm() {{
                         run_test("{directory}", TargetTriple::wasm32_wasi());
                     }}

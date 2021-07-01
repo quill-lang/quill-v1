@@ -3,7 +3,7 @@
 //! Every test case should compile unless a `should_fail` file is present,
 //! and if `output.txt` or `error_code.txt` are present the executable should run
 //! and produce the given output or error code.
-//! Each executed program is given 10 seconds to complete, and then it is considered timed out.
+//! Each executed program is given 30 seconds to complete, and then it is considered timed out.
 //!
 //! To create a new test case, simply create a new quill project somewhere in the `tests` dir.
 
