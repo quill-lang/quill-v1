@@ -34,15 +34,17 @@ fn scan_dir(f: &mut impl Write, root: &Path, suffix: &Path) {
                 write!(
                     f,
                     r#"
-                    #[tokio::test]
-                    async fn {name}() {{
-                        run_test("{directory}", TargetTriple::default_triple()).await;
+                    #[test]
+                    #[ntest::timeout(10_000)]
+                    fn {name}() {{
+                        run_test("{directory}", TargetTriple::default_triple());
                     }}
 
-                    #[tokio::test]
+                    #[test]
                     #[ignore]
-                    async fn {name}_wasm() {{
-                        run_test("{directory}", TargetTriple::wasm32_wasi()).await;
+                    #[ntest::timeout(10_000)]
+                    fn {name}_wasm() {{
+                        run_test("{directory}", TargetTriple::wasm32_wasi());
                     }}
                     "#,
                     name = name,

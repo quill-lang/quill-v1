@@ -1,5 +1,5 @@
-#[tokio::test]
-async fn test_convert_func_objects() {
+#[test]
+fn test_convert_func_objects() {
     use std::collections::HashMap;
 
     use quill_borrow_check::borrow_check;
@@ -35,7 +35,7 @@ async fn test_convert_func_objects() {
             file_type: SourceFileType::Quill,
         };
 
-        let lexed = lex(&fs, &file_ident).await;
+        let lexed = lex(&fs, &file_ident);
         let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
         let mir = parsed
             .bind(|parsed| {
@@ -51,9 +51,11 @@ async fn test_convert_func_objects() {
             })
             .deny();
 
-        let mut error_emitter = ErrorEmitter::new(&fs);
-        let mir = error_emitter.consume_diagnostic(mir);
-        error_emitter.emit_all().await;
+        let (mir, messages) = mir.destructure();
+        let error_emitter = ErrorEmitter::new(&fs);
+        for message in messages {
+            error_emitter.emit(message)
+        }
 
         // If the conversion fails, the test will fail.
         let (mir, index) = mir.unwrap();

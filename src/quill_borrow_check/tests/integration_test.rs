@@ -1,5 +1,5 @@
-#[tokio::test]
-async fn test_borrowck() {
+#[test]
+fn test_borrowck() {
     use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
@@ -30,7 +30,7 @@ async fn test_borrowck() {
             file_type: SourceFileType::Quill,
         };
 
-        let lexed = lex(&fs, &file_ident).await;
+        let lexed = lex(&fs, &file_ident);
         let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
         let mir = parsed
             .bind(|parsed| {
@@ -45,9 +45,11 @@ async fn test_borrowck() {
             })
             .deny();
 
-        let mut error_emitter = ErrorEmitter::new(&fs);
-        let mir = error_emitter.consume_diagnostic(mir);
-        error_emitter.emit_all().await;
+        let (mir, messages) = mir.destructure();
+        let error_emitter = ErrorEmitter::new(&fs);
+        for message in messages {
+            error_emitter.emit(message)
+        }
 
         // If the borrow check fails, the test will fail.
         let mir: SourceFileMIR = mir.unwrap();

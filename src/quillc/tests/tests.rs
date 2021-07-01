@@ -7,7 +7,7 @@
 //!
 //! To create a new test case, simply create a new quill project somewhere in the `tests` dir.
 
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use quill_target::{BuildInfo, TargetTriple};
 use quillc_api::QuillcInvocation;
@@ -18,7 +18,7 @@ use quillc::invoke;
 include!(concat!(env!("OUT_DIR"), "/tests.rs"));
 
 /// Harness for all automated tests.
-async fn run_test(directory: &str, target_triple: TargetTriple) {
+fn run_test(directory: &str, target_triple: TargetTriple) {
     let code_folder = PathBuf::from("tests")
         .join(directory)
         .canonicalize()
@@ -26,7 +26,7 @@ async fn run_test(directory: &str, target_triple: TargetTriple) {
     let build_folder = code_folder.join("build");
 
     // Clean the build folder to clean up from previous tests.
-    let _ = tokio::fs::remove_dir_all(&build_folder).await;
+    let _ = std::fs::remove_dir_all(&build_folder);
 
     // Invoke quillc.
     let compile_result = invoke(QuillcInvocation {
@@ -36,8 +36,7 @@ async fn run_test(directory: &str, target_triple: TargetTriple) {
             build_folder: build_folder.clone(),
         },
         zig_compiler: PathBuf::from("zig"),
-    })
-    .await;
+    });
 
     // If there was a file named `should_fail` in the project root, this
     // test was expected to fail.
@@ -51,38 +50,28 @@ async fn run_test(directory: &str, target_triple: TargetTriple) {
         // If the `output.txt` or `error_code.txt` file exists, we need to
         // run to verify that the test succeeded.
 
-        let expected_output = tokio::fs::read_to_string(code_folder.join("output.txt"))
-            .await
-            .ok();
-        let expected_code = tokio::fs::read_to_string(code_folder.join("error_code.txt"))
-            .await
+        let expected_output = std::fs::read_to_string(code_folder.join("output.txt")).ok();
+        let expected_code = std::fs::read_to_string(code_folder.join("error_code.txt"))
             .ok()
             .map(|str| str.trim_end().parse::<i32>().unwrap());
 
         if expected_output.is_some() || expected_code.is_some() {
             // We need to run the executable.
             let expected_code = expected_code.unwrap_or(0);
-            let output = tokio::time::timeout(
-                Duration::from_secs(10),
-                if let quill_target::TargetArchitecture::Wasm32 = target_triple.arch {
-                    // Run the WASM using `wasmtime`.
-                    let mut command = tokio::process::Command::new("wasmtime");
-                    command.arg(build_folder.join("test.wasm"));
-                    command
+            let output = if let quill_target::TargetArchitecture::Wasm32 = target_triple.arch {
+                // Run the WASM using `wasmtime`.
+                let mut command = std::process::Command::new("wasmtime");
+                command.arg(build_folder.join("test.wasm"));
+                command
+            } else {
+                // Run the executable directly.
+                std::process::Command::new(build_folder.join(if cfg!(target_os = "windows") {
+                    "test.exe"
                 } else {
-                    // Run the executable directly.
-                    tokio::process::Command::new(build_folder.join(
-                        if cfg!(target_os = "windows") {
-                            "test.exe"
-                        } else {
-                            "test"
-                        },
-                    ))
-                }
-                .output(),
-            )
-            .await
-            .expect("timed out")
+                    "test"
+                }))
+            }
+            .output()
             .expect("could not execute command");
 
             let code_mismatch = Some(expected_code) != output.status.code();
