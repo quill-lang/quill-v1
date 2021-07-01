@@ -16,4 +16,3 @@ quill_lexer = { path = "../quill_lexer" }
 quill_type = { path = "../quill_type" }
 quill_parser = { path = "../quill_parser" }
 quill_index = { path = "../quill_index" }
-tokio = { version = "^1.0", features = ["macros", "rt"] }

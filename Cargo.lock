@@ -1136,7 +1136,6 @@ dependencies = [
  "quill_source_file",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
@@ -1159,7 +1158,6 @@ dependencies = [
  "quill_source_file",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
@@ -1173,7 +1171,6 @@ dependencies = [
  "quill_parser",
  "quill_source_file",
  "quill_type",
- "tokio",
 ]
 
 [[package]]
@@ -1196,7 +1193,6 @@ version = "0.1.0"
 dependencies = [
  "quill_common",
  "quill_source_file",
- "tokio",
  "unicode-normalization",
 ]
 
@@ -1227,7 +1223,6 @@ dependencies = [
  "quill_target",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
@@ -1265,7 +1260,6 @@ dependencies = [
  "quill_source_file",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
@@ -1275,7 +1269,6 @@ dependencies = [
  "quill_common",
  "quill_lexer",
  "quill_source_file",
- "tokio",
 ]
 
 [[package]]
@@ -1285,7 +1278,6 @@ dependencies = [
  "async-recursion",
  "console",
  "quill_common",
- "tokio",
 ]
 
 [[package]]
@@ -1313,7 +1305,6 @@ dependencies = [
  "quill_parser",
  "quill_source_file",
  "quill_type",
- "tokio",
 ]
 
 [[package]]
@@ -1336,7 +1327,6 @@ dependencies = [
  "quillc_api",
  "serde",
  "serde_json",
- "tokio",
  "toml",
 ]
 

@@ -15,7 +15,7 @@ use quillc_api::{ProjectInfo, QuillcInvocation};
 /// Messages are prefixed with one of the following tags:
 /// - `status`: a status message telling `quill` the compilation stage
 /// - `message`: an [ErrorMessage] to be relayed to the user, serialised into JSON
-pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
+pub fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     println!("status initialised");
 
     // No need for error handling here, the `quill.toml` file was validated by `quill` before it called this program.
@@ -65,7 +65,7 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     let fs2 = Arc::clone(&fs);
     let build_info = invocation.build_info.clone();
     let project_config_name = project_config.name.clone();
-    let mir: DiagnosticResult<ProjectMIR> = tokio::task::spawn_blocking(move || {
+    let mir: DiagnosticResult<ProjectMIR> = {
         let parsed = lexed.bind(|lexed| {
             DiagnosticResult::sequence_unfail(lexed.into_iter().map(|(file, lexed)| {
                 quill_parser::parse(lexed, &file).map(|parsed| (file, parsed))
@@ -123,9 +123,7 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
                 index,
             })
             .bind(|mir| validate(&mir).map(|_| mir))
-    })
-    .await
-    .unwrap();
+    };
 
     println!("status generated mir");
 
@@ -144,29 +142,25 @@ pub async fn invoke(invocation: QuillcInvocation) -> Result<(), ()> {
     if emitted_error {
         Err(())
     } else {
-        tokio::task::spawn_blocking(move || {
-            let mut mir = mir.unwrap();
+        let mut mir = mir.unwrap();
 
-            println!("status converting function objects");
+        println!("status converting function objects");
 
-            quill_func_objects::convert_func_objects(&mut mir);
+        quill_func_objects::convert_func_objects(&mut mir);
 
-            println!("status building llvm ir");
+        println!("status building llvm ir");
 
-            quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
+        quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
 
-            println!("status linking");
+        println!("status linking");
 
-            quill_link::link(
-                &project_config.name,
-                &invocation.zig_compiler,
-                invocation.build_info,
-            );
+        quill_link::link(
+            &project_config.name,
+            &invocation.zig_compiler,
+            invocation.build_info,
+        );
 
-            println!("status finished");
-        })
-        .await
-        .unwrap();
+        println!("status finished");
 
         Ok(())
     }

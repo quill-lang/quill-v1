@@ -6,6 +6,5 @@ edition = "2018"
 
 [dependencies]
 quill_common = { path = "../quill_common" }
-tokio = { version = "^1.0", features = ["macros", "rt-multi-thread"] }
 quill_source_file = { path = "../quill_source_file" }
 unicode-normalization = "0.1.17"

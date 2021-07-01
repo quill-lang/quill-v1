@@ -22,4 +22,3 @@ quill_lexer = { path = "../quill_lexer" }
 quill_borrow_check = { path = "../quill_borrow_check" }
 quill_func_objects = { path = "../quill_func_objects" }
 quill_link = { path = "../quill_link" }
-tokio = { version = "^1.0", features = ["macros", "rt"] }

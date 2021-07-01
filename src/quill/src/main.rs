@@ -77,7 +77,7 @@ enum CompilerLocation {
 }
 
 impl CompilerLocation {
-    async fn invoke_quillc(
+    fn invoke_quillc(
         &self,
         verbose: bool,
         project_config: &ProjectConfig,
@@ -406,14 +406,14 @@ fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &A
 }
 
 fn build(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
-    futures::executor::block_on(cli_config.compiler_location.invoke_quillc(
+    cli_config.compiler_location.invoke_quillc(
         cli_config.verbose,
         project_config,
         &QuillcInvocation {
             build_info,
             zig_compiler: cli_config.compiler_location.zig_compiler(),
         },
-    ));
+    );
 }
 
 fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
