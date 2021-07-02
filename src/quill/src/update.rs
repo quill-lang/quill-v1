@@ -76,33 +76,12 @@ pub fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
         .unwrap_or_else(|e| error(e));
         eprintln!("installing quill {}", version);
 
-        let update_self = !args.is_present("not-self");
-        println!("updating self: {}", update_self);
-        if update_self {
-            let exe_path = if let HostType::Windows = host {
-                root.join("quill.exe")
-            } else {
-                root.join("quill")
-            };
-            download_self(*host, version, exe_path.clone());
-
-            let status = std::process::Command::new(exe_path.clone())
-                .arg("update")
-                .arg("--not-self")
-                .current_dir(exe_path.parent().unwrap())
-                .status()
-                .unwrap();
-            if !status.success() {
-                println!(
-                    "{}",
-                    console::style("Could not execute quill updater!")
-                        .red()
-                        .bright()
-                        .bold()
-                );
-            }
-            return;
-        }
+        let exe_path = if let HostType::Windows = host {
+            root.join("quill.exe")
+        } else {
+            root.join("quill")
+        };
+        download_self(*host, version, exe_path.clone());
 
         // Download components such as quillc.
         std::fs::create_dir_all(root.join("compiler-deps")).unwrap();
