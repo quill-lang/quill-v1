@@ -17,10 +17,6 @@ args:
       long: source
       short: s
       help: Executes components of the Quill compiler from source, not intended for use outside of development of the compiler
-  - timed:
-      long: timed
-      short: t
-      help: Reports the time taken for each phase of compilation to complete
 subcommands:
   - build:
       about: Builds the Quill code in a given folder into an executable file
@@ -32,8 +28,17 @@ subcommands:
             takes_value: true
             value_name: TARGET
             help: Specifies a target to compile code for, if none are provided it compiles for the host system
+        - timed:
+            long: timed
+            short: T
+            help: Reports the time taken for each phase of compilation to complete
   - run:
       about: Runs the Quill code in a given folder
+      args:
+        - timed:
+            long: timed
+            short: T
+            help: Reports the time taken for each phase of compilation to complete
   - update:
       about: Updates the Quill compiler and its dependencies
       args:

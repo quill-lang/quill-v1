@@ -38,8 +38,12 @@ mod update;
 
 pub struct CliConfig {
     verbose: bool,
-    timed: bool,
     compiler_location: CompilerLocation,
+}
+
+/// CLI flags for the `build` or `run` command.
+pub struct BuildConfig {
+    timed: bool,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -135,6 +139,7 @@ impl CompilerLocation {
     fn invoke_quillc(
         &self,
         cli_config: &CliConfig,
+        build_config: &BuildConfig,
         project_config: &ProjectConfig,
         invocation: &QuillcInvocation,
     ) {
@@ -197,7 +202,7 @@ impl CompilerLocation {
             if let Some(status) = line.strip_prefix("status ") {
                 // This is a quillc status message.
                 progress.set_message(status.to_owned());
-                if cli_config.timed {
+                if build_config.timed {
                     let now = Instant::now();
                     let duration = now - last_status;
                     last_status = now;
@@ -219,7 +224,7 @@ impl CompilerLocation {
 
         progress.finish_with_message("done");
 
-        if cli_config.timed {
+        if build_config.timed {
             let now = Instant::now();
             let duration = now - last_status;
             if let Some(current_status) = current_status.take() {
@@ -293,7 +298,6 @@ fn main() {
 
 fn gen_cli_config(args: &ArgMatches) -> CliConfig {
     let verbose = args.is_present("verbose");
-    let timed = args.is_present("timed");
 
     let log_level = if verbose { Some(Level::TRACE) } else { None };
     if let Some(log_level) = log_level {
@@ -326,7 +330,6 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
 
     CliConfig {
         verbose,
-        timed,
         compiler_location,
     }
 }
@@ -477,28 +480,42 @@ fn process_build(cli_config: &CliConfig, project_config: &ProjectConfig, args: &
         })
         .unwrap_or_else(|| vec![TargetTriple::default_triple()]);
 
+    let build_config = generate_build_config(args);
+
     for target_triple in targets {
         let build_info = BuildInfo {
             target_triple,
             code_folder: project_config.code_folder.clone(),
             build_folder: project_config.build_folder.clone(),
         };
-        build(cli_config, project_config, build_info);
+        build(cli_config, &build_config, project_config, build_info);
     }
 }
 
-fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &ArgMatches<'_>) {
+fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, args: &ArgMatches<'_>) {
     let info = BuildInfo {
         target_triple: TargetTriple::default_triple(),
         code_folder: project_config.code_folder.clone(),
         build_folder: project_config.build_folder.clone(),
     };
-    run(cli_config, project_config, info);
+    let build_config = generate_build_config(args);
+    run(cli_config, &build_config, project_config, info);
 }
 
-fn build(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
+fn generate_build_config(args: &ArgMatches) -> BuildConfig {
+    let timed = args.is_present("timed");
+    BuildConfig { timed }
+}
+
+fn build(
+    cli_config: &CliConfig,
+    build_config: &BuildConfig,
+    project_config: &ProjectConfig,
+    build_info: BuildInfo,
+) {
     cli_config.compiler_location.invoke_quillc(
         cli_config,
+        build_config,
         project_config,
         &QuillcInvocation {
             build_info,
@@ -507,8 +524,13 @@ fn build(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: Bui
     );
 }
 
-fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
-    build(cli_config, project_config, build_info.clone());
+fn run(
+    cli_config: &CliConfig,
+    build_config: &BuildConfig,
+    project_config: &ProjectConfig,
+    build_info: BuildInfo,
+) {
+    build(cli_config, build_config, project_config, build_info.clone());
     let mut command = Command::new(build_info.executable(&project_config.project_info.name));
     command.current_dir(build_info.code_folder);
     let status = command.status().unwrap();
