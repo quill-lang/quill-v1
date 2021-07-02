@@ -81,7 +81,7 @@ pub fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
         } else {
             root.join("quill")
         };
-        download_self(*host, version, exe_path.clone());
+        download_self(*host, version, exe_path);
 
         // Download components such as quillc.
         std::fs::create_dir_all(root.join("compiler-deps")).unwrap();
