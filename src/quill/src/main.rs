@@ -80,7 +80,7 @@ enum CompilerLocation {
 lazy_static::lazy_static! {
     static ref SPINNER_TEMPLATE: String = format!(
         "[{}] {} {}: {}",
-        style("{elapsed}").black().bright(),
+        "{elapsed}",
         style("{spinner}").black().bright(),
         "{prefix}",
         style("{msg}").bright()

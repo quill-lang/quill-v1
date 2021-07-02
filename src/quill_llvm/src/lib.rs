@@ -66,12 +66,15 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
 
     // Output the MIR.
     {
+        println!("status outputting mir");
         use std::io::Write;
         let mir_path = build_info.build_folder.join(path.with_extension("mir"));
         let f = File::create(mir_path).unwrap();
         let mut f = BufWriter::new(f);
         writeln!(f, "{}", mir).unwrap();
     }
+
+    println!("status generating llvm context");
 
     let context = Context::create();
     let module = context.create_module(project_name);
@@ -83,6 +86,8 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
         build_info.code_folder.clone(),
     );
 
+    println!("status monomorphising");
+
     let mono = Monomorphisation::new(mir);
     let mut reprs = Representations::new(&codegen, &mir.index, mono.types, mono.aspects);
     // Now that we've computed data type representations we can actually compile the functions.
@@ -93,9 +98,14 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     reprs.create_drop_funcs();
     reprs.create_debug_info();
     codegen.di_builder.finalize();
+
+    println!("status compiling functions");
+
     for func in &mono.functions {
         func::compile_function(&codegen, &reprs, mir, func.clone());
     }
+
+    println!("status compiling glue");
 
     // Now introduce the main function.
     let main_func =
@@ -134,18 +144,20 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
         .build_folder
         .join(path.with_extension("unverified.ll"));
 
+    println!("status outputting unverified llvm ir");
+
     // We print twice here because it's useful to see the output if finalize fails.
     codegen.module.print_to_file(&ll_unverified_path).unwrap();
     codegen.di_builder.finalize();
     codegen.module.print_to_file(ll_unverified_path).unwrap();
 
+    println!("status verifying llvm ir");
+
     let pm = PassManager::<Module>::create(&());
     pm.add_verifier_pass();
-    // println!("Verifying...");
     pm.run_on(&codegen.module);
-    // println!("Done.");
 
-    // println!("Compiling to target machine...");
+    println!("status outputting intermediate llvm ir");
 
     Target::initialize_all(&InitializationConfig::default());
 
@@ -168,6 +180,8 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
         .print_to_file(bc_path.with_extension("ll"))
         .unwrap();
 
+    println!("status optimising llvm ir");
+
     let opt = PassManager::<Module>::create(&());
     opt.add_jump_threading_pass();
     // These steps optimise, but make the LLVM IR very unreadable.
@@ -179,15 +193,19 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     opt.run_on(&codegen.module);
     // println!("Writing bitcode, assembly, and object file...");
 
+    println!("status outputting optimised llvm ir");
+
     codegen.module.write_bitcode_to_path(&bc_opt_path);
     codegen
         .module
         .print_to_file(bc_opt_path.with_extension("ll"))
         .unwrap();
 
+    println!("status compiling to target machine (assembly)");
     assert!(target_machine
         .write_to_file(&codegen.module, FileType::Assembly, &asm_path)
         .is_ok());
+    println!("status compiling to target machine (object)");
     assert!(target_machine
         .write_to_file(&codegen.module, FileType::Object, &object_path)
         .is_ok());

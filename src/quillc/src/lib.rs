@@ -148,8 +148,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
 
         quill_func_objects::convert_func_objects(&mut mir);
 
-        println!("status building llvm ir");
-
+        // `quill_llvm` outputs its own status messages, so no need to make one here.
         quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
 
         println!("status linking");
