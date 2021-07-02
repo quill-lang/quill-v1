@@ -505,7 +505,8 @@ fn generate_build_info(
         emit_project_mir: args.is_present("emit-project-mir") || args.is_present("debug-compiler"),
         emit_unverified_llvm_ir: args.is_present("emit-unverified-llvm-ir")
             || args.is_present("debug-compiler"),
-        emit_basic_llvm_ir: args.is_present("emit-basic-llvm-ir") || args.is_present("debug-compiler"),
+        emit_basic_llvm_ir: args.is_present("emit-basic-llvm-ir")
+            || args.is_present("debug-compiler"),
         emit_llvm_ir: args.is_present("emit-llvm-ir") || args.is_present("debug-compiler"),
         emit_asm: args.is_present("emit-asm") || args.is_present("debug-compiler"),
     }
