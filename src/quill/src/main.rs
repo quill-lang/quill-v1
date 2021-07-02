@@ -500,13 +500,14 @@ fn generate_build_info(
         build_folder: project_config.build_folder.clone(),
         optimisation_type,
 
-        emit_hir: args.is_present("emit-hir"),
-        emit_mir: args.is_present("emit-mir"),
-        emit_project_mir: args.is_present("emit-project-mir"),
-        emit_unverified_llvm_ir: args.is_present("emit-unverified-llvm-ir"),
-        emit_basic_llvm_ir: args.is_present("emit-basic-llvm-ir"),
-        emit_llvm_ir: args.is_present("emit-llvm-ir"),
-        emit_asm: args.is_present("emit-asm"),
+        emit_hir: args.is_present("emit-hir") || args.is_present("debug-compiler"),
+        emit_mir: args.is_present("emit-mir") || args.is_present("debug-compiler"),
+        emit_project_mir: args.is_present("emit-project-mir") || args.is_present("debug-compiler"),
+        emit_unverified_llvm_ir: args.is_present("emit-unverified-llvm-ir")
+            || args.is_present("debug-compiler"),
+        emit_basic_llvm_ir: args.is_present("emit-basic-llvm-ir") || args.is_present("debug-compiler"),
+        emit_llvm_ir: args.is_present("emit-llvm-ir") || args.is_present("debug-compiler"),
+        emit_asm: args.is_present("emit-asm") || args.is_present("debug-compiler"),
     }
 }
 

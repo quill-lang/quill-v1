@@ -91,31 +91,31 @@ fn build_flags(app: App<'static, 'static>) -> App<'static, 'static> {
     .arg(
         Arg::with_name("emit-hir")
             .long("emit-hir")
-            .help("Emit HIR for each file")
+            .help("Emits HIR for each file")
             .long_help("Emits the HIR (high level intermediate representation) representation of each file to build/ir/<file>.hir"),
     )
     .arg(
         Arg::with_name("emit-mir")
             .long("emit-mir")
-            .help("Emit MIR for each file")
+            .help("Emits MIR for each file")
             .long_help("Emits the MIR (mid level intermediate representation) representation of each file to build/ir/<file>.mir"),
     )
     .arg(
         Arg::with_name("emit-project-mir")
             .long("emit-project-mir")
-            .help("Emit MIR for entire project")
+            .help("Emits MIR for entire project")
             .long_help("Emits the MIR representation of the entire project to build/out.mir"),
     )
     .arg(
         Arg::with_name("emit-unverified-llvm-ir")
             .long("emit-unverified-llvm-ir")
-            .help("Emit unverified LLVM IR")
+            .help("Emits unverified LLVM IR")
             .long_help("Emits the compiled LLVM IR to build/out.unverified.ll"),
     )
     .arg(
         Arg::with_name("emit-basic-llvm-ir")
             .long("emit-basic-llvm-ir")
-            .help("Emit basic LLVM IR")
+            .help("Emits basic LLVM IR")
             .long_help("Emits the compiled LLVM IR to build/out.basic.ll after verifying that the module is valid, but before LLVM optimises it at all"),
     )
     .arg(
@@ -128,8 +128,16 @@ fn build_flags(app: App<'static, 'static>) -> App<'static, 'static> {
     .arg(
         Arg::with_name("emit-asm")
             .long("emit-asm")
-            .help("Emit target-specific assembly")
+            .help("Emits target-specific assembly")
             .long_help("Emits the target-specific assembly to build/out.asm"),
+    )
+
+    .arg(
+        Arg::with_name("debug-compiler")
+            .long("debug-compiler")
+            .help("Emits all intermediate representations for debugging the compiler's output")
+            .long_help("Emits all intermediate representations for debugging the compiler's output; \
+            implies --emit-hir, --emit-mir, --emit-project-mir, --emit-unverified-llvm-ir, --emit-basic-llvm-ir, --emit-llvm-ir, --emit-asm"),
     )
 }
 
