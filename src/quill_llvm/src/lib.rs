@@ -64,9 +64,9 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     let _ = std::fs::create_dir_all(&build_info.build_folder);
     let path = Path::new("out.o");
 
-    // Output the MIR.
-    {
-        println!("status outputting mir");
+    // Output the project MIR.
+    if build_info.emit_project_mir {
+        println!("status emitting project mir");
         use std::io::Write;
         let mir_path = build_info.build_folder.join(path.with_extension("mir"));
         let f = File::create(mir_path).unwrap();
@@ -138,18 +138,25 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
 
     let object_path = build_info.build_folder.join(path);
     let asm_path = build_info.build_folder.join(path.with_extension("asm"));
-    let bc_path = build_info.build_folder.join(path.with_extension("bc"));
-    let bc_opt_path = build_info.build_folder.join(path.with_extension("opt.bc"));
+    let bc_path = build_info
+        .build_folder
+        .join(path.with_extension("basic.bc"));
+    let bc_opt_path = build_info.build_folder.join(path.with_extension("bc"));
     let ll_unverified_path = build_info
         .build_folder
         .join(path.with_extension("unverified.ll"));
 
-    println!("status outputting unverified llvm ir");
-
-    // We print twice here because it's useful to see the output if finalize fails.
-    codegen.module.print_to_file(&ll_unverified_path).unwrap();
+    if build_info.emit_unverified_llvm_ir {
+        // We print twice here because it's useful to see the output if finalize fails.
+        println!("status emitting unverified llvm ir (1)");
+        codegen.module.print_to_file(&ll_unverified_path).unwrap();
+    }
+    println!("status finalising llvm ir");
     codegen.di_builder.finalize();
-    codegen.module.print_to_file(ll_unverified_path).unwrap();
+    if build_info.emit_unverified_llvm_ir {
+        println!("status emitting unverified llvm ir (2)");
+        codegen.module.print_to_file(&ll_unverified_path).unwrap();
+    }
 
     println!("status verifying llvm ir");
 
@@ -157,7 +164,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     pm.add_verifier_pass();
     pm.run_on(&codegen.module);
 
-    println!("status outputting intermediate llvm ir");
+    println!("status initialising target machine");
 
     Target::initialize_all(&InitializationConfig::default());
 
@@ -173,12 +180,15 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
         )
         .unwrap();
 
-    // Output the LLVM bitcode and IR.
-    codegen.module.write_bitcode_to_path(&bc_path);
-    codegen
-        .module
-        .print_to_file(bc_path.with_extension("ll"))
-        .unwrap();
+    if build_info.emit_basic_llvm_ir {
+        // Output the LLVM bitcode and IR.
+        println!("status emitting basic llvm ir");
+        codegen.module.write_bitcode_to_path(&bc_path);
+        codegen
+            .module
+            .print_to_file(bc_path.with_extension("ll"))
+            .unwrap();
+    }
 
     println!("status optimising llvm ir");
 
@@ -193,19 +203,23 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     opt.run_on(&codegen.module);
     // println!("Writing bitcode, assembly, and object file...");
 
-    println!("status outputting optimised llvm ir");
+    if build_info.emit_llvm_ir {
+        println!("status emitting llvm ir");
+        codegen.module.write_bitcode_to_path(&bc_opt_path);
+        codegen
+            .module
+            .print_to_file(bc_opt_path.with_extension("ll"))
+            .unwrap();
+    }
 
-    codegen.module.write_bitcode_to_path(&bc_opt_path);
-    codegen
-        .module
-        .print_to_file(bc_opt_path.with_extension("ll"))
-        .unwrap();
+    if build_info.emit_asm {
+        println!("status compiling to target machine (assembly)");
+        assert!(target_machine
+            .write_to_file(&codegen.module, FileType::Assembly, &asm_path)
+            .is_ok());
+    }
 
-    println!("status compiling to target machine (assembly)");
-    assert!(target_machine
-        .write_to_file(&codegen.module, FileType::Assembly, &asm_path)
-        .is_ok());
-    println!("status compiling to target machine (object)");
+    println!("status compiling to target machine");
     assert!(target_machine
         .write_to_file(&codegen.module, FileType::Object, &object_path)
         .is_ok());

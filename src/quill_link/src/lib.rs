@@ -15,6 +15,8 @@ pub fn link(project_name: &str, zig_compiler: &Path, build_info: BuildInfo) {
     linker.arg("--name");
     linker.arg(build_info.build_folder.join(project_name));
     linker.arg(build_info.build_folder.join("out.o"));
+    linker.arg("-O");
+    linker.arg(format!("{:?}", build_info.optimisation_type));
     linker.stderr(Stdio::inherit());
     let result = linker.output().unwrap();
     if !result.status.success() {

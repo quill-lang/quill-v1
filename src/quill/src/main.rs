@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clap::ArgMatches;
+use clap::{value_t, values_t, ArgMatches};
 use console::style;
 use indicatif::ProgressStyle;
 use quill_common::{
@@ -442,69 +442,72 @@ fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     }
 }
 
-fn string_to_target(target: &str) -> TargetTriple {
+fn parse_build_target(target: cli::BuildTarget) -> TargetTriple {
     match target {
-        "win" => TargetTriple {
+        cli::BuildTarget::Win => TargetTriple {
             arch: TargetArchitecture::X86_64,
             vendor: TargetVendor::Pc,
             os: TargetOS::Windows,
             env: Some(TargetEnvironment::Gnu),
         },
-        "linux" => TargetTriple {
+        cli::BuildTarget::Linux => TargetTriple {
             arch: TargetArchitecture::X86_64,
             vendor: TargetVendor::Unknown,
             os: TargetOS::Linux,
             env: Some(TargetEnvironment::Gnu),
         },
-        "wasm32" => TargetTriple::wasm32_wasi(),
-        other => clap::Error {
-            message: format!(
-                "'{}' was not a valid target, expected one of 'win', 'linux', 'wasm32'",
-                other
-            ),
-            kind: clap::ErrorKind::ValueValidation,
-            info: None,
-        }
-        .exit(),
+        cli::BuildTarget::Wasm32 => TargetTriple::wasm32_wasi(),
     }
 }
 
 fn process_build(cli_config: &CliConfig, project_config: &ProjectConfig, args: &ArgMatches<'_>) {
-    let targets_str = args.values_of_lossy("target");
-    let targets = targets_str
-        .map(|targets_str| {
-            targets_str
-                .into_iter()
-                .map(|target| string_to_target(&target))
-                .collect()
-        })
-        .unwrap_or_else(|| vec![TargetTriple::default_triple()]);
+    let targets = values_t!(args.values_of("target"), cli::BuildTarget)
+        .map(|vec| vec.into_iter().map(parse_build_target).collect::<Vec<_>>())
+        .unwrap_or_else(|_| vec![TargetTriple::default_triple()]);
 
     let build_config = generate_build_config(args);
 
     for target_triple in targets {
-        let build_info = BuildInfo {
-            target_triple,
-            code_folder: project_config.code_folder.clone(),
-            build_folder: project_config.build_folder.clone(),
-        };
+        let build_info = generate_build_info(target_triple, project_config, args);
         build(cli_config, &build_config, project_config, build_info);
     }
 }
 
 fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, args: &ArgMatches<'_>) {
-    let info = BuildInfo {
-        target_triple: TargetTriple::default_triple(),
-        code_folder: project_config.code_folder.clone(),
-        build_folder: project_config.build_folder.clone(),
-    };
     let build_config = generate_build_config(args);
-    run(cli_config, &build_config, project_config, info);
+    let build_info = generate_build_info(TargetTriple::default_triple(), project_config, args);
+    run(cli_config, &build_config, project_config, build_info);
 }
 
+/// Generates the build config that `quill` needs, that we do *not* send to `quillc`.
 fn generate_build_config(args: &ArgMatches) -> BuildConfig {
     let timed = args.is_present("timed");
     BuildConfig { timed }
+}
+
+/// Generates the build config that `quillc` needs, but that `quill` does not.
+fn generate_build_info(
+    target_triple: TargetTriple,
+    project_config: &ProjectConfig,
+    args: &ArgMatches,
+) -> BuildInfo {
+    let optimisation_type = value_t!(args.value_of("opt"), cli::OptimisationType)
+        .unwrap_or_else(|e| e.exit())
+        .into();
+    BuildInfo {
+        target_triple,
+        code_folder: project_config.code_folder.clone(),
+        build_folder: project_config.build_folder.clone(),
+        optimisation_type,
+
+        emit_hir: args.is_present("emit-hir"),
+        emit_mir: args.is_present("emit-mir"),
+        emit_project_mir: args.is_present("emit-project-mir"),
+        emit_unverified_llvm_ir: args.is_present("emit-unverified-llvm-ir"),
+        emit_basic_llvm_ir: args.is_present("emit-basic-llvm-ir"),
+        emit_llvm_ir: args.is_present("emit-llvm-ir"),
+        emit_asm: args.is_present("emit-asm"),
+    }
 }
 
 fn build(

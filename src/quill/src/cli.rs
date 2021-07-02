@@ -1,5 +1,35 @@
 use clap::*;
 
+arg_enum! {
+    #[derive(PartialEq, Debug)]
+    pub enum BuildTarget {
+        Win,
+        Linux,
+        Wasm32,
+    }
+}
+
+arg_enum! {
+    #[derive(PartialEq, Debug)]
+    pub enum OptimisationType {
+        Debug,
+        ReleaseFast,
+        ReleaseSafe,
+        ReleaseSmall,
+    }
+}
+
+impl From<OptimisationType> for quill_target::OptimisationType {
+    fn from(opt: OptimisationType) -> Self {
+        match opt {
+            OptimisationType::Debug => Self::Debug,
+            OptimisationType::ReleaseFast => Self::ReleaseFast,
+            OptimisationType::ReleaseSafe => Self::ReleaseSafe,
+            OptimisationType::ReleaseSmall => Self::ReleaseSmall,
+        }
+    }
+}
+
 /// All switches from `build` are copied into `run`.
 pub fn gen_cli() -> App<'static, 'static> {
     app_from_crate!("\n")
@@ -47,6 +77,60 @@ fn build_flags(app: App<'static, 'static>) -> App<'static, 'static> {
             .short("T")
             .help("Reports the time taken for each phase of compilation to complete"),
     )
+    .arg(
+        Arg::with_name("opt")
+            .long("opt")
+            .short("O")
+            .value_name("MODE")
+            .help("Choose whether to optimise, and what to optimise for")
+            .possible_values(&OptimisationType::variants())
+            .case_insensitive(true)
+            .default_value("Debug"),
+    )
+
+    .arg(
+        Arg::with_name("emit-hir")
+            .long("emit-hir")
+            .help("Emit HIR for each file")
+            .long_help("Emits the HIR (high level intermediate representation) representation of each file to build/ir/<file>.hir"),
+    )
+    .arg(
+        Arg::with_name("emit-mir")
+            .long("emit-mir")
+            .help("Emit MIR for each file")
+            .long_help("Emits the MIR (mid level intermediate representation) representation of each file to build/ir/<file>.mir"),
+    )
+    .arg(
+        Arg::with_name("emit-project-mir")
+            .long("emit-project-mir")
+            .help("Emit MIR for entire project")
+            .long_help("Emits the MIR representation of the entire project to build/out.mir"),
+    )
+    .arg(
+        Arg::with_name("emit-unverified-llvm-ir")
+            .long("emit-unverified-llvm-ir")
+            .help("Emit unverified LLVM IR")
+            .long_help("Emits the compiled LLVM IR to build/out.unverified.ll"),
+    )
+    .arg(
+        Arg::with_name("emit-basic-llvm-ir")
+            .long("emit-basic-llvm-ir")
+            .help("Emit basic LLVM IR")
+            .long_help("Emits the compiled LLVM IR to build/out.basic.ll after verifying that the module is valid, but before LLVM optimises it at all"),
+    )
+    .arg(
+        Arg::with_name("emit-llvm-ir")
+            .long("emit-llvm-ir")
+            .help("Emit LLVM IR")
+            .long_help("Emits the compiled LLVM IR to build/out.ll after LLVM's optimisation passes, which may make the IR almost unreadable; \
+            see --emit-basic-llvm-ir for a logically identical but more readable IR"),
+    )
+    .arg(
+        Arg::with_name("emit-asm")
+            .long("emit-asm")
+            .help("Emit target-specific assembly")
+            .long_help("Emits the target-specific assembly to build/out.asm"),
+    )
 }
 
 fn build() -> App<'static, 'static> {
@@ -59,11 +143,8 @@ fn build() -> App<'static, 'static> {
                 .multiple(true)
                 .value_name("TARGET")
                 .help("Specifies a target to compile code for, if none are provided it compiles for the host system")
-                .long_help(
-                    "\
-                    Specifies a target to compile code for, if none are provided it compiles for the host system.\n\
-                    Supported targets: win, linux, wasm32\
-                    ")
+                .possible_values(&BuildTarget::variants())
+                .case_insensitive(true)
         );
     build_flags(app)
 }

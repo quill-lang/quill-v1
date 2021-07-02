@@ -89,12 +89,18 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
                                             .strip_prefix(&build_info.code_folder)
                                             .unwrap(),
                                     );
-                                    let _ = std::fs::create_dir_all(f.parent().unwrap());
-                                    std::fs::write(f.with_extension("hir"), typeck.to_string())
-                                        .unwrap();
+                                    if build_info.emit_hir || build_info.emit_mir {
+                                        let _ = std::fs::create_dir_all(f.parent().unwrap());
+                                    }
+                                    if build_info.emit_hir {
+                                        std::fs::write(f.with_extension("hir"), typeck.to_string())
+                                            .unwrap();
+                                    }
                                     let mir = quill_mir::to_mir(&index, typeck, &file_ident);
-                                    std::fs::write(f.with_extension("mir"), mir.to_string())
-                                        .unwrap();
+                                    if build_info.emit_mir {
+                                        std::fs::write(f.with_extension("mir"), mir.to_string())
+                                            .unwrap();
+                                    }
                                     mir
                                 })
                                 .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
