@@ -34,6 +34,15 @@ fn run_test(directory: &str, target_triple: TargetTriple) {
             target_triple,
             code_folder: code_folder.clone(),
             build_folder: build_folder.clone(),
+
+            optimisation_type: quill_target::OptimisationType::Debug,
+            emit_hir: false,
+            emit_mir: false,
+            emit_project_mir: false,
+            emit_unverified_llvm_ir: false,
+            emit_basic_llvm_ir: false,
+            emit_llvm_ir: false,
+            emit_asm: false,
         },
         zig_compiler: PathBuf::from("zig"),
     });
