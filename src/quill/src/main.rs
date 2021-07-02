@@ -34,6 +34,7 @@ use quillc_api::{ProjectInfo, QuillcInvocation};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+mod cli;
 mod update;
 
 pub struct CliConfig {
@@ -277,8 +278,7 @@ fn exit(emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
 }
 
 fn main() {
-    let yaml = clap::load_yaml!("cli.yml");
-    let args = clap::App::from_yaml(yaml).get_matches();
+    let args = cli::gen_cli().get_matches();
 
     let cli_config = gen_cli_config(&args);
 
@@ -289,7 +289,7 @@ fn main() {
         ("run", Some(sub_args)) => process_run(&cli_config, &gen_project_config(&args), sub_args),
         ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args),
         ("", _) => {
-            clap::App::from_yaml(yaml).print_help().unwrap();
+            cli::gen_cli().print_help().unwrap();
             println!();
         }
         _ => {}

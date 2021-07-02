@@ -3,6 +3,7 @@ name = "quill"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
 edition = "2018"
+description = "Compiler for the Quill language"
 
 [dependencies]
 quill_common = { path = "../quill_common" }
@@ -10,7 +11,7 @@ quill_source_file = { path = "../quill_source_file" }
 quill_target = { path = "../quill_target" }
 quillc_api = { path = "../quillc_api" }
 
-clap = { version = "~2.33.3", features = ["yaml"] }
+clap = { version = "^2.33", features = ["color", "wrap_help"] }
 console = "^0.14"
 indicatif = "^0.16"
 tracing = "^0.1.26"
