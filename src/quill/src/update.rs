@@ -62,7 +62,7 @@ struct ZigRelease {
     // shasum: String,
 }
 
-pub fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
+pub fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
     if let crate::CompilerLocation::Installed { host, root } = &cli_config.compiler_location {
         let _ = std::fs::remove_dir_all(root.join("compiler-deps"));
         let _ = std::fs::create_dir_all(root.join("compiler-deps"));
