@@ -16,6 +16,7 @@ use std::{
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 use clap::ArgMatches;
@@ -37,6 +38,7 @@ mod update;
 
 pub struct CliConfig {
     verbose: bool,
+    timed: bool,
     compiler_location: CompilerLocation,
 }
 
@@ -87,10 +89,52 @@ lazy_static::lazy_static! {
     );
 }
 
+/// Like [indicatif::HumanDuration], but can also format small times like milliseconds and microseconds,
+/// and with two significant orders of magnitude.
+/// Also colours long durations.
+struct HumanSmallDuration(Duration);
+
+impl Display for HumanSmallDuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= Duration::from_secs(60) {
+            let secs = self.0.as_secs();
+            write!(
+                f,
+                "{}",
+                style(format!("{} min {} s", secs / 60, secs % 60))
+                    .red()
+                    .bold()
+                    .bright()
+            )
+        } else if self.0 >= Duration::from_secs(1) {
+            write!(
+                f,
+                "{}",
+                style(format!(
+                    "{} s {} ms",
+                    self.0.as_secs(),
+                    self.0.subsec_millis()
+                ))
+                .red()
+            )
+        } else if self.0 >= Duration::from_millis(1) {
+            let micros = self.0.subsec_micros();
+            let str = format!("{} ms {} μs", micros / 1000, micros % 1000);
+            if micros > 100_000 {
+                write!(f, "{}", style(str).yellow())
+            } else {
+                write!(f, "{}", str)
+            }
+        } else {
+            write!(f, "{} μs", self.0.subsec_micros())
+        }
+    }
+}
+
 impl CompilerLocation {
     fn invoke_quillc(
         &self,
-        verbose: bool,
+        cli_config: &CliConfig,
         project_config: &ProjectConfig,
         invocation: &QuillcInvocation,
     ) {
@@ -102,7 +146,7 @@ impl CompilerLocation {
                 command.arg("run");
                 command.arg("--bin");
                 command.arg("quillc");
-                if !verbose {
+                if !cli_config.verbose {
                     command.arg("-q");
                 }
                 command.arg("--");
@@ -117,6 +161,11 @@ impl CompilerLocation {
         command.stderr(Stdio::inherit());
 
         info!("Executing {:#?}", command);
+
+        // Keep track of the time taken for each status message to be sent.
+        let mut last_status = Instant::now();
+        let mut current_status = None;
+        let mut status_times = Vec::new();
 
         let mut spawned = command.spawn().unwrap();
 
@@ -148,6 +197,15 @@ impl CompilerLocation {
             if let Some(status) = line.strip_prefix("status ") {
                 // This is a quillc status message.
                 progress.set_message(status.to_owned());
+                if cli_config.timed {
+                    let now = Instant::now();
+                    let duration = now - last_status;
+                    last_status = now;
+                    if let Some(current_status) = current_status.take() {
+                        status_times.push((current_status, duration));
+                    }
+                    current_status = Some(status.to_owned());
+                }
             } else if let Some(message) = line.strip_prefix("message ") {
                 let message: ErrorMessage = serde_json::from_str(message).unwrap();
                 error_emitter.emit(message);
@@ -158,10 +216,25 @@ impl CompilerLocation {
         }
 
         let status = spawned.wait().unwrap();
+
+        progress.finish_with_message("done");
+
+        if cli_config.timed {
+            let now = Instant::now();
+            let duration = now - last_status;
+            if let Some(current_status) = current_status.take() {
+                status_times.push((current_status, duration));
+            }
+
+            // Report the time taken for each status.
+            println!("{}", style("time taken:").bright().bold());
+            for (status, duration) in status_times {
+                println!(" • {}: {}", status, HumanSmallDuration(duration));
+            }
+        }
+
         if !status.success() {
             std::process::exit(1);
-        } else {
-            progress.finish_with_message("done");
         }
     }
 
@@ -220,6 +293,7 @@ fn main() {
 
 fn gen_cli_config(args: &ArgMatches) -> CliConfig {
     let verbose = args.is_present("verbose");
+    let timed = args.is_present("timed");
 
     let log_level = if verbose { Some(Level::TRACE) } else { None };
     if let Some(log_level) = log_level {
@@ -252,6 +326,7 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
 
     CliConfig {
         verbose,
+        timed,
         compiler_location,
     }
 }
@@ -423,7 +498,7 @@ fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, _args: &A
 
 fn build(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
     cli_config.compiler_location.invoke_quillc(
-        cli_config.verbose,
+        cli_config,
         project_config,
         &QuillcInvocation {
             build_info,
