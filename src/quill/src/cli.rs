@@ -66,6 +66,7 @@ pub fn gen_cli() -> App<'static, 'static> {
         )
         .subcommand(build())
         .subcommand(run())
+        .subcommand(clean())
         .subcommand(update())
 }
 
@@ -160,6 +161,10 @@ fn build() -> App<'static, 'static> {
 fn run() -> App<'static, 'static> {
     let app = App::new("run").about("Runs the Quill code in a given folder");
     build_flags(app)
+}
+
+fn clean() -> App<'static, 'static> {
+    App::new("clean").about("Removes all build files").long_about("Removes all build files so that the project will be guaranteed to be built from scratch next time")
 }
 
 fn update() -> App<'static, 'static> {

@@ -288,11 +288,17 @@ fn main() {
         }
         ("run", Some(sub_args)) => process_run(&cli_config, &gen_project_config(&args), sub_args),
         ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args),
-        ("", _) => {
+        ("clean", Some(sub_args)) => {
+            process_clean(&cli_config, &gen_project_config(&args), sub_args)
+        }
+        ("help", _) => {
+            cli::gen_cli().print_long_help().unwrap();
+            println!();
+        }
+        _ => {
             cli::gen_cli().print_help().unwrap();
             println!();
         }
-        _ => {}
     }
 }
 
@@ -477,6 +483,10 @@ fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, args: &Ar
     let build_config = generate_build_config(args);
     let build_info = generate_build_info(TargetTriple::default_triple(), project_config, args);
     run(cli_config, &build_config, project_config, build_info);
+}
+
+fn process_clean(_cli_config: &CliConfig, project_config: &ProjectConfig, _args: &ArgMatches<'_>) {
+    let _ = std::fs::remove_dir_all(&project_config.build_folder);
 }
 
 /// Generates the build config that `quill` needs, that we do *not* send to `quillc`.
