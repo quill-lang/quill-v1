@@ -1,5 +1,5 @@
-#[tokio::test]
-async fn test_index() {
+#[test]
+fn test_index() {
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
     use quill_lexer::lex;
@@ -25,13 +25,15 @@ async fn test_index() {
         file_type: SourceFileType::Quill,
     };
 
-    let lexed = lex(&fs, &file_ident).await;
+    let lexed = lex(&fs, &file_ident);
     let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
     let index = parsed.bind(|parsed| index_single_file(&file_ident, &parsed));
 
-    let mut error_emitter = ErrorEmitter::new(&fs);
-    let index = error_emitter.consume_diagnostic(index);
-    error_emitter.emit_all().await;
+    let (index, messages) = index.destructure();
+    let error_emitter = ErrorEmitter::new(&fs);
+    for message in messages {
+        error_emitter.emit(message)
+    }
 
     // If the index fails, the test will fail.
     let index = index.unwrap();

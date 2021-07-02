@@ -166,11 +166,28 @@ impl Display for TargetEnvironment {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum OptimisationType {
+    Debug,
+    ReleaseFast,
+    ReleaseSafe,
+    ReleaseSmall,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildInfo {
     pub target_triple: TargetTriple,
     pub code_folder: PathBuf,
     pub build_folder: PathBuf,
+    pub optimisation_type: OptimisationType,
+
+    pub emit_hir: bool,
+    pub emit_mir: bool,
+    pub emit_project_mir: bool,
+    pub emit_unverified_llvm_ir: bool,
+    pub emit_basic_llvm_ir: bool,
+    pub emit_llvm_ir: bool,
+    pub emit_asm: bool,
 }
 
 impl BuildInfo {

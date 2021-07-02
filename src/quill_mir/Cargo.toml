@@ -16,4 +16,3 @@ multimap = "0.8.3"
 [dev-dependencies]
 quill_source_file = { path = "../quill_source_file" }
 quill_lexer = { path = "../quill_lexer" }
-tokio = { version = "^1.0", features = ["macros", "rt"] }

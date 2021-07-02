@@ -18,6 +18,15 @@
             "console": "externalTerminal"
         },
         {
+            "name": "(Linux) Launch quillc",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/quillc",
+            "args": [
+                "{\"build_info\":{\"target_triple\":{\"arch\":\"Wasm32\",\"vendor\":\"Unknown\",\"os\":\"Unknown\",\"env\":\"Wasi\"},\"code_folder\":\"stdlib/core\",\"build_folder\":\"stdlib/core/build\"},\"zig_compiler\":\"zig\"}"
+            ],
+        },
+        {
             "name": "(Windows) Launch core",
             "type": "cppvsdbg",
             "request": "launch",

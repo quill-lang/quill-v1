@@ -114,13 +114,11 @@ impl Ranged for TokenTree {
 }
 
 /// Lexes a source file. This function reads a source file from disk (if not cached), splits it into tokens, and groups those tokens into token trees.
-pub async fn lex(
+pub fn lex(
     fs: &PackageFileSystem,
     source_file: &SourceFileIdentifier,
 ) -> DiagnosticResult<Vec<TokenTree>> {
-    tokenise(fs, source_file)
-        .await
-        .bind(|tokens| group_token_trees(tokens, source_file))
+    tokenise(fs, source_file).bind(|tokens| group_token_trees(tokens, source_file))
 }
 
 /// Takes a linear list of tokens, and sorts them into a hierarchy of token trees according to the use of brackets.
@@ -247,7 +245,7 @@ fn group_token_trees(
 }
 
 /// This function is asynchronous since it may read the file from disk.
-async fn tokenise(
+fn tokenise(
     fs: &PackageFileSystem,
     source_file: &SourceFileIdentifier,
 ) -> DiagnosticResult<Vec<Token>> {
@@ -265,7 +263,6 @@ async fn tokenise(
             Diagnostic::in_file(source_file),
         )),
     })
-    .await
 }
 
 /// Removes the leading whitespace, and then returns the list of tokens on this line.

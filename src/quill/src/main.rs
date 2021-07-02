@@ -13,10 +13,15 @@
 use std::{
     collections::HashMap,
     fmt::Display,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
-use clap::ArgMatches;
+use clap::{value_t, values_t, ArgMatches};
+use console::style;
+use indicatif::ProgressStyle;
 use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, Severity},
     location::{Location, SourceFileIdentifier, SourceFileType},
@@ -26,15 +31,20 @@ use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
 use quillc_api::{ProjectInfo, QuillcInvocation};
-use tokio::process::Command;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+mod cli;
 mod update;
 
 pub struct CliConfig {
     verbose: bool,
     compiler_location: CompilerLocation,
+}
+
+/// CLI flags for the `build` or `run` command.
+pub struct BuildConfig {
+    timed: bool,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -74,8 +84,66 @@ enum CompilerLocation {
     Installed { host: HostType, root: PathBuf },
 }
 
+lazy_static::lazy_static! {
+    static ref SPINNER_TEMPLATE: String = format!(
+        "[{}] {} {}: {}",
+        "{elapsed}",
+        style("{spinner}").black().bright(),
+        "{prefix}",
+        style("{msg}").bright()
+    );
+}
+
+/// Like [indicatif::HumanDuration], but can also format small times like milliseconds and microseconds,
+/// and with two significant orders of magnitude.
+/// Also colours long durations.
+struct HumanSmallDuration(Duration);
+
+impl Display for HumanSmallDuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= Duration::from_secs(60) {
+            let secs = self.0.as_secs();
+            write!(
+                f,
+                "{}",
+                style(format!("{} min {} s", secs / 60, secs % 60))
+                    .red()
+                    .bold()
+                    .bright()
+            )
+        } else if self.0 >= Duration::from_secs(1) {
+            write!(
+                f,
+                "{}",
+                style(format!(
+                    "{} s {} ms",
+                    self.0.as_secs(),
+                    self.0.subsec_millis()
+                ))
+                .red()
+            )
+        } else if self.0 >= Duration::from_millis(1) {
+            let micros = self.0.subsec_micros();
+            let str = format!("{} ms {} μs", micros / 1000, micros % 1000);
+            if micros > 100_000 {
+                write!(f, "{}", style(str).yellow())
+            } else {
+                write!(f, "{}", str)
+            }
+        } else {
+            write!(f, "{} μs", self.0.subsec_micros())
+        }
+    }
+}
+
 impl CompilerLocation {
-    async fn invoke_quillc(&self, verbose: bool, invocation: &QuillcInvocation) {
+    fn invoke_quillc(
+        &self,
+        cli_config: &CliConfig,
+        build_config: &BuildConfig,
+        project_config: &ProjectConfig,
+        invocation: &QuillcInvocation,
+    ) {
         let json = serde_json::to_string(invocation).unwrap();
         let mut command = match self {
             CompilerLocation::Cargo { source } => {
@@ -84,7 +152,7 @@ impl CompilerLocation {
                 command.arg("run");
                 command.arg("--bin");
                 command.arg("quillc");
-                if !verbose {
+                if !cli_config.verbose {
                     command.arg("-q");
                 }
                 command.arg("--");
@@ -95,8 +163,82 @@ impl CompilerLocation {
             }
         };
         command.arg(json);
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::inherit());
+
         info!("Executing {:#?}", command);
-        let status = command.status().await.unwrap();
+
+        // Keep track of the time taken for each status message to be sent.
+        let mut last_status = Instant::now();
+        let mut current_status = None;
+        let mut status_times = Vec::new();
+
+        let mut spawned = command.spawn().unwrap();
+
+        // Messages are given to stdout.
+        let stdout = BufReader::new(spawned.stdout.take().unwrap()).lines();
+
+        // Make a progress bar.
+        let progress = indicatif::ProgressBar::new_spinner()
+            .with_style(ProgressStyle::default_spinner().template(&SPINNER_TEMPLATE));
+        progress.set_prefix(format!(
+            "{} {}",
+            style("compiling").green(),
+            project_config.project_info.name
+        ));
+        progress.enable_steady_tick(50);
+
+        let fs = PackageFileSystem::new({
+            let mut map = HashMap::new();
+            map.insert(
+                project_config.project_info.name.clone(),
+                invocation.build_info.code_folder.clone(),
+            );
+            map
+        });
+        let error_emitter = ErrorEmitter::new(&fs);
+
+        for line in stdout {
+            let line = line.unwrap();
+            if let Some(status) = line.strip_prefix("status ") {
+                // This is a quillc status message.
+                progress.set_message(status.to_owned());
+                if build_config.timed {
+                    let now = Instant::now();
+                    let duration = now - last_status;
+                    last_status = now;
+                    if let Some(current_status) = current_status.take() {
+                        status_times.push((current_status, duration));
+                    }
+                    current_status = Some(status.to_owned());
+                }
+            } else if let Some(message) = line.strip_prefix("message ") {
+                let message: ErrorMessage = serde_json::from_str(message).unwrap();
+                error_emitter.emit(message);
+            } else {
+                // This is just a typical user-facing message.
+                println!("{}", line);
+            }
+        }
+
+        let status = spawned.wait().unwrap();
+
+        progress.finish_with_message("done");
+
+        if build_config.timed {
+            let now = Instant::now();
+            let duration = now - last_status;
+            if let Some(current_status) = current_status.take() {
+                status_times.push((current_status, duration));
+            }
+
+            // Report the time taken for each status.
+            println!("{}", style("time taken:").bright().bold());
+            for (status, duration) in status_times {
+                println!(" • {}: {}", status, HumanSmallDuration(duration));
+            }
+        }
+
         if !status.success() {
             std::process::exit(1);
         }
@@ -130,32 +272,33 @@ fn error<S: Display>(message: S) -> ! {
     std::process::exit(1);
 }
 
-async fn exit(mut emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
-    emitter.process(vec![error_message]);
-    emitter.emit_all().await;
+fn exit(emitter: ErrorEmitter<'_>, error_message: ErrorMessage) -> ! {
+    emitter.emit(error_message);
     std::process::exit(1)
 }
 
-#[tokio::main]
-async fn main() {
-    let yaml = clap::load_yaml!("cli.yml");
-    let args = clap::App::from_yaml(yaml).get_matches();
+fn main() {
+    let args = cli::gen_cli().get_matches();
 
     let cli_config = gen_cli_config(&args);
 
     match args.subcommand() {
         ("build", Some(sub_args)) => {
-            process_build(&cli_config, &gen_project_config(&args).await, sub_args).await
+            process_build(&cli_config, &gen_project_config(&args), sub_args)
         }
-        ("run", Some(sub_args)) => {
-            process_run(&cli_config, &gen_project_config(&args).await, sub_args).await
+        ("run", Some(sub_args)) => process_run(&cli_config, &gen_project_config(&args), sub_args),
+        ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args),
+        ("clean", Some(sub_args)) => {
+            process_clean(&cli_config, &gen_project_config(&args), sub_args)
         }
-        ("update", Some(sub_args)) => update::process_update(&cli_config, sub_args).await,
-        ("", _) => {
-            clap::App::from_yaml(yaml).print_help().unwrap();
+        ("help", _) => {
+            cli::gen_cli().print_long_help().unwrap();
             println!();
         }
-        _ => {}
+        _ => {
+            cli::gen_cli().print_help().unwrap();
+            println!();
+        }
     }
 }
 
@@ -197,7 +340,7 @@ fn gen_cli_config(args: &ArgMatches) -> CliConfig {
     }
 }
 
-async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
+fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     let provided_code_folder = args
         .value_of_os("project")
         .map_or_else(|| Path::new("."), Path::new);
@@ -221,16 +364,14 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     {
         match std::str::from_utf8(&project_config_str) {
             Ok(project_config_str) => {
-                dummy_fs
-                    .overwrite_source_file(
-                        SourceFileIdentifier {
-                            module: vec![].into(),
-                            file: "quill".into(),
-                            file_type: SourceFileType::Toml,
-                        },
-                        project_config_str.to_string(),
-                    )
-                    .await;
+                dummy_fs.overwrite_source_file(
+                    SourceFileIdentifier {
+                        module: vec![].into(),
+                        file: "quill".into(),
+                        file_type: SourceFileType::Toml,
+                    },
+                    project_config_str.to_string(),
+                );
                 match toml::from_str::<ProjectInfo>(project_config_str) {
                     Ok(toml) => toml,
                     Err(err) => {
@@ -253,7 +394,6 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                                 ),
                             ),
                         )
-                        .await
                     }
                 }
             }
@@ -281,7 +421,6 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                         }),
                     ),
                 )
-                .await
             }
         }
     } else {
@@ -297,7 +436,6 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
                 }),
             ),
         )
-        .await
     };
 
     std::fs::create_dir_all(code_folder.join("build")).unwrap();
@@ -310,89 +448,107 @@ async fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     }
 }
 
-fn string_to_target(target: &str) -> TargetTriple {
+fn parse_build_target(target: cli::BuildTarget) -> TargetTriple {
     match target {
-        "win" => TargetTriple {
+        cli::BuildTarget::Win => TargetTriple {
             arch: TargetArchitecture::X86_64,
             vendor: TargetVendor::Pc,
             os: TargetOS::Windows,
             env: Some(TargetEnvironment::Gnu),
         },
-        "linux" => TargetTriple {
+        cli::BuildTarget::Linux => TargetTriple {
             arch: TargetArchitecture::X86_64,
             vendor: TargetVendor::Unknown,
             os: TargetOS::Linux,
             env: Some(TargetEnvironment::Gnu),
         },
-        "wasm32" => TargetTriple::wasm32_wasi(),
-        other => clap::Error {
-            message: format!(
-                "'{}' was not a valid target, expected one of 'win', 'linux', 'wasm32'",
-                other
-            ),
-            kind: clap::ErrorKind::ValueValidation,
-            info: None,
-        }
-        .exit(),
+        cli::BuildTarget::Wasm32 => TargetTriple::wasm32_wasi(),
     }
 }
 
-async fn process_build(
-    cli_config: &CliConfig,
-    project_config: &ProjectConfig,
-    args: &ArgMatches<'_>,
-) {
-    let targets_str = args.values_of_lossy("target");
-    let targets = targets_str
-        .map(|targets_str| {
-            targets_str
-                .into_iter()
-                .map(|target| string_to_target(&target))
-                .collect()
-        })
-        .unwrap_or_else(|| vec![TargetTriple::default_triple()]);
+fn process_build(cli_config: &CliConfig, project_config: &ProjectConfig, args: &ArgMatches<'_>) {
+    let targets = values_t!(args.values_of("target"), cli::BuildTarget)
+        .map(|vec| vec.into_iter().map(parse_build_target).collect::<Vec<_>>())
+        .unwrap_or_else(|_| vec![TargetTriple::default_triple()]);
+
+    let build_config = generate_build_config(args);
 
     for target_triple in targets {
-        let build_info = BuildInfo {
-            target_triple,
-            code_folder: project_config.code_folder.clone(),
-            build_folder: project_config.build_folder.clone(),
-        };
-        build(cli_config, project_config, build_info).await;
+        let build_info = generate_build_info(target_triple, project_config, args);
+        build(cli_config, &build_config, project_config, build_info);
     }
 }
 
-async fn process_run(
-    cli_config: &CliConfig,
+fn process_run(cli_config: &CliConfig, project_config: &ProjectConfig, args: &ArgMatches<'_>) {
+    let build_config = generate_build_config(args);
+    let build_info = generate_build_info(TargetTriple::default_triple(), project_config, args);
+    run(cli_config, &build_config, project_config, build_info);
+}
+
+fn process_clean(_cli_config: &CliConfig, project_config: &ProjectConfig, _args: &ArgMatches<'_>) {
+    let _ = std::fs::remove_dir_all(&project_config.build_folder);
+}
+
+/// Generates the build config that `quill` needs, that we do *not* send to `quillc`.
+fn generate_build_config(args: &ArgMatches) -> BuildConfig {
+    let timed = args.is_present("timed");
+    BuildConfig { timed }
+}
+
+/// Generates the build config that `quillc` needs, but that `quill` does not.
+fn generate_build_info(
+    target_triple: TargetTriple,
     project_config: &ProjectConfig,
-    _args: &ArgMatches<'_>,
-) {
-    let info = BuildInfo {
-        target_triple: TargetTriple::default_triple(),
+    args: &ArgMatches,
+) -> BuildInfo {
+    let optimisation_type = value_t!(args.value_of("opt"), cli::OptimisationType)
+        .unwrap_or_else(|e| e.exit())
+        .into();
+    BuildInfo {
+        target_triple,
         code_folder: project_config.code_folder.clone(),
         build_folder: project_config.build_folder.clone(),
-    };
-    run(cli_config, project_config, info).await;
+        optimisation_type,
+
+        emit_hir: args.is_present("emit-hir") || args.is_present("debug-compiler"),
+        emit_mir: args.is_present("emit-mir") || args.is_present("debug-compiler"),
+        emit_project_mir: args.is_present("emit-project-mir") || args.is_present("debug-compiler"),
+        emit_unverified_llvm_ir: args.is_present("emit-unverified-llvm-ir")
+            || args.is_present("debug-compiler"),
+        emit_basic_llvm_ir: args.is_present("emit-basic-llvm-ir")
+            || args.is_present("debug-compiler"),
+        emit_llvm_ir: args.is_present("emit-llvm-ir") || args.is_present("debug-compiler"),
+        emit_asm: args.is_present("emit-asm") || args.is_present("debug-compiler"),
+    }
 }
 
-async fn build(cli_config: &CliConfig, _project_config: &ProjectConfig, build_info: BuildInfo) {
-    cli_config
-        .compiler_location
-        .invoke_quillc(
-            cli_config.verbose,
-            &QuillcInvocation {
-                build_info,
-                zig_compiler: cli_config.compiler_location.zig_compiler(),
-            },
-        )
-        .await;
+fn build(
+    cli_config: &CliConfig,
+    build_config: &BuildConfig,
+    project_config: &ProjectConfig,
+    build_info: BuildInfo,
+) {
+    cli_config.compiler_location.invoke_quillc(
+        cli_config,
+        build_config,
+        project_config,
+        &QuillcInvocation {
+            build_info,
+            zig_compiler: cli_config.compiler_location.zig_compiler(),
+        },
+    );
 }
 
-async fn run(cli_config: &CliConfig, project_config: &ProjectConfig, build_info: BuildInfo) {
-    build(cli_config, project_config, build_info.clone()).await;
+fn run(
+    cli_config: &CliConfig,
+    build_config: &BuildConfig,
+    project_config: &ProjectConfig,
+    build_info: BuildInfo,
+) {
+    build(cli_config, build_config, project_config, build_info.clone());
     let mut command = Command::new(build_info.executable(&project_config.project_info.name));
     command.current_dir(build_info.code_folder);
-    let status = command.status().await.unwrap();
+    let status = command.status().unwrap();
     if !status.success() {
         if let Some(code) = status.code() {
             error(format!("program terminated with error code {}", code))

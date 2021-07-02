@@ -1,5 +1,5 @@
-#[tokio::test]
-async fn test_typeck() {
+#[test]
+fn test_typeck() {
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
     use quill_index::index_single_file;
@@ -26,7 +26,7 @@ async fn test_typeck() {
             file_type: SourceFileType::Quill,
         };
 
-        let lexed = lex(&fs, &file_ident).await;
+        let lexed = lex(&fs, &file_ident);
         let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
         let typeck = parsed
             .bind(|parsed| {
@@ -38,9 +38,11 @@ async fn test_typeck() {
             })
             .deny();
 
-        let mut error_emitter = ErrorEmitter::new(&fs);
-        let typeck = error_emitter.consume_diagnostic(typeck);
-        error_emitter.emit_all().await;
+        let (typeck, messages) = typeck.destructure();
+        let error_emitter = ErrorEmitter::new(&fs);
+        for message in messages {
+            error_emitter.emit(message)
+        }
 
         // If the type check fails, the test will fail.
         let typeck = typeck.unwrap();

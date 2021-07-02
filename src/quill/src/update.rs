@@ -62,54 +62,29 @@ struct ZigRelease {
     // shasum: String,
 }
 
-pub async fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
+pub fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
     if let crate::CompilerLocation::Installed { host, root } = &cli_config.compiler_location {
-        let _ = tokio::fs::remove_dir_all(root.join("compiler-deps")).await;
-        let _ = tokio::fs::create_dir_all(root.join("compiler-deps")).await;
+        let _ = std::fs::remove_dir_all(root.join("compiler-deps"));
+        let _ = std::fs::create_dir_all(root.join("compiler-deps"));
 
         eprintln!("checking latest version...",);
         let version: QuillVersion = download_text_or_exit(
             "https://github.com/quill-lang/quill/releases/download/latest/version.txt",
             "quill version",
         )
-        .await
         .try_into()
         .unwrap_or_else(|e| error(e));
         eprintln!("installing quill {}", version);
 
-        let update_self = !args.is_present("not-self");
-        println!("updating self: {}", update_self);
-        if update_self {
-            let exe_path = if let HostType::Windows = host {
-                root.join("quill.exe")
-            } else {
-                root.join("quill")
-            };
-            download_self(*host, version, exe_path.clone()).await;
-
-            let status = tokio::process::Command::new(exe_path.clone())
-                .arg("update")
-                .arg("--not-self")
-                .current_dir(exe_path.parent().unwrap())
-                .status()
-                .await
-                .unwrap();
-            if !status.success() {
-                println!(
-                    "{}",
-                    console::style("Could not execute quill updater!")
-                        .red()
-                        .bright()
-                        .bold()
-                );
-            }
-            return;
-        }
+        let exe_path = if let HostType::Windows = host {
+            root.join("quill.exe")
+        } else {
+            root.join("quill")
+        };
+        download_self(*host, version, exe_path);
 
         // Download components such as quillc.
-        tokio::fs::create_dir_all(root.join("compiler-deps"))
-            .await
-            .unwrap();
+        std::fs::create_dir_all(root.join("compiler-deps")).unwrap();
         for component in &["quillc", "quill_lsp"] {
             download_artifact(
                 &format!("{}_{}", host.component_prefix(), component),
@@ -117,18 +92,16 @@ pub async fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
                 Some(version),
                 root.join(component),
                 false,
-            )
-            .await;
+            );
         }
 
         // Download development components.
-        tokio::fs::create_dir_all(root.join("compiler-deps"))
-            .await
-            .unwrap();
+        std::fs::create_dir_all(root.join("compiler-deps")).unwrap();
         // Download the Zig compiler.
-        let zig_version: ZigDownloadInfo = serde_json::from_str(
-            &download_text_or_exit("https://ziglang.org/download/index.json", "zig version").await,
-        )
+        let zig_version: ZigDownloadInfo = serde_json::from_str(&download_text_or_exit(
+            "https://ziglang.org/download/index.json",
+            "zig version",
+        ))
         .unwrap_or_else(|e| error(e));
         let zig_release = zig_version.master;
         let zig_download = match host {
@@ -136,26 +109,24 @@ pub async fn process_update(cli_config: &CliConfig, args: &ArgMatches<'_>) {
             HostType::Windows => zig_release.x86_64_windows,
         };
         // Download the tarball.
-        download_archive_or_exit(
+        futures::executor::block_on(download_archive_or_exit(
             zig_download.tarball,
             "zig compiler",
             root.join("compiler-deps").join("zig"),
             None,
-        )
-        .await;
+        ));
     } else {
         error("cannot update quill when running from source")
     }
 }
 
-async fn download_text_or_exit<U: IntoUrl>(url: U, request: &str) -> String {
-    let response = match reqwest::Client::builder()
+fn download_text_or_exit<U: IntoUrl>(url: U, request: &str) -> String {
+    let response = match reqwest::blocking::Client::builder()
         .user_agent(APP_USER_AGENT)
         .build()
         .unwrap()
         .get(url)
         .send()
-        .await
     {
         Ok(response) => response,
         Err(_) => error(format!(
@@ -172,7 +143,7 @@ async fn download_text_or_exit<U: IntoUrl>(url: U, request: &str) -> String {
         ))
     }
 
-    match response.text().await {
+    match response.text() {
         Ok(text) => text,
         Err(_) => error(format!(
             "could not fetch {} (connected but could not retrieve response body)",
@@ -261,69 +232,66 @@ async fn download_archive_or_exit<U: IntoUrl>(
 
     let done2 = std::sync::Arc::clone(&done);
     let dir2 = dir.clone();
-    tokio::task::spawn_blocking(move || {
-        match archive_type {
-            ArchiveType::TarGz => {
-                let mut archive = Archive::new(GzDecoder::new(bytes.as_slice()));
-                archive.unpack(dir2).unwrap();
-            }
-            ArchiveType::TarXz => {
-                let mut archive = Archive::new(XzDecoder::new(bytes.as_slice()));
-                archive.unpack(dir2).unwrap();
-            }
-            ArchiveType::Zip => {
-                let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
-                // Find the root folder of this archive.
-                let prefix = {
-                    let mut path = archive
-                        .by_index(0)
-                        .unwrap()
-                        .enclosed_name()
-                        .unwrap()
-                        .to_owned();
-                    while let Some(parent) = path.parent() {
-                        if parent.file_name().is_some() {
-                            path = parent.to_owned();
-                        } else {
-                            break;
-                        }
-                    }
-                    path
-                };
-                for i in 0..archive.len() {
-                    let mut file = archive.by_index(i).unwrap();
-                    let outpath = match file.enclosed_name() {
-                        Some(path) => dir2.join(path.strip_prefix(&prefix).unwrap()),
-                        None => continue,
-                    };
 
-                    if (&*file.name()).ends_with('/') {
-                        std::fs::create_dir_all(&outpath).unwrap();
+    match archive_type {
+        ArchiveType::TarGz => {
+            let mut archive = Archive::new(GzDecoder::new(bytes.as_slice()));
+            archive.unpack(dir2).unwrap();
+        }
+        ArchiveType::TarXz => {
+            let mut archive = Archive::new(XzDecoder::new(bytes.as_slice()));
+            archive.unpack(dir2).unwrap();
+        }
+        ArchiveType::Zip => {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+            // Find the root folder of this archive.
+            let prefix = {
+                let mut path = archive
+                    .by_index(0)
+                    .unwrap()
+                    .enclosed_name()
+                    .unwrap()
+                    .to_owned();
+                while let Some(parent) = path.parent() {
+                    if parent.file_name().is_some() {
+                        path = parent.to_owned();
                     } else {
-                        if let Some(p) = outpath.parent() {
-                            if !p.exists() {
-                                std::fs::create_dir_all(&p).unwrap();
-                            }
-                        }
-                        let mut outfile = std::fs::File::create(&outpath).unwrap();
-                        std::io::copy(&mut file, &mut outfile).unwrap();
+                        break;
                     }
+                }
+                path
+            };
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i).unwrap();
+                let outpath = match file.enclosed_name() {
+                    Some(path) => dir2.join(path.strip_prefix(&prefix).unwrap()),
+                    None => continue,
+                };
+
+                if (&*file.name()).ends_with('/') {
+                    std::fs::create_dir_all(&outpath).unwrap();
+                } else {
+                    if let Some(p) = outpath.parent() {
+                        if !p.exists() {
+                            std::fs::create_dir_all(&p).unwrap();
+                        }
+                    }
+                    let mut outfile = std::fs::File::create(&outpath).unwrap();
+                    std::io::copy(&mut file, &mut outfile).unwrap();
                 }
             }
         }
-        done2.store(true, Ordering::SeqCst);
-    });
+    }
+    done2.store(true, Ordering::SeqCst);
 
     while !done.load(Ordering::SeqCst) {
         progress_bar.tick();
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     // Check the version.
     if let Some(expected_version) = expected_version {
-        let version = tokio::fs::read_to_string(dir.join("version.txt"))
-            .await
-            .unwrap();
+        let version = std::fs::read_to_string(dir.join("version.txt")).unwrap();
         let version = QuillVersion::try_from(version).unwrap_or_else(|e| error(e));
         if version != expected_version {
             error(format!(
@@ -336,13 +304,11 @@ async fn download_archive_or_exit<U: IntoUrl>(
     progress_bar.finish_with_message(format!("{} done", display_name));
 }
 
-async fn download_self(host: HostType, expected_version: QuillVersion, exe_path: PathBuf) {
-    let temp_dir = tokio::task::spawn_blocking(|| tempdir::TempDir::new("quill_install").unwrap())
-        .await
-        .unwrap();
+fn download_self(host: HostType, expected_version: QuillVersion, exe_path: PathBuf) {
+    let temp_dir = tempdir::TempDir::new("quill_install").unwrap();
 
     // Download quill itself and perform a self update.
-    download_archive_or_exit(
+    futures::executor::block_on(download_archive_or_exit(
         format!(
             "https://github.com/quill-lang/quill/releases/download/latest/{}_quill.tar.gz",
             host.component_prefix()
@@ -350,35 +316,29 @@ async fn download_self(host: HostType, expected_version: QuillVersion, exe_path:
         "quill",
         temp_dir.path().to_owned(),
         Some(expected_version),
-    )
-    .await;
+    ));
 
     let temp_path = exe_path.with_extension("old");
-    let _ = tokio::fs::remove_file(&temp_path).await;
-    tokio::task::spawn_blocking(move || {
-        self_update::Move::from_source(&host.as_executable(temp_dir.path().join("quill")))
-            .replace_using_temp(&temp_path)
-            .to_dest(&exe_path)
-            .unwrap();
-    })
-    .await
-    .unwrap();
+    let _ = std::fs::remove_file(&temp_path);
+
+    self_update::Move::from_source(&host.as_executable(temp_dir.path().join("quill")))
+        .replace_using_temp(&temp_path)
+        .to_dest(&exe_path)
+        .unwrap();
 }
 
 /// If unpack_inner_folder is true, the artifact contains exactly one folder with the same name, which will be unpacked.
-async fn download_artifact(
+fn download_artifact(
     name: &str,
     display_name: &str,
     expected_version: Option<QuillVersion>,
     location: PathBuf,
     unpack_inner_folder: bool,
 ) {
-    let temp_dir = tokio::task::spawn_blocking(|| tempdir::TempDir::new("quill_install").unwrap())
-        .await
-        .unwrap();
+    let temp_dir = tempdir::TempDir::new("quill_install").unwrap();
 
     // Download quill itself and perform a self update.
-    download_archive_or_exit(
+    futures::executor::block_on(download_archive_or_exit(
         format!(
             "https://github.com/quill-lang/quill/releases/download/latest/{}.tar.gz",
             name
@@ -386,21 +346,16 @@ async fn download_artifact(
         display_name,
         temp_dir.path().to_owned(),
         expected_version,
-    )
-    .await;
+    ));
 
     // Now that we know the unpacking was successful, copy the files from the temp dir into a known install dir.
     if unpack_inner_folder {
-        let _ = tokio::fs::remove_dir_all(location.join(name)).await;
+        let _ = std::fs::remove_dir_all(location.join(name));
         let temp_path = temp_dir.into_path();
-        tokio::fs::rename(temp_path.join(name), location.join(name))
-            .await
-            .unwrap();
-        tokio::fs::remove_dir_all(temp_path).await.unwrap();
+        std::fs::rename(temp_path.join(name), location.join(name)).unwrap();
+        std::fs::remove_dir_all(temp_path).unwrap();
     } else {
-        let _ = tokio::fs::remove_dir_all(&location).await;
-        tokio::fs::rename(temp_dir.into_path(), location)
-            .await
-            .unwrap();
+        let _ = std::fs::remove_dir_all(&location);
+        std::fs::rename(temp_dir.into_path(), location).unwrap();
     }
 }

@@ -178,10 +178,10 @@ dependencies = [
  "atty",
  "bitflags",
  "strsim",
+ "term_size",
  "textwrap",
  "unicode-width",
  "vec_map",
- "yaml-rust",
 ]
 
 [[package]]
@@ -371,6 +371,7 @@ checksum = "0e7e43a803dae2fa37c1f6a8fe121e1f7bf9548b4dfc0522a42f34145dadfc27"
 dependencies = [
  "futures-channel",
  "futures-core",
+ "futures-executor",
  "futures-io",
  "futures-sink",
  "futures-task",
@@ -392,6 +393,17 @@ name = "futures-core"
 version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0402f765d8a89a26043b889b26ce3c4679d268fa6bb22cd7c6aad98340e179d1"
+
+[[package]]
+name = "futures-executor"
+version = "0.3.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "badaa6a909fac9e7236d0620a2f57f7664640c56575b71a7552fbd68deafab79"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
 
 [[package]]
 name = "futures-io"
@@ -887,6 +899,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntest"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "984caf6c8aa869418ef88062fc685d07d50c04308e63f7eaff6a395b1f5aff33"
+dependencies = [
+ "ntest_proc_macro_helper",
+ "ntest_test_cases",
+ "ntest_timeout",
+]
+
+[[package]]
+name = "ntest_proc_macro_helper"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115562228962147ca51748d19446a4261535a7b6a7b5ff02681e527dcefc22f7"
+
+[[package]]
+name = "ntest_test_cases"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c03e3201148714c580c5cf1ef68b1ed4039203068193197834a43503164b8237"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ntest_timeout"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a870300c30d4224cb16022a4660fd8084d6cb4d29618563c3016b50cc757d1e7"
+dependencies = [
+ "ntest_proc_macro_helper",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1031,6 +1084,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 
 [[package]]
+name = "proc-macro-crate"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d6ea3c4595b96363c13943497db34af4460fb474a95c43f4446ad341b8c9785"
+dependencies = [
+ "toml",
+]
+
+[[package]]
 name = "proc-macro-error"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1093,7 +1155,9 @@ dependencies = [
  "console",
  "dirs",
  "flate2",
+ "futures",
  "indicatif 0.16.2",
+ "lazy_static",
  "quill_common",
  "quill_source_file",
  "quill_target",
@@ -1104,7 +1168,6 @@ dependencies = [
  "serde_json",
  "tar",
  "tempdir",
- "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
@@ -1124,12 +1187,14 @@ dependencies = [
  "quill_source_file",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
 name = "quill_common"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "quill_func_objects"
@@ -1144,7 +1209,6 @@ dependencies = [
  "quill_source_file",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
@@ -1158,7 +1222,6 @@ dependencies = [
  "quill_parser",
  "quill_source_file",
  "quill_type",
- "tokio",
 ]
 
 [[package]]
@@ -1181,7 +1244,6 @@ version = "0.1.0"
 dependencies = [
  "quill_common",
  "quill_source_file",
- "tokio",
  "unicode-normalization",
 ]
 
@@ -1212,7 +1274,6 @@ dependencies = [
  "quill_target",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
@@ -1250,7 +1311,6 @@ dependencies = [
  "quill_source_file",
  "quill_type",
  "quill_type_deduce",
- "tokio",
 ]
 
 [[package]]
@@ -1260,7 +1320,6 @@ dependencies = [
  "quill_common",
  "quill_lexer",
  "quill_source_file",
- "tokio",
 ]
 
 [[package]]
@@ -1270,7 +1329,6 @@ dependencies = [
  "async-recursion",
  "console",
  "quill_common",
- "tokio",
 ]
 
 [[package]]
@@ -1298,13 +1356,13 @@ dependencies = [
  "quill_parser",
  "quill_source_file",
  "quill_type",
- "tokio",
 ]
 
 [[package]]
 name = "quillc"
 version = "0.1.0"
 dependencies = [
+ "ntest",
  "quill_borrow_check",
  "quill_common",
  "quill_func_objects",
@@ -1321,7 +1379,6 @@ dependencies = [
  "quillc_api",
  "serde",
  "serde_json",
- "tokio",
  "toml",
 ]
 
@@ -1735,6 +1792,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "term_size"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e4129646ca0ed8f45d09b929036bafad5377103edd06e50bf574b353d2b08d9"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "terminal_size"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1750,6 +1817,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d326610f408c7a4eb6f51c37c330e496b08506c9457c9d34287ecc38809fb060"
 dependencies = [
+ "term_size",
  "unicode-width",
 ]
 
@@ -2189,12 +2257,6 @@ checksum = "c179869f34fc7c01830d3ce7ea2086bc3a07e0d35289b667d0a8bf910258926c"
 dependencies = [
  "lzma-sys",
 ]
-
-[[package]]
-name = "yaml-rust"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e66366e18dc58b46801afbf2ca7661a9f59cc8c5962c29892b6039b4f86fa992"
 
 [[package]]
 name = "zip"

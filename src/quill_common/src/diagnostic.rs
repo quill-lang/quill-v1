@@ -1,8 +1,9 @@
 use std::iter::FromIterator;
 
 use crate::location::{Location, Range, Ranged, SourceFileIdentifier};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub source_file: SourceFileIdentifier,
     /// If the location is not specified, then the diagnostic refers to the entire file.
@@ -33,20 +34,20 @@ impl Diagnostic {
 }
 
 /// <https://rustc-dev-guide.rust-lang.org/diagnostics.html#diagnostic-levels>
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Severity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HelpType {
     Help,
     Note,
 }
 
 /// Represents an error/warning/lint message displayed to the user.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorMessage {
     pub message: String,
     pub severity: Severity,
@@ -55,7 +56,7 @@ pub struct ErrorMessage {
 }
 
 /// TODO: consider <https://doc.rust-lang.org/nightly/nightly-rustc/rustc_errors/enum.Applicability.html>
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HelpMessage {
     pub message: String,
     pub help_type: HelpType,

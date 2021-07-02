@@ -223,7 +223,7 @@ impl LanguageServer for Backend {
             let (_, fs) = &guard.file_systems[&project_root.dir];
 
             // Parse the file and emit semantic tokens based on the parse.
-            let lexed = quill_lexer::lex(fs, &identifier).await;
+            let lexed = quill_lexer::lex(fs, &identifier);
             let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &identifier));
             let (parsed, _) = parsed.destructure();
 
@@ -258,10 +258,10 @@ impl LanguageServer for Backend {
             let contents = params.content_changes[0].text.clone();
             let guard = self.root_file_systems.read().await;
             let (_, fs) = &guard.file_systems[&project_root.dir];
-            fs.overwrite_source_file(identifier.clone(), contents).await;
+            fs.overwrite_source_file(identifier.clone(), contents);
 
             // Parse the file and emit diagnostics.
-            let lexed = quill_lexer::lex(fs, &identifier).await;
+            let lexed = quill_lexer::lex(fs, &identifier);
             let parsed = lexed.bind(|lexed| quill_parser::parse(lexed, &identifier));
             let (_, messages) = parsed.destructure();
 
@@ -285,8 +285,7 @@ impl LanguageServer for Backend {
         {
             self.root_file_systems.read().await.file_systems[&project_root.dir]
                 .1
-                .remove_cache(&identifier)
-                .await;
+                .remove_cache(&identifier);
         }
     }
 
@@ -307,16 +306,13 @@ impl LanguageServer for Backend {
                     segments: vec![project_root.project_name.clone().into()],
                 },
                 &project_root.dir,
-            )
-            .await;
+            );
 
             let lexed = {
                 let mut results = Vec::new();
                 for file_ident in source_files.iter() {
                     results.push(
-                        quill_lexer::lex(fs, file_ident)
-                            .await
-                            .map(|lexed| (file_ident.clone(), lexed)),
+                        quill_lexer::lex(fs, file_ident).map(|lexed| (file_ident.clone(), lexed)),
                     );
                 }
                 DiagnosticResult::sequence_unfail(results)

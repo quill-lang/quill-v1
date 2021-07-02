@@ -1,17 +1,18 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::Debug,
+    io::Read,
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
 use quill_common::{
-    diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpType, Severity},
+    diagnostic::{Diagnostic, ErrorMessage, HelpType, Severity},
     location::{
         ModuleIdentifier, SourceFileIdentifier, SourceFileIdentifierSegment, SourceFileType,
     },
 };
-use tokio::{fs::File, io::BufReader, sync::RwLock};
+use std::{fs::File, io::BufReader, sync::RwLock};
 
 /// If a source file's contents could not be loaded, why was this?
 #[derive(Debug)]
@@ -59,6 +60,7 @@ pub struct PackageFileSystem {
 }
 
 impl PackageFileSystem {
+    /// TODO: Make only one project_directories map in `quill` and send it to `quillc`.
     pub fn new(project_directories: HashMap<String, PathBuf>) -> Self {
         Self {
             project_directories,
@@ -66,11 +68,11 @@ impl PackageFileSystem {
         }
     }
 
-    async fn with_module<F, T>(&self, identifier: &ModuleIdentifier, func: F) -> T
+    fn with_module<F, T>(&self, identifier: &ModuleIdentifier, func: F) -> T
     where
         F: FnOnce(&mut Module) -> T,
     {
-        let mut guard = self.root_module.write().await;
+        let mut guard = self.root_module.write().unwrap();
         let mut module = &mut *guard;
         for SourceFileIdentifierSegment(segment) in &identifier.segments {
             module = module.submodules.entry(segment.clone()).or_default();
@@ -79,7 +81,7 @@ impl PackageFileSystem {
     }
 
     /// Gets a source file stored in memory, or reads it from disk if it isn't loaded yet.
-    pub async fn with_source_file<F, T>(&self, identifier: &SourceFileIdentifier, func: F) -> T
+    pub fn with_source_file<F, T>(&self, identifier: &SourceFileIdentifier, func: F) -> T
     where
         F: FnOnce(Result<&SourceFile, &SourceFileLoadError>) -> T,
     {
@@ -89,19 +91,17 @@ impl PackageFileSystem {
         let module_identifier = &identifier.module;
         let file_identifier = &identifier.file.0;
 
-        let result = self
-            .with_module(module_identifier, |module| {
-                module
-                    .source_files
-                    .get(file_identifier)
-                    .map(|result| func.take().unwrap()(result.as_ref()))
-            })
-            .await;
+        let result = self.with_module(module_identifier, |module| {
+            module
+                .source_files
+                .get(file_identifier)
+                .map(|result| func.take().unwrap()(result.as_ref()))
+        });
 
         match result {
             Some(result) => result,
             None => {
-                let file = self.load_source_file(identifier.clone()).await;
+                let file = self.load_source_file(identifier.clone());
                 // Recreate the borrows here, since they were implicitly destroyed so that we could clone the identifier.
                 let module_identifier = &identifier.module;
                 let file_identifier = &identifier.file.0;
@@ -111,24 +111,22 @@ impl PackageFileSystem {
                     module.source_files.insert(file_identifier.clone(), file);
                     result
                 })
-                .await
             }
         }
     }
 
     /// Removes the cached entry of this source file from memory.
     /// Next time we need this file, it will be reloaded from disk.
-    pub async fn remove_cache(&self, identifier: &SourceFileIdentifier) {
+    pub fn remove_cache(&self, identifier: &SourceFileIdentifier) {
         let module_identifier = &identifier.module;
         let file_identifier = &identifier.file.0;
         self.with_module(module_identifier, |module| {
             module.source_files.remove(file_identifier)
-        })
-        .await;
+        });
     }
 
     /// Overwrites the truth of this source file with new contents.
-    pub async fn overwrite_source_file(&self, identifier: SourceFileIdentifier, contents: String) {
+    pub fn overwrite_source_file(&self, identifier: SourceFileIdentifier, contents: String) {
         // eprintln!("overwriting {}", identifier);
         let module_identifier = &identifier.module;
         let file_identifier = identifier.file.0;
@@ -149,8 +147,7 @@ impl PackageFileSystem {
                     }));
                 }
             }
-        })
-        .await;
+        });
     }
 
     pub fn file_path(&self, identifier: &SourceFileIdentifier) -> PathBuf {
@@ -166,22 +163,17 @@ impl PackageFileSystem {
             .with_extension(identifier.file_type.file_extension())
     }
 
-    async fn load_source_file(
+    fn load_source_file(
         &self,
         identifier: SourceFileIdentifier,
     ) -> Result<SourceFile, SourceFileLoadError> {
-        use tokio::io::AsyncReadExt;
+        let file = File::open(self.file_path(&identifier)).map_err(SourceFileLoadError::Io)?;
 
-        let file = File::open(self.file_path(&identifier))
-            .await
-            .map_err(SourceFileLoadError::Io)?;
-
-        let metadata = file.metadata().await.map_err(SourceFileLoadError::Io)?;
+        let metadata = file.metadata().map_err(SourceFileLoadError::Io)?;
         let modified_time = metadata.modified().map_err(SourceFileLoadError::Io)?;
         let mut contents = Default::default();
         BufReader::new(file)
             .read_to_string(&mut contents)
-            .await
             .map_err(SourceFileLoadError::Io)?;
         Ok(SourceFile {
             contents,
@@ -193,51 +185,18 @@ impl PackageFileSystem {
 /// Prints error and warning messages, outputting the relevant lines of source code from the input files.
 #[must_use = "error messages must be emitted using the emit_all method"]
 pub struct ErrorEmitter<'fs> {
-    /// The error emitter caches messages and will not output them until `emit_all` is called.
-    /// This defers asynchronous (file reading) operations until after the compilation step is finished.
-    /// Order of emission of the messages is preserved.
-    messages: Vec<ErrorMessage>,
-
-    /// If this is true, warnings will not be cached or emitted.
-    has_emitted_error: bool,
-
     package_file_system: &'fs PackageFileSystem,
 }
 
 impl<'fs> ErrorEmitter<'fs> {
     pub fn new(package_file_system: &'fs PackageFileSystem) -> Self {
         Self {
-            messages: Vec::new(),
-            has_emitted_error: false,
             package_file_system,
         }
     }
 
-    /// Consumes the errors of a diagnostic result, yielding the encapsulated value.
-    pub fn consume_diagnostic<T>(&mut self, diagnostic_result: DiagnosticResult<T>) -> Option<T> {
-        let (value, messages) = diagnostic_result.destructure();
-        self.process(messages);
-        value
-    }
-
-    /// Adds some messages to this error emitter.
-    pub fn process(&mut self, messages: impl IntoIterator<Item = ErrorMessage>) {
-        for message in messages {
-            match message.severity {
-                Severity::Warning => {
-                    if !self.has_emitted_error {
-                        self.messages.push(message);
-                    }
-                }
-                Severity::Error => {
-                    self.has_emitted_error = true;
-                    self.messages.push(message);
-                }
-            }
-        }
-    }
-
-    async fn emit(&self, message: ErrorMessage) {
+    /// Emits the given message to the screen.
+    pub fn emit(&self, message: ErrorMessage) {
         use console::style;
 
         match message.severity {
@@ -248,8 +207,7 @@ impl<'fs> ErrorEmitter<'fs> {
                     style(":").white().bright(),
                     style(message.message).white().bright()
                 );
-                self.print_message(message.diagnostic, |s| style(s).red().bright())
-                    .await;
+                self.print_message(message.diagnostic, |s| style(s).red().bright());
             }
             Severity::Warning => {
                 println!(
@@ -257,8 +215,7 @@ impl<'fs> ErrorEmitter<'fs> {
                     style("warning").yellow().bright(),
                     message.message
                 );
-                self.print_message(message.diagnostic, |s| style(s).yellow().bright())
-                    .await;
+                self.print_message(message.diagnostic, |s| style(s).yellow().bright());
             }
         }
 
@@ -275,12 +232,11 @@ impl<'fs> ErrorEmitter<'fs> {
                     style(help.message).white().bright()
                 ),
             }
-            self.print_message(help.diagnostic, |s| style(s).cyan().bright())
-                .await;
+            self.print_message(help.diagnostic, |s| style(s).cyan().bright());
         }
     }
 
-    async fn print_message(
+    fn print_message(
         &self,
         diagnostic: Diagnostic,
         style_arrows: impl Fn(String) -> console::StyledObject<String>,
@@ -400,8 +356,7 @@ impl<'fs> ErrorEmitter<'fs> {
                             );
                         }
                     }
-                })
-                .await;
+                });
         } else {
             println!(
                 "{} {}",
@@ -410,29 +365,17 @@ impl<'fs> ErrorEmitter<'fs> {
             );
         }
     }
-
-    /// Displays all error and warning messages. If an error was emitted, returns true.
-    /// This function may read files from the disk in order to emit a more user-friendly error message, hence it is asynchronous.
-    pub async fn emit_all(mut self) -> bool {
-        let messages = std::mem::take(&mut self.messages);
-        for message in messages {
-            if message.severity == Severity::Error || !self.has_emitted_error {
-                self.emit(message).await;
-            }
-        }
-        self.has_emitted_error
-    }
 }
 
-#[async_recursion::async_recursion]
-pub async fn find_all_source_files(
+pub fn find_all_source_files(
     root_module: ModuleIdentifier,
     code_folder: &Path,
 ) -> Vec<SourceFileIdentifier> {
     let mut result = Vec::new();
-    let mut read_dir = tokio::fs::read_dir(code_folder).await.unwrap();
-    while let Some(entry) = read_dir.next_entry().await.unwrap() {
-        let metadata = entry.metadata().await.unwrap();
+    let read_dir = std::fs::read_dir(code_folder).unwrap();
+    for entry in read_dir {
+        let entry = entry.unwrap();
+        let metadata = entry.metadata().unwrap();
         if metadata.is_file() {
             let os_fname = entry.file_name();
             let fname = os_fname.to_string_lossy();
@@ -447,20 +390,17 @@ pub async fn find_all_source_files(
             let os_folder_name = entry.file_name();
             let folder_name = os_folder_name.to_string_lossy();
             // TODO: check if this is a valid folder name.
-            result.extend(
-                find_all_source_files(
-                    ModuleIdentifier {
-                        segments: root_module
-                            .segments
-                            .iter()
-                            .cloned()
-                            .chain(std::iter::once(folder_name.into()))
-                            .collect(),
-                    },
-                    &entry.path(),
-                )
-                .await,
-            );
+            result.extend(find_all_source_files(
+                ModuleIdentifier {
+                    segments: root_module
+                        .segments
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(folder_name.into()))
+                        .collect(),
+                },
+                &entry.path(),
+            ));
         }
     }
     result

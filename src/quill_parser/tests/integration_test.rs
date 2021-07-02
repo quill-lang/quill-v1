@@ -1,5 +1,5 @@
-#[tokio::test]
-async fn test_parser() {
+#[test]
+fn test_parser() {
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
     use quill_lexer::lex;
@@ -24,12 +24,14 @@ async fn test_parser() {
         file_type: SourceFileType::Quill,
     };
 
-    let lexed = lex(&fs, &file_ident).await;
+    let lexed = lex(&fs, &file_ident);
     let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
 
-    let mut error_emitter = ErrorEmitter::new(&fs);
-    let parsed = error_emitter.consume_diagnostic(parsed);
-    error_emitter.emit_all().await;
+    let (parsed, messages) = parsed.destructure();
+    let error_emitter = ErrorEmitter::new(&fs);
+    for message in messages {
+        error_emitter.emit(message)
+    }
 
     // If the parse fails, the test will fail.
     let parsed = parsed.unwrap();
