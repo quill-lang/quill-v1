@@ -89,7 +89,7 @@ jobs:
         uses: actions-rs/cargo@v1.0.3
         with:
           command: test
-          args: --package quillc --release --no-fail-fast --ignored
+          args: --package quillc --release --no-fail-fast -- --ignored
 
       # We also build the rustdoc in this action so that we avoid recompilation.
 
