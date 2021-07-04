@@ -32,7 +32,22 @@
                 {
                     "comment": "basic keywords",
                     "name": "keyword.other.quill",
-                    "match": "\\b(pub|def|data|enum|use|let|copy)\\b"
+                    "match": "\\b(use|let|impl)\\b"
+                },
+                {
+                    "comment": "operators",
+                    "name": "keyword.operator.quill",
+                    "match": "\\b(copy)\\b"
+                },
+                {
+                    "comment": "storage types",
+                    "name": "storage.type.quill",
+                    "match": "\\b(def|data|enum|aspect)\\b"
+                },
+                {
+                    "comment": "storage modifiers",
+                    "name": "storage.modifier.quill",
+                    "match": "\\b(pub)\\b"
                 }
             ]
         }
