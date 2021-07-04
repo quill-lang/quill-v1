@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use lspower::lsp::*;
 use quill_common::location::Ranged;
 use quill_parser::{
-    definition::{DefinitionBodyP, DefinitionP, TypeParameterP},
+    data_types::AspectP,
+    definition::{DefinitionBodyP, DefinitionDeclP, DefinitionP, TypeParameterP},
     expr_pat::ExprPatP,
     file::FileP,
     types::TypeP,
@@ -87,19 +88,26 @@ impl SemanticTokenGenerator {
         for def in file.definitions {
             self.gen_def(def);
         }
+        for aspect in file.aspects {
+            self.gen_aspect(aspect);
+        }
     }
 
     fn gen_def(&mut self, def: DefinitionP) {
+        self.gen_def_decl(def.decl);
+        self.gen_def_body(def.body);
+    }
+
+    fn gen_def_decl(&mut self, def_decl: DefinitionDeclP) {
         self.push_token(
-            def.decl.name.range,
+            def_decl.name.range,
             SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION],
             0,
         );
-        for param in def.decl.type_parameters {
+        for param in def_decl.type_parameters {
             self.gen_type_parameter(param);
         }
-        self.gen_type(def.decl.definition_type);
-        self.gen_def_body(def.body);
+        self.gen_type(def_decl.definition_type);
     }
 
     fn gen_def_body(&mut self, def_body: DefinitionBodyP) {
@@ -126,6 +134,20 @@ impl SemanticTokenGenerator {
             DefinitionBodyP::CompilerIntrinsic(range) => {
                 self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::MACRO], 0);
             }
+        }
+    }
+
+    fn gen_aspect(&mut self, aspect: AspectP) {
+        self.push_token(
+            aspect.identifier.range,
+            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION],
+            0,
+        );
+        for param in aspect.type_params {
+            self.gen_type_parameter(param);
+        }
+        for def_decl in aspect.definitions {
+            self.gen_def_decl(def_decl);
         }
     }
 
@@ -156,16 +178,7 @@ impl SemanticTokenGenerator {
             TypeP::Borrow { ty, .. } => {
                 self.gen_type(*ty);
             }
-            TypeP::Impl {
-                impl_token,
-                aspect,
-                params,
-            } => {
-                self.push_token(
-                    impl_token,
-                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::KEYWORD],
-                    0,
-                );
+            TypeP::Impl { aspect, params, .. } => {
                 self.push_token(
                     aspect.range(),
                     SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE],
@@ -272,12 +285,7 @@ impl SemanticTokenGenerator {
             ExprPatP::Unknown(_) => {}
             ExprPatP::Borrow { expr, .. } => self.gen_expr(*expr, conditions),
             ExprPatP::Copy { expr, .. } => self.gen_expr(*expr, conditions),
-            ExprPatP::Impl { impl_token, body } => {
-                self.push_token(
-                    impl_token,
-                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::KEYWORD],
-                    0,
-                );
+            ExprPatP::Impl { body, .. } => {
                 self.gen_def_body(body);
             }
             ExprPatP::Field {
@@ -347,7 +355,6 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
 lazy_static::lazy_static! {
     static ref SEMANTIC_TOKEN_LEGEND_VEC: Vec<SemanticTokenType> = {
         vec![
-            SemanticTokenType::KEYWORD,
             SemanticTokenType::FUNCTION,
             SemanticTokenType::VARIABLE,
             SemanticTokenType::TYPE,
