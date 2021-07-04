@@ -50,6 +50,9 @@ jobs:
           command: clippy
           args: -- -Dwarnings
 
+      # Since we're on linux, zig does not need to build libc artifacts.
+      # So there is no need to build some other project beforehand to get zig
+      # to produce these files in advance.
       - name: Run test suite
         uses: actions-rs/cargo@v1.0.3
         with:

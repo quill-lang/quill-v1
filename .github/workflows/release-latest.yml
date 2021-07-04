@@ -78,6 +78,18 @@ jobs:
           command: test
           args: --workspace --exclude quillc --release --no-fail-fast
 
+      # This step, which is not timed, ensures that the zig compiler
+      # has built all necessary libc artifacts.
+      # This guarantees that future linking steps are deterministically fast,
+      # regardless of test execution order.
+      # Even if this fails, we should continue running the remainder of the tests.
+      - name: Build stdlib
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: run
+          args: --bin quill -- -svp stdlib/core build
+        continue-on-error: true
+
       - name: Run quillc test suite
         uses: actions-rs/cargo@v1.0.3
         with:
