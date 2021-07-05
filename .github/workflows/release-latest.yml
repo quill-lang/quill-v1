@@ -87,7 +87,7 @@ jobs:
         uses: actions-rs/cargo@v1.0.3
         with:
           command: run
-          args: --bin quill -- -svp stdlib/core build
+          args: --bin quill --release -- -svp stdlib/core build
         continue-on-error: true
 
       - name: Run quillc test suite
