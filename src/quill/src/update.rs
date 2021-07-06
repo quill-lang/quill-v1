@@ -3,14 +3,12 @@ use std::{
     fmt::Display,
     io::Cursor,
     path::PathBuf,
-    sync::atomic::Ordering,
 };
 
 use chrono::{DateTime, FixedOffset};
 use clap::ArgMatches;
 use flate2::bufread::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::IntoUrl;
 use tar::Archive;
 use xz2::read::XzDecoder;
 use zip::ZipArchive;
@@ -109,46 +107,44 @@ pub fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
             HostType::Windows => zig_release.x86_64_windows,
         };
         // Download the tarball.
-        futures::executor::block_on(download_archive_or_exit(
-            zig_download.tarball,
+        download_archive_or_exit(
+            &zig_download.tarball,
             "zig compiler",
             root.join("compiler-deps").join("zig"),
             None,
-        ));
+        );
     } else {
         error("cannot update quill when running from source")
     }
 }
 
-fn download_text_or_exit<U: IntoUrl>(url: U, request: &str) -> String {
-    let response = match reqwest::blocking::Client::builder()
-        .user_agent(APP_USER_AGENT)
-        .build()
-        .unwrap()
-        .get(url)
-        .send()
-    {
-        Ok(response) => response,
-        Err(_) => error(format!(
-            "could not fetch {} (could not connect to server)",
-            request
-        )),
-    };
+fn download_text_or_exit(url: &str, request_name: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut request = curl::easy::Easy::new();
+    request.useragent(APP_USER_AGENT).unwrap();
+    request.url(url).unwrap();
+    request.follow_location(true).unwrap();
+    let mut xfer = request.transfer();
+    xfer.write_function(|data| {
+        bytes.extend(data);
+        Ok(data.len())
+    })
+    .unwrap();
 
-    if !response.status().is_success() {
+    if let Err(err) = xfer.perform() {
         error(format!(
-            "could not fetch {} (connected but server returned error code '{}')",
-            request,
-            response.status()
+            "could not fetch {} (CURL error {})",
+            request_name, err,
         ))
-    }
-
-    match response.text() {
-        Ok(text) => text,
-        Err(_) => error(format!(
-            "could not fetch {} (connected but could not retrieve response body)",
-            request
-        )),
+    } else {
+        drop(xfer);
+        match String::from_utf8(bytes) {
+            Ok(string) => string,
+            Err(err) => error(format!(
+                "could not fetch {} (server returned an invalid string: {})",
+                request_name, err,
+            )),
+        }
     }
 }
 
@@ -156,8 +152,8 @@ fn download_text_or_exit<U: IntoUrl>(url: U, request: &str) -> String {
 /// Archive types `tar.gz`, `tar.xz` and `zip` are supported.
 /// If `zip` is provided, we assume that we're downloading the zig compiler, and special-case logic is used to remove the top-level
 /// folder from the archive.
-async fn download_archive_or_exit<U: IntoUrl>(
-    url: U,
+fn download_archive_or_exit(
+    url: &str,
     display_name: &str,
     dir: PathBuf,
     expected_version: Option<QuillVersion>,
@@ -168,79 +164,69 @@ async fn download_archive_or_exit<U: IntoUrl>(
         Zip,
     }
 
-    let archive_type = if url.as_str().ends_with("tar.gz") {
+    let archive_type = if url.ends_with("tar.gz") {
         ArchiveType::TarGz
-    } else if url.as_str().ends_with("tar.xz") {
+    } else if url.ends_with("tar.xz") {
         ArchiveType::TarXz
-    } else if url.as_str().ends_with("zip") {
+    } else if url.ends_with("zip") {
         ArchiveType::Zip
     } else {
-        panic!("url was {}", url.as_str())
+        panic!("url was {}", url)
     };
 
-    let mut response = match reqwest::Client::builder()
-        .user_agent(APP_USER_AGENT)
-        .build()
-        .unwrap()
-        .get(url)
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(_) => error(format!(
-            "could not download {} (could not connect to server)",
-            display_name
-        )),
-    };
-
-    if !response.status().is_success() {
-        error(format!(
-            "could not download {} (connected but server returned error code '{}')",
-            display_name,
-            response.status()
-        ))
-    }
-
-    let length = response.content_length().unwrap();
-    let progress_bar = ProgressBar::new(length);
+    let progress_bar = ProgressBar::new(1);
     progress_bar.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:30.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}")
         .progress_chars("#>-")
     );
-    progress_bar.set_message(format!("{} downloading", display_name));
+    progress_bar.set_message(format!("{} connecting", display_name));
+    progress_bar.enable_steady_tick(50);
 
     let mut bytes = Vec::new();
 
-    loop {
-        match response.chunk().await {
-            Ok(Some(more_bytes)) => {
-                progress_bar.inc(more_bytes.len() as u64);
-                bytes.extend(more_bytes);
-            }
-            Ok(None) => {
-                break;
-            }
-            Err(_) => error(format!(
-                "could not download {} (connected but could not retrieve response body)",
-                display_name
-            )),
+    let mut request = curl::easy::Easy::new();
+    request.useragent(APP_USER_AGENT).unwrap();
+    request.url(url).unwrap();
+    request.follow_location(true).unwrap();
+    request.progress(true).unwrap();
+    let mut xfer = request.transfer();
+    xfer.write_function(|data| {
+        bytes.extend(data);
+        Ok(data.len())
+    })
+    .unwrap();
+    xfer.progress_function(|total_bytes, bytes_so_far, _, _| {
+        // If the total is zero, then we haven't finished parsing the HTTP header yet,
+        // so we don't know how many bytes there are to download. So in this case,
+        // we simply don't update the progress bar.
+        if total_bytes as u64 != 0 {
+            progress_bar.set_message(format!("{} downloading", display_name));
+            progress_bar.set_length(std::cmp::max(total_bytes as u64, bytes_so_far as u64));
+            progress_bar.set_position(bytes_so_far as u64);
         }
-    }
+        true
+    })
+    .unwrap();
+
+    if let Err(err) = xfer.perform() {
+        error(format!(
+            "could not download {} (CURL error {})",
+            display_name, err,
+        ))
+    };
+
+    drop(xfer);
 
     progress_bar.set_message(format!("{} unpacking", display_name));
-    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-    let done2 = std::sync::Arc::clone(&done);
-    let dir2 = dir.clone();
 
     match archive_type {
         ArchiveType::TarGz => {
             let mut archive = Archive::new(GzDecoder::new(bytes.as_slice()));
-            archive.unpack(dir2).unwrap();
+            archive.unpack(&dir).unwrap();
         }
         ArchiveType::TarXz => {
             let mut archive = Archive::new(XzDecoder::new(bytes.as_slice()));
-            archive.unpack(dir2).unwrap();
+            archive.unpack(&dir).unwrap();
         }
         ArchiveType::Zip => {
             let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -264,7 +250,7 @@ async fn download_archive_or_exit<U: IntoUrl>(
             for i in 0..archive.len() {
                 let mut file = archive.by_index(i).unwrap();
                 let outpath = match file.enclosed_name() {
-                    Some(path) => dir2.join(path.strip_prefix(&prefix).unwrap()),
+                    Some(path) => dir.join(path.strip_prefix(&prefix).unwrap()),
                     None => continue,
                 };
 
@@ -281,12 +267,6 @@ async fn download_archive_or_exit<U: IntoUrl>(
                 }
             }
         }
-    }
-    done2.store(true, Ordering::SeqCst);
-
-    while !done.load(Ordering::SeqCst) {
-        progress_bar.tick();
-        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     // Check the version.
@@ -308,23 +288,27 @@ fn download_self(host: HostType, expected_version: QuillVersion, exe_path: PathB
     let temp_dir = tempdir::TempDir::new("quill_install").unwrap();
 
     // Download quill itself and perform a self update.
-    futures::executor::block_on(download_archive_or_exit(
-        format!(
+    download_archive_or_exit(
+        &format!(
             "https://github.com/quill-lang/quill/releases/download/latest/{}_quill.tar.gz",
             host.component_prefix()
         ),
         "quill",
         temp_dir.path().to_owned(),
         Some(expected_version),
-    ));
+    );
 
     let temp_path = exe_path.with_extension("old");
     let _ = std::fs::remove_file(&temp_path);
 
-    self_update::Move::from_source(&host.as_executable(temp_dir.path().join("quill")))
-        .replace_using_temp(&temp_path)
-        .to_dest(&exe_path)
-        .unwrap();
+    // Rename the current executable.
+    std::fs::rename(&exe_path, temp_path).unwrap();
+    // Rename the new executable.
+    std::fs::rename(
+        &host.as_executable(temp_dir.path().join("quill")),
+        &exe_path,
+    )
+    .unwrap();
 }
 
 /// If unpack_inner_folder is true, the artifact contains exactly one folder with the same name, which will be unpacked.
@@ -338,15 +322,15 @@ fn download_artifact(
     let temp_dir = tempdir::TempDir::new("quill_install").unwrap();
 
     // Download quill itself and perform a self update.
-    futures::executor::block_on(download_archive_or_exit(
-        format!(
+    download_archive_or_exit(
+        &format!(
             "https://github.com/quill-lang/quill/releases/download/latest/{}.tar.gz",
             name
         ),
         display_name,
         temp_dir.path().to_owned(),
         expected_version,
-    ));
+    );
 
     // Now that we know the unpacking was successful, copy the files from the temp dir into a known install dir.
     if unpack_inner_folder {
