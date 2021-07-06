@@ -301,10 +301,14 @@ fn download_self(host: HostType, expected_version: QuillVersion, exe_path: PathB
     let temp_path = exe_path.with_extension("old");
     let _ = std::fs::remove_file(&temp_path);
 
-    self_update::Move::from_source(&host.as_executable(temp_dir.path().join("quill")))
-        .replace_using_temp(&temp_path)
-        .to_dest(&exe_path)
-        .unwrap();
+    // Rename the current executable.
+    std::fs::rename(&exe_path, temp_path).unwrap();
+    // Rename the new executable.
+    std::fs::rename(
+        &host.as_executable(temp_dir.path().join("quill")),
+        &exe_path,
+    )
+    .unwrap();
 }
 
 /// If unpack_inner_folder is true, the artifact contains exactly one folder with the same name, which will be unpacked.
