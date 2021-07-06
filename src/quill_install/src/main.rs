@@ -47,7 +47,6 @@ async fn main() {
 
     let status = tokio::process::Command::new(new_exe)
         .arg("update")
-        .arg("--not-self")
         .status()
         .await
         .unwrap();
