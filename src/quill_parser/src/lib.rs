@@ -656,9 +656,6 @@ impl<'input> Parser<'input> {
                 copy_token: tk.range,
                 expr: Box::new(expr),
             })
-        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Impl)) {
-            // This is an impl expression.
-            self.parse_expr_impl(tk.range)
         } else {
             // Default to a variable or application expression, since this will show a decent error message.
             self.parse_expr_app()
@@ -775,6 +772,9 @@ impl<'input> Parser<'input> {
                     Diagnostic::at(self.source_file, &borrow_token),
                 )))
             }
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Impl)) {
+            // This is an impl expression.
+            Some(self.parse_expr_impl(tk.range))
         } else {
             self.parse_identifier_maybe().map(|identifier| identifier.bind(|identifier| {
                 let immediate = if identifier.segments.len() == 1 {
