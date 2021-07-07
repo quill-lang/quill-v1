@@ -59,13 +59,6 @@ pub enum ExprPatP {
         impl_token: Range,
         body: DefinitionBodyP,
     },
-    /// Getting a field from an object.
-    Field {
-        container: Box<ExprPatP>,
-        field: NameP,
-        /// The `.` token in between the container and the field.
-        dot: Range,
-    },
     /// An underscore `_` representing an unknown.
     /// This is valid only in patterns, not normal expressions.
     Unknown(Range),
@@ -123,9 +116,6 @@ impl Ranged for ExprPatP {
                 ..
             } => data_constructor.range().union(close_brace.range()),
             ExprPatP::Impl { impl_token, .. } => impl_token.range(),
-            ExprPatP::Field {
-                container, field, ..
-            } => container.range().union(field.range),
         }
     }
 }

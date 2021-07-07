@@ -615,7 +615,7 @@ pub(crate) fn bind_pattern_variables(
                 range: name.range,
                 kind: StatementKind::Assign {
                     target: LocalVariableName::Local(var),
-                    source: Rvalue::Use(Operand::Move(value)),
+                    source: Rvalue::Move(value),
                 },
             };
 
@@ -698,7 +698,7 @@ pub(crate) fn bind_pattern_variables(
                 range,
                 kind: StatementKind::Assign {
                     target: LocalVariableName::Local(local),
-                    source: Rvalue::Use(Operand::Move(value)),
+                    source: Rvalue::Move(value),
                 },
             };
             let drop_stmt = Statement {

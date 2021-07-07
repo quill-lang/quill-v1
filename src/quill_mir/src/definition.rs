@@ -221,10 +221,7 @@ fn create_cfg(
                 range,
                 kind: StatementKind::Assign {
                     target: LocalVariableName::Local(protected_return_value),
-                    source: Rvalue::Use(Operand::Move(Place {
-                        local: func.variable,
-                        projection: Vec::new(),
-                    })),
+                    source: Rvalue::Move(Place::new(func.variable)),
                 },
             });
 

@@ -6,7 +6,7 @@ use quill_common::{
 };
 use quill_mir::mir::{
     ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableName,
-    Operand, Place, Rvalue, Statement, StatementKind, TerminatorKind,
+    Place, Rvalue, Statement, StatementKind, TerminatorKind,
 };
 
 #[derive(Debug, Clone)]
@@ -227,7 +227,7 @@ fn check_ownership_walk(
                         messages,
                         statuses,
                         stmt.range,
-                        Rvalue::Use(Operand::Move(Place::new(*def))),
+                        Rvalue::Move(Place::new(*def)),
                     );
                 }
 
@@ -436,7 +436,7 @@ fn make_rvalue_used(
     rvalue: Rvalue,
 ) {
     match rvalue {
-        Rvalue::Use(Operand::Move(place)) => {
+        Rvalue::Move(place) => {
             // If we're moving out of a place contained inside a local variable, that variable is said to have been 'destructured'.
             make_used(
                 source_file,
@@ -451,15 +451,6 @@ fn make_rvalue_used(
                 },
             )
         }
-        Rvalue::Use(Operand::Copy(place)) => make_used(
-            source_file,
-            messages,
-            statuses,
-            range,
-            place.local,
-            UseType::Reference,
-        ),
-        Rvalue::Use(Operand::Constant(_)) => {}
         Rvalue::Borrow(local) => make_used(
             source_file,
             messages,
@@ -468,6 +459,15 @@ fn make_rvalue_used(
             local,
             UseType::Reference,
         ),
+        Rvalue::Copy(local) => make_used(
+            source_file,
+            messages,
+            statuses,
+            range,
+            local,
+            UseType::Reference,
+        ),
+        Rvalue::Constant(_) => {}
     }
 }
 

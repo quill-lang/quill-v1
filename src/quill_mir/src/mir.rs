@@ -572,9 +572,13 @@ impl Place {
 
 #[derive(Debug, Clone)]
 pub enum PlaceSegment {
+    /// If the local is a borrowed type, the result of this projection is a borrowed type with the same borrow condition.
     DataField { field: String },
+    /// If the local is a borrowed type, the result of this projection is a borrowed type with the same borrow condition.
     EnumField { variant: String, field: String },
+    /// Regardless if the local is a borrowed type or owned type, the result of this projection is an `int`.
     EnumDiscriminant,
+    /// If the local is a borrowed type, the result of this projection is a borrowed type with the same borrow condition.
     ImplField { field: String },
 }
 
@@ -593,40 +597,26 @@ impl Display for PlaceSegment {
 /// We can only read from (not write to) an rvalue.
 #[derive(Debug, Clone)]
 pub enum Rvalue {
-    /// Either a copy or a move, depending on the type.
-    Use(Operand),
+    /// We will move data out of this place, possibly dropping and freeing it.
+    Move(Place),
     /// Creates a borrow of a local variable.
     /// Borrowing more complicated things is only an emergent behaviour created by functions.
     /// The borrow's lifetime will be managed later in the borrow checker.
     Borrow(LocalVariableName),
+    /// This local variable is a borrow, and we will copy the data behind this place without dropping it.
+    /// To create a borrowed value in a local scope, use [Rvalue::Borrow].
+    Copy(LocalVariableName),
+    /// Generates a new constant value.
+    Constant(ConstantValue),
 }
 
 impl Display for Rvalue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Rvalue::Use(operand) => write!(f, "use {}", operand),
+            Rvalue::Move(place) => write!(f, "move {}", place),
             Rvalue::Borrow(place) => write!(f, "borrow {}", place),
-        }
-    }
-}
-
-/// A value that we can read from.
-#[derive(Debug, Clone)]
-pub enum Operand {
-    /// We will copy data from this place without dropping it.
-    Copy(Place),
-    /// We will move data out of this place, possibly dropping and freeing it.
-    Move(Place),
-    /// Generates a new constant value.
-    Constant(ConstantValue),
-}
-
-impl Display for Operand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Operand::Copy(place) => write!(f, "copy {}", place),
-            Operand::Move(place) => write!(f, "move {}", place),
-            Operand::Constant(constant) => write!(f, "const {}", constant),
+            Rvalue::Copy(place) => write!(f, "copy {}", place),
+            Rvalue::Constant(constant) => write!(f, "const {}", constant),
         }
     }
 }

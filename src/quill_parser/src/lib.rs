@@ -825,22 +825,6 @@ impl<'input> Parser<'input> {
                         DiagnosticResult::ok(ExprPatP::Variable(identifier))
                     }
                 }
-            }).bind(|expr| {
-                // If followed by a dot `.`, we are referencing some object contained inside this expression.
-                // This is a field of a data type, or a definition in an impl.
-                let mut nested_fields = Vec::new();
-                while let Some(dot) = self.parse_token_maybe(|tk| matches!(tk, TokenType::Dot)) {
-                    nested_fields.push((dot, self.parse_name()));
-                }
-                let mut result = DiagnosticResult::ok(expr);
-                for (dot, field) in nested_fields {
-                    result = result.bind(|expr| field.map(|field| ExprPatP::Field {
-                        container: Box::new(expr),
-                        field,
-                        dot: dot.range,
-                    }))
-                }
-                result
             }))
         }
     }

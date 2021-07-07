@@ -248,22 +248,6 @@ fn substitute_contents(
                 visible_names,
             )
         }
-        ExpressionContentsT::Field {
-            container,
-            field,
-            dot,
-        } => substitute(
-            substitution,
-            *container,
-            source_file,
-            project_index,
-            visible_names,
-        )
-        .map(|container| ExpressionContents::Field {
-            container: Box::new(container),
-            field,
-            dot,
-        }),
     }
 }
 

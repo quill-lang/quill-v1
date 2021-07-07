@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use inkwell::{types::BasicType, values::PointerValue, AddressSpace};
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
-use quill_mir::mir::{LocalVariableInfo, LocalVariableName, Operand, PlaceSegment, Rvalue};
+use quill_mir::mir::{LocalVariableInfo, LocalVariableName, PlaceSegment, Rvalue};
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
@@ -23,7 +23,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
     rvalue: &Rvalue,
 ) -> Option<PointerValue<'ctx>> {
     match rvalue {
-        Rvalue::Use(Operand::Move(place)) | Rvalue::Use(Operand::Copy(place)) => {
+        Rvalue::Move(place) => {
             if let Some(mut ptr) = locals.get(&place.local).copied() {
                 let mut rvalue_ty = local_variable_names[&place.local].ty.clone();
 
@@ -112,7 +112,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                             }
                         }
                         PlaceSegment::EnumDiscriminant => {
-                            // rvalue_ty is an enum type.
+                            // rvalue_ty is an enum type, or a borrow of an enum type.
                             if let Type::Named { name, parameters } = rvalue_ty {
                                 rvalue_ty = Type::Primitive(PrimitiveType::Int);
                                 let the_enum = reprs
@@ -124,6 +124,23 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                     })
                                     .unwrap();
                                 ptr = the_enum.get_discriminant(codegen, ptr);
+                            } else if let Type::Borrow { ty, .. } = rvalue_ty {
+                                // We don't need to explicitly dereference the borrow, since borrowed values and
+                                // owned values are both represented as pointers to an alloca in LLVM IR.
+                                if let Type::Named { name, parameters } = *ty {
+                                    rvalue_ty = Type::Primitive(PrimitiveType::Int);
+                                    let the_enum = reprs
+                                        .get_enum(&MonomorphisedType {
+                                            name,
+                                            mono: MonomorphisationParameters {
+                                                type_parameters: parameters,
+                                            },
+                                        })
+                                        .unwrap();
+                                    ptr = the_enum.get_discriminant(codegen, ptr);
+                                } else {
+                                    unreachable!()
+                                }
                             } else {
                                 unreachable!()
                             }
@@ -174,7 +191,11 @@ pub fn get_pointer_to_rvalue<'ctx>(
             // Return a pointer to the given local variable.
             Some(locals[local])
         }
-        Rvalue::Use(Operand::Constant(constant)) => {
+        Rvalue::Copy(place) => {
+            // Call the copy function for this local variable, which is a borrow of some type.
+            unimplemented!()
+        }
+        Rvalue::Constant(constant) => {
             // Alloca the constant, then make a pointer to it.
             match constant {
                 ConstantValue::Unit => unreachable!(),
@@ -216,7 +237,7 @@ pub fn get_type_of_rvalue(
     rvalue: &Rvalue,
 ) -> Type {
     match rvalue {
-        Rvalue::Use(Operand::Move(place)) | Rvalue::Use(Operand::Copy(place)) => {
+        Rvalue::Move(place) => {
             let mut rvalue_ty = local_variable_names[&place.local].ty.clone();
 
             for segment in place.projection.clone() {
@@ -295,6 +316,14 @@ pub fn get_type_of_rvalue(
 
             rvalue_ty
         }
+        Rvalue::Copy(local) => {
+            // Return the dereferenced type of the given local variable.
+            if let Type::Borrow { ty, .. } = local_variable_names[local].ty.clone() {
+                *ty
+            } else {
+                panic!("type was {}", local_variable_names[local].ty)
+            }
+        }
         Rvalue::Borrow(local) => {
             // Return a pointer to the given local variable.
             Type::Borrow {
@@ -302,7 +331,7 @@ pub fn get_type_of_rvalue(
                 borrow: None,
             }
         }
-        Rvalue::Use(Operand::Constant(constant)) => {
+        Rvalue::Constant(constant) => {
             // Alloca the constant, then make a pointer to it.
             match constant {
                 ConstantValue::Unit => Type::Primitive(PrimitiveType::Unit),

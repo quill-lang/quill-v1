@@ -16,10 +16,14 @@ def print_list: impl Print[List[Int]] {
     print_list = impl {
         print Cons { value, list } = (
             putchar value
-            print_list.print list
+            perform_print_list print_list list
         )
         print _ = unit
     }
+}
+
+def perform_print_list: impl Print[List[Int]] -> List[Int] -> Unit {
+    perform_print_list impl { print } list = print list
 }
 
 def print_int: Int -> Unit {

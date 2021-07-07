@@ -48,7 +48,6 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
-        ExpressionContents::Field { container, .. } => initialise_expr(ctx, &*container),
     }
 }
 
@@ -61,10 +60,6 @@ pub(crate) struct ExprGeneratedM {
     /// By adding values to this list, the given local variables will be dropped after the surrounding statement (or expression) ends.
     /// In particular, the drop occurs at the next semicolon, or if there is not one, the end of the definition as a whole.
     pub locals_to_drop: Vec<LocalVariableName>,
-    /// If this expression is "temporary", it was created inside an expression
-    /// and will be used exactly once. After its use, it should be dropped.
-    /// Every expression that does not *directly* refer to an argument or local is a temporary.
-    pub temporary: bool,
 }
 
 /// Creates a list of all local or argument variables used inside this expression.
@@ -123,7 +118,6 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             */
             Vec::new()
         }
-        ExpressionContents::Field { container, .. } => list_used_locals(&*container),
     }
 }
 
@@ -240,11 +234,6 @@ pub(crate) fn generate_expr(
         ExpressionContents::Impl {
             implementations, ..
         } => generate_expr_impl(ty, implementations, ctx, range, terminator),
-        ExpressionContents::Field {
-            container,
-            field,
-            dot,
-        } => generate_expr_field(container, field, ctx, range, ty, terminator, dot),
     }
 }
 
@@ -262,7 +251,6 @@ fn generate_expr_argument(
         block,
         variable,
         locals_to_drop: Vec::new(),
-        temporary: false,
     }
 }
 
@@ -280,7 +268,6 @@ fn generate_expr_local(
         block,
         variable,
         locals_to_drop: Vec::new(),
-        temporary: false,
     }
 }
 
@@ -312,7 +299,6 @@ fn generate_expr_symbol(
         block,
         variable: LocalVariableName::Local(variable),
         locals_to_drop: Vec::new(),
-        temporary: true,
     }
 }
 
@@ -362,8 +348,8 @@ fn generate_expr_apply(
         .push(Statement {
             range,
             kind: StatementKind::Apply {
-                argument: Box::new(Rvalue::Use(Operand::Move(Place::new(right.variable)))),
-                function: Box::new(Rvalue::Use(Operand::Move(Place::new(left.variable)))),
+                argument: Box::new(Rvalue::Move(Place::new(right.variable))),
+                function: Box::new(Rvalue::Move(Place::new(left.variable))),
                 target: LocalVariableName::Local(variable),
                 return_type,
                 argument_type,
@@ -377,7 +363,6 @@ fn generate_expr_apply(
             .into_iter()
             .chain(right.locals_to_drop)
             .collect(),
-        temporary: true,
     }
 }
 
@@ -485,14 +470,14 @@ fn generate_expr_lambda(
         statements.push(Statement {
             range,
             kind: StatementKind::Apply {
-                argument: Box::new(Rvalue::Use(Operand::Move(Place {
+                argument: Box::new(Rvalue::Move(Place {
                     local: ctx.get_name_of_local(&local.name),
                     projection: Vec::new(),
-                }))),
-                function: Box::new(Rvalue::Use(Operand::Move(Place {
+                })),
+                function: Box::new(Rvalue::Move(Place {
                     local: LocalVariableName::Local(variable),
                     projection: Vec::new(),
-                }))),
+                })),
                 target: LocalVariableName::Local(next_variable),
                 return_type: ty,
                 argument_type: ctx.local_variable_names[&ctx.get_name_of_local(&local.name)]
@@ -510,7 +495,6 @@ fn generate_expr_lambda(
         block,
         variable: LocalVariableName::Local(variable),
         locals_to_drop: Vec::new(),
-        temporary: true,
     }
 }
 
@@ -549,14 +533,14 @@ fn generate_expr_let(
         range,
         kind: StatementKind::Assign {
             target: variable,
-            source: Rvalue::Use(Operand::Move(Place::new(rvalue.variable))),
+            source: Rvalue::Move(Place::new(rvalue.variable)),
         },
     });
     statements.push(Statement {
         range,
         kind: StatementKind::Assign {
             target: LocalVariableName::Local(ret),
-            source: Rvalue::Use(Operand::Constant(ConstantValue::Unit)),
+            source: Rvalue::Constant(ConstantValue::Unit),
         },
     });
     rvalue.locals_to_drop.push(variable);
@@ -566,7 +550,6 @@ fn generate_expr_let(
         locals_to_drop: rvalue.locals_to_drop,
         // The result of the let statement is the unit value, which is a temporary
         // even though the actual value in the let statement is not temporary.
-        temporary: true,
     }
 }
 
@@ -630,7 +613,6 @@ fn generate_expr_block(
             block: chain.block,
             variable: final_expr.variable,
             locals_to_drop: Vec::new(),
-            temporary: true,
         }
     } else {
         // We need to make a new unit variable since there was no final expression.
@@ -646,7 +628,7 @@ fn generate_expr_block(
             range,
             kind: StatementKind::Assign {
                 target: LocalVariableName::Local(variable),
-                source: Rvalue::Use(Operand::Constant(ConstantValue::Unit)),
+                source: Rvalue::Constant(ConstantValue::Unit),
             },
         };
 
@@ -678,7 +660,6 @@ fn generate_expr_block(
             block: chain.block,
             variable: LocalVariableName::Local(variable),
             locals_to_drop: Vec::new(),
-            temporary: true,
         }
     }
 }
@@ -718,12 +699,7 @@ fn generate_expr_construct(
                 .variables
                 .into_iter()
                 .zip(names)
-                .map(|(name, field_name)| {
-                    (
-                        field_name.name,
-                        Rvalue::Use(Operand::Move(Place::new(name))),
-                    )
-                })
+                .map(|(name, field_name)| (field_name.name, Rvalue::Move(Place::new(name))))
                 .collect(),
             target: LocalVariableName::Local(variable),
         },
@@ -738,7 +714,6 @@ fn generate_expr_construct(
         block: chain.block,
         variable: LocalVariableName::Local(variable),
         locals_to_drop: chain.locals_to_drop,
-        temporary: true,
     }
 }
 
@@ -758,7 +733,7 @@ fn generate_expr_constant(
         range,
         kind: StatementKind::Assign {
             target: LocalVariableName::Local(variable),
-            source: Rvalue::Use(Operand::Constant(value)),
+            source: Rvalue::Constant(value),
         },
     };
     let initialise_variable = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -769,7 +744,6 @@ fn generate_expr_constant(
         block: initialise_variable,
         variable: LocalVariableName::Local(variable),
         locals_to_drop: Vec::new(),
-        temporary: true,
     }
 }
 
@@ -820,7 +794,6 @@ fn generate_expr_borrow(
         block: inner.block,
         variable: LocalVariableName::Local(variable),
         locals_to_drop: inner.locals_to_drop,
-        temporary: true,
     }
 }
 
@@ -862,17 +835,13 @@ fn generate_expr_copy(
             range: copy_token,
             kind: StatementKind::Assign {
                 target: LocalVariableName::Local(variable),
-                source: Rvalue::Use(Operand::Copy(Place {
-                    local: inner.variable,
-                    projection: Vec::new(),
-                })),
+                source: Rvalue::Copy(inner.variable),
             },
         });
     ExprGeneratedM {
         block: inner.block,
         variable: LocalVariableName::Local(variable),
         locals_to_drop: inner.locals_to_drop,
-        temporary: true,
     }
 }
 
@@ -964,74 +933,5 @@ fn generate_expr_impl(
         block,
         variable: LocalVariableName::Local(variable),
         locals_to_drop: Vec::new(),
-        temporary: true,
-    }
-}
-
-fn generate_expr_field(
-    container: Box<Expression>,
-    field: NameP,
-    ctx: &mut DefinitionTranslationContext,
-    range: quill_common::location::Range,
-    ty: Type,
-    terminator: Terminator,
-    dot: quill_common::location::Range,
-) -> ExprGeneratedM {
-    let projection = match &container.ty {
-        Type::Named { .. } => PlaceSegment::DataField { field: field.name },
-        Type::Impl { .. } => PlaceSegment::ImplField { field: field.name },
-        _ => panic!("invalid container type"),
-    };
-    let variable = ctx.new_local_variable(LocalVariableInfo {
-        range,
-        ty,
-        name: None,
-    });
-    let terminator_range = terminator.range;
-    let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
-        statements: Vec::new(),
-        terminator,
-    });
-    let inner = generate_expr(
-        ctx,
-        *container,
-        Terminator {
-            range: terminator_range,
-            kind: TerminatorKind::Goto(block),
-        },
-    );
-    ctx.control_flow_graph
-        .basic_blocks
-        .get_mut(&block)
-        .unwrap()
-        .statements
-        .push(Statement {
-            range: dot,
-            kind: StatementKind::Assign {
-                target: LocalVariableName::Local(variable),
-                source: Rvalue::Use(Operand::Copy(Place {
-                    local: inner.variable,
-                    projection: vec![projection],
-                })),
-            },
-        });
-    if inner.temporary {
-        ctx.control_flow_graph
-            .basic_blocks
-            .get_mut(&block)
-            .unwrap()
-            .statements
-            .push(Statement {
-                range: dot,
-                kind: StatementKind::Drop {
-                    variable: inner.variable,
-                },
-            });
-    }
-    ExprGeneratedM {
-        block: inner.block,
-        variable: LocalVariableName::Local(variable),
-        locals_to_drop: inner.locals_to_drop,
-        temporary: true,
     }
 }

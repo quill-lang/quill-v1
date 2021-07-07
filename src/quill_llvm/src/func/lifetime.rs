@@ -5,7 +5,7 @@ use inkwell::{
     AddressSpace,
 };
 use quill_common::location::Range;
-use quill_mir::mir::{LocalVariableInfo, LocalVariableName, Operand, Rvalue};
+use quill_mir::mir::{LocalVariableInfo, LocalVariableName, Rvalue};
 
 use crate::codegen::BodyCreationContext;
 
@@ -126,7 +126,7 @@ pub fn lifetime_end_if_moved<'ctx>(
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     variable: &Rvalue,
 ) {
-    if let Rvalue::Use(Operand::Move(place)) = variable {
+    if let Rvalue::Move(place) = variable {
         if place.projection.is_empty() {
             // Trivially this place is now dead.
             lifetime_end(ctx, local_variable_names, &place.local);
