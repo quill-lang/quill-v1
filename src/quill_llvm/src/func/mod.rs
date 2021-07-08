@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use inkwell::{debug_info::AsDIScope, AddressSpace};
+use inkwell::{debug_info::AsDIScope, values::FunctionValue, AddressSpace};
 use quill_mir::{
     mir::{ArgumentIndex, LocalVariableName},
     ProjectMIR,
@@ -11,7 +11,7 @@ use quill_type_deduce::replace_type_variables;
 use crate::{
     codegen::{BodyCreationContext, CodeGenContext},
     debug::source_file_debug_info,
-    monomorphisation::MonomorphisedFunction,
+    monomorphisation::{FunctionObjectDescriptor, MonomorphisedFunction},
     repr::Representations,
 };
 
@@ -29,6 +29,7 @@ pub fn compile_function<'ctx>(
     // println!("func {}", func);
     let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
+    let func_object_descriptor = func.function_object_descriptor();
 
     let mono =
         |ty: Type| replace_type_variables(ty, &def.type_variables, &func.mono.type_parameters);
@@ -111,7 +112,7 @@ pub fn compile_function<'ctx>(
             codegen.builder.build_unconditional_branch(contents_block);
         } else {
             // We need to create a function object pointing to the indirect version of this function.
-            let fobj_repr = reprs.get_fobj(&func.function_object_descriptor()).unwrap();
+            let fobj_repr = reprs.get_fobj(&func_object_descriptor).unwrap();
             let mem = codegen
                 .builder
                 .build_call(
@@ -141,6 +142,8 @@ pub fn compile_function<'ctx>(
                 "fobj",
             );
 
+            let num_curry_steps = func.curry_steps.iter().sum::<u64>();
+
             // Store the next function's address inside the new function object.
             let mut next_func = func;
             next_func.direct = false;
@@ -151,13 +154,34 @@ pub fn compile_function<'ctx>(
                 codegen.context.i8_type().ptr_type(AddressSpace::Generic),
                 "fptr",
             );
-
             fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), fptr, ".fptr");
+
+            // Create and store the copy function inside the new function object.
+            // The drop and copy functions need to know the amount of fields that we've stored inside the function object.
+            let fields_stored = def.arity - num_curry_steps;
+            let copy_func_value =
+                get_copy_function(codegen, &func_object_descriptor, fields_stored);
+            let copy = codegen.builder.build_bitcast(
+                copy_func_value.as_global_value().as_pointer_value(),
+                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+                "copy",
+            );
+            fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), copy, ".copy");
+
+            // Create and store the drop function inside the new function object.
+            let drop_func_value =
+                get_drop_function(codegen, &func_object_descriptor, fields_stored);
+            let drop_fn = codegen.builder.build_bitcast(
+                drop_func_value.as_global_value().as_pointer_value(),
+                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+                "drop",
+            );
+            fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), drop_fn, ".drop");
 
             codegen.builder.build_return(Some(&fobj));
         }
     } else {
-        // An indirect function contains the real function body if there is only one step of curring left.
+        // An indirect function contains the real function body if there is only one step of currying left.
         if func.curry_steps.len() == 1 {
             // We need to create the real function body.
             let mut locals = HashMap::new();
@@ -233,6 +257,8 @@ pub fn compile_function<'ctx>(
             let fobj = func_value.get_nth_param(0).unwrap();
             let fobj_repr = reprs.get_fobj(&func.function_object_descriptor()).unwrap();
 
+            let num_curry_steps_after_call = func.curry_steps.iter().skip(1).sum::<u64>();
+
             // Store the next function's address inside the new function object.
             let mut next_func = func;
             let args_not_supplied = next_func.curry_steps.iter().sum::<u64>();
@@ -247,6 +273,25 @@ pub fn compile_function<'ctx>(
             );
 
             fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), fptr, ".fptr");
+
+            // We also need to update the "copy" and "drop" functions in the function object.
+            let fields_stored = def.arity - num_curry_steps_after_call;
+            let copy_func_value =
+                get_copy_function(codegen, &func_object_descriptor, fields_stored);
+            let copy = codegen.builder.build_bitcast(
+                copy_func_value.as_global_value().as_pointer_value(),
+                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+                "copy",
+            );
+            fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), copy, ".copy");
+            let drop_func_value =
+                get_drop_function(codegen, &func_object_descriptor, fields_stored);
+            let drop_fn = codegen.builder.build_bitcast(
+                drop_func_value.as_global_value().as_pointer_value(),
+                codegen.context.i8_type().ptr_type(AddressSpace::Generic),
+                "drop",
+            );
+            fobj_repr.store(codegen, reprs, fobj.into_pointer_value(), drop_fn, ".drop");
 
             // Store the other arguments in the function object.
             for arg in args_supplied..args_supplied + num_args {
@@ -267,4 +312,36 @@ pub fn compile_function<'ctx>(
             codegen.builder.build_return(Some(&fobj));
         }
     }
+}
+
+/// Gets the "copy" function for copying a function pointer for this function.
+fn get_copy_function<'ctx>(
+    codegen: &CodeGenContext<'ctx>,
+    func_object_descriptor: &FunctionObjectDescriptor,
+    fields_stored: u64,
+) -> FunctionValue<'ctx> {
+    codegen
+        .module
+        .get_function(&format!(
+            "copy/o/{}#{}",
+            func_object_descriptor.to_string(),
+            fields_stored,
+        ))
+        .unwrap()
+}
+
+/// Gets the "drop" function for copying a function pointer for this function.
+fn get_drop_function<'ctx>(
+    codegen: &CodeGenContext<'ctx>,
+    func_object_descriptor: &FunctionObjectDescriptor,
+    fields_stored: u64,
+) -> FunctionValue<'ctx> {
+    codegen
+        .module
+        .get_function(&format!(
+            "drop/o/{}#{}",
+            func_object_descriptor.to_string(),
+            fields_stored,
+        ))
+        .unwrap()
 }

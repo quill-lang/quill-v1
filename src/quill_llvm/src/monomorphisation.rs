@@ -410,6 +410,47 @@ impl MonomorphisedFunction {
                 self.func.range,
                 descriptor.to_string(),
             );
+
+            // Now, define all the relevant copy and drop functions for this function object.
+            // We need to make a copy/drop function for every possible amount of fields stored in this function object.
+            for fields_stored in 0..=def.arity - self.curry_steps.last().copied().unwrap_or(0) {
+                // Generate the drop function.
+                let func = codegen.module.add_function(
+                    &format!("drop/o/{}#{}", descriptor.to_string(), fields_stored),
+                    codegen
+                        .context
+                        .void_type()
+                        .fn_type(&[repr.llvm_repr.as_ref().unwrap().ty.into()], false),
+                    None,
+                );
+                let block = codegen.context.append_basic_block(func, "drop");
+                codegen.builder.position_at_end(block);
+                codegen.builder.unset_current_debug_location();
+                codegen.builder.build_return(None);
+                // TODO: actually generate the drop function.
+
+                // Generate the copy function.
+                let func = codegen.module.add_function(
+                    &format!("copy/o/{}#{}", descriptor.to_string(), fields_stored),
+                    repr.llvm_repr.as_ref().unwrap().ty.fn_type(
+                        &[repr
+                            .llvm_repr
+                            .as_ref()
+                            .unwrap()
+                            .ty
+                            .ptr_type(AddressSpace::Generic)
+                            .into()],
+                        false,
+                    ),
+                    None,
+                );
+                let block = codegen.context.append_basic_block(func, "copy");
+                codegen.builder.position_at_end(block);
+                codegen.builder.unset_current_debug_location();
+                codegen.builder.build_unreachable();
+                // TODO: actually generate the copy function.
+            }
+
             reprs.insert_fobj(descriptor, repr.clone());
             repr
         };
