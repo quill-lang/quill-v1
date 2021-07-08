@@ -16,7 +16,7 @@ use crate::{
     codegen::CodeGenContext,
     repr::{
         any_type::AnyTypeRepresentation,
-        data::{DataRepresentation, DataRepresentationBuilder},
+        data::{DataRepresentation, DataRepresentationBuilder, FieldIndex},
         Representations,
     },
 };
@@ -426,8 +426,27 @@ impl MonomorphisedFunction {
                 let block = codegen.context.append_basic_block(func, "drop");
                 codegen.builder.position_at_end(block);
                 codegen.builder.unset_current_debug_location();
+
+                let value = func.get_first_param().unwrap();
+                let ptr = codegen
+                    .builder
+                    .build_alloca(value.get_type(), "value_to_drop");
+                codegen.builder.build_store(ptr, value);
+                for heap_field in repr.field_names_on_heap() {
+                    // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
+                    let assigned = if let FieldIndex::Heap(i) = repr.field_indices()[heap_field] {
+                        i < fields_stored as u32
+                    } else {
+                        false
+                    };
+                    if assigned {
+                        let ptr_to_field = repr.load(codegen, reprs, ptr, heap_field).unwrap();
+                        let ty = repr.field_ty(heap_field).unwrap().clone();
+                        reprs.drop_ptr(ty, ptr_to_field);
+                    }
+                }
+                repr.free_fields(codegen, ptr);
                 codegen.builder.build_return(None);
-                // TODO: actually generate the drop function.
 
                 // Generate the copy function.
                 let func = codegen.module.add_function(
