@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    ops::Deref,
-};
+use std::collections::{BTreeMap, HashMap};
 
 use inkwell::{types::BasicType, values::PointerValue, AddressSpace};
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
@@ -210,50 +207,20 @@ pub fn get_pointer_to_rvalue<'ctx>(
                 unreachable!()
             };
 
-            match ty.deref() {
-                Type::Named { name, parameters } => {
-                    // Call the copy function for this type.
-                    todo!()
-                }
-                Type::Variable { .. } => {
-                    panic!("shouldn't still have type variables at this point")
-                }
-                Type::Function(_, _) => {
-                    // This is a function object.
-                    todo!()
-                }
-                Type::Primitive(ty) => {
-                    // Primitive types can simply be copied bitwise.
-                    match ty {
-                        PrimitiveType::Unit => None,
-                        PrimitiveType::Bool => {
-                            let ptr = codegen
-                                .builder
-                                .build_alloca(codegen.context.bool_type(), "copied_value");
-                            let ptr_to_value = codegen
-                                .builder
-                                .build_load(locals[local], "value_to_copy_ptr")
-                                .into_pointer_value();
-                            let value = codegen.builder.build_load(ptr_to_value, "value_to_copy");
-                            codegen.builder.build_store(ptr, value);
-                            Some(ptr)
-                        }
-                        PrimitiveType::Int => {
-                            let ptr = codegen
-                                .builder
-                                .build_alloca(codegen.context.i64_type(), "copied_value");
-                            let ptr_to_value = codegen
-                                .builder
-                                .build_load(locals[local], "value_to_copy_ptr")
-                                .into_pointer_value();
-                            let value = codegen.builder.build_load(ptr_to_value, "value_to_copy");
-                            codegen.builder.build_store(ptr, value);
-                            Some(ptr)
-                        }
-                    }
-                }
-                Type::Borrow { ty, borrow } => todo!(),
-                Type::Impl { name, parameters } => todo!(),
+            // Since the local is a borrow, it is a double pointer.
+            // Dereference it once.
+            let value = codegen
+                .builder
+                .build_load(locals[local], "alloca_to_copy")
+                .into_pointer_value();
+            if let Some(value) = reprs.copy_ptr(*ty.clone(), value) {
+                let ptr = codegen
+                    .builder
+                    .build_alloca(value.get_type(), "copied_value_alloca");
+                codegen.builder.build_store(ptr, value);
+                Some(ptr)
+            } else {
+                None
             }
         }
         Rvalue::Constant(constant) => {

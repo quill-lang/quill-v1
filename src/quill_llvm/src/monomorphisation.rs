@@ -416,7 +416,7 @@ impl MonomorphisedFunction {
             for fields_stored in 0..=def.arity - self.curry_steps.last().copied().unwrap_or(0) {
                 // Generate the drop function.
                 let func = codegen.module.add_function(
-                    &format!("drop/o/{}#{}", descriptor.to_string(), fields_stored),
+                    &format!("drop/{}#{}", descriptor.to_string(), fields_stored),
                     codegen
                         .context
                         .void_type()
@@ -450,7 +450,7 @@ impl MonomorphisedFunction {
 
                 // Generate the copy function.
                 let func = codegen.module.add_function(
-                    &format!("copy/o/{}#{}", descriptor.to_string(), fields_stored),
+                    &format!("copy/{}#{}", descriptor.to_string(), fields_stored),
                     repr.llvm_repr.as_ref().unwrap().ty.fn_type(
                         &[repr
                             .llvm_repr

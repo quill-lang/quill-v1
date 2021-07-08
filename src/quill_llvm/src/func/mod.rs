@@ -323,7 +323,7 @@ fn get_copy_function<'ctx>(
     codegen
         .module
         .get_function(&format!(
-            "copy/o/{}#{}",
+            "copy/{}#{}",
             func_object_descriptor.to_string(),
             fields_stored,
         ))
@@ -339,7 +339,7 @@ fn get_drop_function<'ctx>(
     codegen
         .module
         .get_function(&format!(
-            "drop/o/{}#{}",
+            "drop/{}#{}",
             func_object_descriptor.to_string(),
             fields_stored,
         ))
