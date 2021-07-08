@@ -12,6 +12,7 @@ def main: Unit {
         ) (
             \a -> (
                 let list = 72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty
+                mapM print_int (copy &list)
                 perform_print_list print_list (copy &list)
                 perform_print_list print_list list
             )
@@ -39,4 +40,10 @@ def print_factorials: Int -> Int -> Unit {
 
 def nop: Unit -> Unit {
     nop unit = unit
+}
+
+// A very specific implementation of a monadic mapM function, to map a function over a list.
+def mapM: (Int -> Unit) -> List[Int] -> Unit {
+    mapM f Cons { value, list } = ((copy &f) value, mapM f list)
+    mapM f Empty {} = unit
 }

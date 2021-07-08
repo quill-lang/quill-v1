@@ -429,8 +429,39 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 panic!("shouldn't still have type variables at this point")
             }
             Type::Function(_, _) => {
-                // This is a function object.
-                todo!()
+                // This is a function object. Specifically, a `fobj**`.
+                // The output value should just be an `fobj*`.
+                let fobj = self
+                    .codegen
+                    .builder
+                    .build_load(variable_ptr, "loaded_fobj")
+                    .into_pointer_value();
+                // The `copy` function is the second field of the function object.
+                let copy = self
+                    .codegen
+                    .builder
+                    .build_struct_gep(fobj, 1, "loaded_fobj_copy")
+                    .unwrap();
+                let copy = self
+                    .codegen
+                    .builder
+                    .build_bitcast(
+                        copy,
+                        self.general_func_obj_ty
+                            .llvm_type
+                            .fn_type(&[self.general_func_obj_ty.llvm_type], false)
+                            .ptr_type(AddressSpace::Generic),
+                        "fptr",
+                    )
+                    .into_pointer_value();
+
+                // Invoke this function.
+                let result = self.codegen.builder.build_call(
+                    CallableValue::try_from(copy).unwrap(),
+                    &[fobj.into()],
+                    "copied_fobj",
+                );
+                result.try_as_basic_value().left()
             }
             Type::Primitive(ty) => {
                 // Primitive types can simply be copied bitwise.
