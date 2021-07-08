@@ -92,8 +92,9 @@ pub(crate) fn check_ownership(
             match stat {
                 OwnershipStatus::Owned { assignment } => messages.push(ErrorMessage::new(
                     format!(
-                        "local variable `{}` was not moved or dropped (this is a compiler bug)",
-                        name
+                        "local variable `{}` was not moved or dropped (this is a compiler bug), MIR was:\n{}",
+                        name,
+                        cfg,
                     ),
                     Severity::Error,
                     Diagnostic::at(source_file, &assignment),
@@ -102,8 +103,9 @@ pub(crate) fn check_ownership(
                 OwnershipStatus::Dropped { .. } => {}
                 OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new(
                     format!(
-                    "local variable `{}` was destructured but not freed (this is a compiler bug)",
-                    name
+                    "local variable `{}` was destructured but not freed (this is a compiler bug), MIR was:\n{}",
+                    name,
+                    cfg,
                 ),
                     Severity::Error,
                     Diagnostic::at(source_file, &destructured),
@@ -116,8 +118,10 @@ pub(crate) fn check_ownership(
                     if !not_moved_blocks.is_empty() {
                         messages.push(ErrorMessage::new(
                         format!(
-                            "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}; {:#?}",
-                            name, moved_into_blocks, destructured_in_blocks, not_moved_blocks,
+                            "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}; {:#?}; MIR was {}",
+                            name,
+                            moved_into_blocks, destructured_in_blocks, not_moved_blocks,
+                            cfg,
                         ),
                         Severity::Error,
                         Diagnostic::at(source_file, &range),
@@ -612,6 +616,8 @@ fn make_dropped(
         }
         OwnershipStatus::Destructured { .. } => {
             // Unconditionally do not drop this variable, but free its memory.
+            // Set its ownership status to "dropped" so we do not free its memory twice.
+            *stat = OwnershipStatus::Dropped { dropped: range };
             vec![Statement {
                 range,
                 kind: StatementKind::Free { variable },

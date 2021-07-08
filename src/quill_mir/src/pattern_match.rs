@@ -686,7 +686,7 @@ pub(crate) fn bind_pattern_variables(
         }
         Pattern::Impl { fields, .. } => {
             let (aspect_name, concrete_type_parameters) =
-                if let Type::Named { name, parameters } = &ty {
+                if let Type::Impl { name, parameters } = &ty {
                     (name, parameters)
                 } else {
                     unreachable!()
