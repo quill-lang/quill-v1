@@ -293,7 +293,7 @@ impl Display for FunctionObjectDescriptor {
             write!(f, "]")?;
         }
         if let Some(last) = self.last_curry_step {
-            write!(f, "{}", last)?;
+            write!(f, "/{}", last)?;
         }
         Ok(())
     }
