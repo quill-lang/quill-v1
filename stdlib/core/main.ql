@@ -12,7 +12,7 @@ def main: Unit {
         ) (
             \a -> (
                 let list = 72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty
-                mapM print_int (copy &list)
+                mapM putchar (copy &list)
                 perform_print_list print_list (copy &list)
                 perform_print_list print_list list
             )

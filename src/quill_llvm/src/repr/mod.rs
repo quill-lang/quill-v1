@@ -440,8 +440,9 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 let copy = self
                     .codegen
                     .builder
-                    .build_struct_gep(fobj, 1, "loaded_fobj_copy")
+                    .build_struct_gep(fobj, 1, "loaded_copy_fn_ptr")
                     .unwrap();
+                let copy = self.codegen.builder.build_load(copy, "loaded_copy_fn");
                 let copy = self
                     .codegen
                     .builder
