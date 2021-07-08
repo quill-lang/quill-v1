@@ -893,6 +893,7 @@ pub(crate) fn generate_constraints(
                 new_variables: None,
             })
         }
+        ExprPatP::ImplPattern { .. } => unreachable!(),
     }
 }
 

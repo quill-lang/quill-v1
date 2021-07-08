@@ -342,6 +342,7 @@ fn reference_place(
             Pattern::Named(_) => true,
             Pattern::Constant { .. } => false,
             Pattern::TypeConstructor { .. } => false,
+            Pattern::Impl { .. } => false,
             Pattern::Function { .. } => unreachable!(),
             Pattern::Unknown(_) => true,
         };
@@ -660,6 +661,51 @@ pub(crate) fn bind_pattern_variables(
                                     field: field_name.name.clone(),
                                 }
                             }),
+                        pat,
+                        replace_type_variables(
+                            ty.clone(),
+                            named_type_parameters,
+                            concrete_type_parameters,
+                        ),
+                    )
+                })
+                .map(|result| (result.statements, result.bound_variables))
+                .collect::<Vec<_>>();
+
+            let mut statements = Vec::new();
+            let mut bound_variables = Vec::new();
+            for (more_statements, more_bound_variables) in results {
+                statements.extend(more_statements);
+                bound_variables.extend(more_bound_variables);
+            }
+
+            BoundPatternVariables {
+                statements,
+                bound_variables,
+            }
+        }
+        Pattern::Impl { fields, .. } => {
+            let (aspect_name, concrete_type_parameters) =
+                if let Type::Named { name, parameters } = &ty {
+                    (name, parameters)
+                } else {
+                    unreachable!()
+                };
+
+            // Bind each field individually, then chain all the blocks together.
+            // First work out the type parameters used for this type.
+            let decl = &index[&aspect_name.source_file].aspects[&aspect_name.name];
+            let named_type_parameters = &decl.type_variables;
+
+            let results = fields
+                .iter()
+                .map(|(field_name, ty, pat)| {
+                    bind_pattern_variables(
+                        ctx,
+                        index,
+                        value.clone().then(PlaceSegment::ImplField {
+                            field: field_name.name.clone(),
+                        }),
                         pat,
                         replace_type_variables(
                             ty.clone(),

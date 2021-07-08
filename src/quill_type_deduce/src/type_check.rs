@@ -14,7 +14,7 @@ use quill_index::{
 };
 use quill_parser::{
     definition::{DefinitionBodyP, DefinitionCaseP, DefinitionDeclP, DefinitionP, TypeParameterP},
-    expr_pat::ExprPatP,
+    expr_pat::{ConstructDataFields, ExprPatP},
     file::FileP,
     identifier::{IdentifierP, NameP},
     types::TypeP,
@@ -374,7 +374,9 @@ impl<'a> TypeChecker<'a> {
                 // Let's resolve each case's patterns and expressions.
                 let cases = cases
                     .into_iter()
-                    .map(|case| self.resolve_case(visible_names, &def_name.name, case))
+                    .map(|case| {
+                        self.resolve_case(visible_names, &def_name.name, case, symbol_type.clone())
+                    })
                     .collect::<DiagnosticResult<_>>();
 
                 // Now we can check whether the patterns are valid.
@@ -461,9 +463,11 @@ impl<'a> TypeChecker<'a> {
         visible_names: &VisibleNames,
         function_name: &str,
         case: DefinitionCaseP,
+        symbol_type: Type,
     ) -> DiagnosticResult<(Range, Vec<Pattern>, ExprPatP)> {
         let range = case.pattern.range();
-        let pattern = self.resolve_func_pattern(visible_names, function_name, case.pattern);
+        let pattern =
+            self.resolve_func_pattern(visible_names, function_name, case.pattern, symbol_type);
         let replacement = case.replacement;
         pattern.map(|pattern| (range, pattern, replacement))
     }
@@ -679,6 +683,127 @@ impl<'a> TypeChecker<'a> {
                     Diagnostic::at(self.source_file, &type_ctor.range),
                 )),
             },
+            Pattern::Impl {
+                impl_token,
+                fields: provided_fields,
+                ..
+            } => match expected_type {
+                Type::Named { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    String::from("expected a type constructor, not an impl"),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, impl_token),
+                )),
+                Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
+                    String::from("expected a name for a function, not an impl"),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, impl_token),
+                )),
+                Type::Variable { variable, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "expected a name for a variable of type `{}`, not an impl",
+                        variable
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, impl_token),
+                )),
+                Type::Primitive(prim) => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "expected a name for a variable of type {}, not an impl",
+                        prim
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, impl_token),
+                )),
+                Type::Borrow { ty, borrow } => {
+                    // Add the lifetime to the types inside this borrow.
+                    self.match_and_bind(visible_names, pattern, *ty)
+                        .map(|mut variables| {
+                            for v in variables.values_mut() {
+                                // Mutate the value by replacing it temporarily.
+                                let ty = std::mem::replace(
+                                    &mut v.var_type,
+                                    Type::Primitive(PrimitiveType::Unit),
+                                );
+                                v.var_type = Type::Borrow {
+                                    ty: Box::new(ty),
+                                    borrow: borrow.clone(),
+                                };
+                            }
+                            variables
+                        })
+                }
+                Type::Impl {
+                    name: aspect_name,
+                    parameters: concrete_type_parameters,
+                    ..
+                } => {
+                    // Find the data type declaration in the index.
+                    let decl = &visible_names.aspects[aspect_name.name.as_str()];
+
+                    // Find the original list of named type parameters.
+                    // For instance, in a data type `Foo[A]`, the named type parameter list is `[A]`.
+                    // We can then create a bijective correspondence between the list of `concrete_type_parameters` given
+                    // and the list of `named_type_parameters`, so we can identify which type parameter has which value.
+                    // Also, find the list of fields for the type constructor that we're creating.
+                    let (named_type_parameters, expected_fields) = {
+                        let fields = decl
+                            .decl
+                            .definitions
+                            .iter()
+                            .map(|def| (def.name.name.clone(), def.symbol_type.clone()))
+                            .collect::<HashMap<String, Type>>();
+                        (&decl.decl.type_variables, fields)
+                    };
+
+                    // Process the fields provided to this type constructor.
+                    let provided_fields = provided_fields
+                        .iter()
+                        .map(|(name, _ty, pat)| (name.name.clone(), pat.clone()))
+                        .collect::<HashMap<String, Pattern>>();
+
+                    // Check that the names of the provided fields and the expected fields match.
+                    let mut bound_vars = Vec::new();
+                    for (field_name, pattern) in &provided_fields {
+                        // Does this field actually belong to the type constructor?
+                        if let Some(field_type) = expected_fields.get(field_name) {
+                            // For each field in the constructor, we need to match that field against the known type
+                            // of this field. So we need to match the type parameters in this type constructor
+                            // against the type parameters above.
+                            // This means that when matching a `Maybe Bool`, the type constructor `Just { value: T }` becomes `Just { value: Bool }`,
+                            // because the `T` is replaced with the concrete type `Bool`.
+                            let expected_type = replace_type_variables(
+                                field_type.clone(),
+                                named_type_parameters,
+                                &concrete_type_parameters,
+                            );
+                            bound_vars.push(self.match_and_bind(
+                                visible_names,
+                                pattern,
+                                expected_type,
+                            ));
+                        }
+                    }
+                    DiagnosticResult::sequence(bound_vars)
+                        .bind(|bound_vars| collect_bound_vars(self.source_file, bound_vars))
+                        .bind(|result| {
+                            // Check that all of the fields were actually referenced.
+                            let mut messages = Vec::new();
+                            for field_name in expected_fields.keys() {
+                                if !provided_fields.contains_key(field_name) {
+                                    messages.push(ErrorMessage::new(
+                                        format!(
+                                            "this pattern is missing the field `{}`",
+                                            field_name
+                                        ),
+                                        Severity::Error,
+                                        Diagnostic::at(self.source_file, impl_token),
+                                    ))
+                                }
+                            }
+                            DiagnosticResult::ok_with_many(result, messages)
+                        })
+                }
+            },
             Pattern::Unknown(_) => DiagnosticResult::ok(HashMap::new()),
             Pattern::Function { .. } => unimplemented!(),
         }
@@ -692,6 +817,7 @@ impl<'a> TypeChecker<'a> {
         visible_names: &VisibleNames,
         function_name: &str,
         expression: ExprPatP,
+        symbol_type: Type,
     ) -> DiagnosticResult<Vec<Pattern>> {
         match expression {
             ExprPatP::Variable(identifier) => {
@@ -716,14 +842,22 @@ impl<'a> TypeChecker<'a> {
             }
             ExprPatP::Apply(left, right) => {
                 // The left hand side should be a function pattern, and the right hand side should be a type pattern.
-                self.resolve_func_pattern(visible_names, function_name, *left)
-                    .bind(|mut left| {
-                        self.resolve_type_pattern(visible_names, *right)
-                            .map(|right| {
-                                left.push(right);
-                                left
-                            })
-                    })
+                if let Type::Function(left_type, right_type) = symbol_type {
+                    self.resolve_func_pattern(visible_names, function_name, *left, *left_type)
+                        .bind(|mut left| {
+                            self.resolve_type_pattern(visible_names, *right, *right_type)
+                                .map(|right| {
+                                    left.push(right);
+                                    left
+                                })
+                        })
+                } else {
+                    DiagnosticResult::fail(ErrorMessage::new(
+                        String::from("too many parameters in this function pattern"),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &*left),
+                    ))
+                }
             }
             ExprPatP::Unknown(range) => {
                 // This is invalid, the function must be the pattern.
@@ -770,7 +904,8 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &data_constructor),
             )),
-            ExprPatP::Impl { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+            ExprPatP::Impl { .. } => unreachable!(),
+            ExprPatP::ImplPattern { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("`impl` blocks are not allowed in function patterns"),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &impl_token),
@@ -778,11 +913,13 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Converts a pattern representing a type constructor into a pattern object.
+    /// Converts a pattern representing a value or type constructor into a pattern object.
+    /// We know ahead of time what type this value should be.
     fn resolve_type_pattern(
         &self,
         visible_names: &VisibleNames,
         expression: ExprPatP,
+        ty: Type,
     ) -> DiagnosticResult<Pattern> {
         match expression {
             ExprPatP::Variable(identifier) => {
@@ -837,87 +974,167 @@ impl<'a> TypeChecker<'a> {
                 data_constructor,
                 fields,
                 ..
-            } => {
-                let fields = fields
-                    .fields
-                    .into_iter()
-                    .map(|(field_name, field_pattern)| {
-                        self.resolve_type_pattern(visible_names, field_pattern)
-                            .map(|pat| (field_name, pat))
-                    })
-                    .chain(fields.auto_fields.into_iter().map(|field_name| {
-                        DiagnosticResult::ok((field_name.clone(), Pattern::Named(field_name)))
-                    }))
-                    .collect::<DiagnosticResult<_>>();
-                fields.bind(|fields| {
-                    resolve_type_constructor(self.source_file, &data_constructor, visible_names)
-                        .map(|type_ctor| {
-                            // Find the fields on the type, and cache their types.
-                            let decl = visible_names.types[type_ctor.data_type.name.as_str()].decl;
-                            match &decl.decl_type {
-                                TypeDeclarationTypeI::Data(datai) => Pattern::TypeConstructor {
-                                    type_ctor,
-                                    fields: fields
-                                        .into_iter()
-                                        .map(|(name, pat)| {
-                                            let ty = datai
-                                                .type_ctor
-                                                .fields
-                                                .iter()
-                                                .find_map(|(fname, ftype)| {
-                                                    if *fname == name {
-                                                        Some(ftype.clone())
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                                .unwrap();
-                                            (name, ty, pat)
-                                        })
-                                        .collect(),
-                                },
-                                TypeDeclarationTypeI::Enum(enumi) => {
-                                    let variant = enumi
-                                        .variants
+            } => resolve_type_constructor(self.source_file, &data_constructor, visible_names).bind(
+                |type_ctor| {
+                    dbg!(&data_constructor);
+                    dbg!(&fields);
+                    dbg!(&ty);
+                    let field_types = if let Type::Named { name, parameters } = ty {
+                        match &self.project_index[&name.source_file].types[&name.name].decl_type {
+                            TypeDeclarationTypeI::Data(datai) => datai
+                                .type_ctor
+                                .fields
+                                .iter()
+                                .map(|(name, ty)| {
+                                    (
+                                        name,
+                                        replace_type_variables(
+                                            ty.clone(),
+                                            &datai.type_params,
+                                            &parameters,
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                            TypeDeclarationTypeI::Enum(enumi) => enumi
+                                .variants
+                                .iter()
+                                .find(|variant| {
+                                    variant.name.name == type_ctor.variant.as_deref().unwrap()
+                                })
+                                .unwrap()
+                                .type_ctor
+                                .fields
+                                .iter()
+                                .map(|(name, ty)| {
+                                    (
+                                        name,
+                                        replace_type_variables(
+                                            ty.clone(),
+                                            &enumi.type_params,
+                                            &parameters,
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        }
+                    } else {
+                        panic!("ty was {}", ty)
+                    };
+
+                    let fields = self.resolve_destructure(visible_names, fields, &field_types);
+
+                    fields.map(|fields| {
+                        // Find the fields on the type, and cache their types.
+                        Pattern::TypeConstructor {
+                            type_ctor,
+                            fields: fields
+                                .into_iter()
+                                .map(|(name, pat)| {
+                                    let ty = field_types
                                         .iter()
-                                        .find(|variant| {
-                                            &variant.name.name
-                                                == type_ctor.variant.as_ref().unwrap()
+                                        .find_map(|(fname, ftype)| {
+                                            if **fname == name {
+                                                Some(ftype.clone())
+                                            } else {
+                                                None
+                                            }
                                         })
                                         .unwrap();
-
-                                    Pattern::TypeConstructor {
-                                        type_ctor,
-                                        fields: fields
-                                            .into_iter()
-                                            .map(|(name, pat)| {
-                                                let ty = variant
-                                                    .type_ctor
-                                                    .fields
-                                                    .iter()
-                                                    .find_map(|(fname, ftype)| {
-                                                        if *fname == name {
-                                                            Some(ftype.clone())
-                                                        } else {
-                                                            None
-                                                        }
-                                                    })
-                                                    .unwrap();
-                                                (name, ty, pat)
-                                            })
-                                            .collect(),
-                                    }
-                                }
-                            }
+                                    (name, ty, pat)
+                                })
+                                .collect(),
+                        }
+                    })
+                },
+            ),
+            ExprPatP::Impl { .. } => unreachable!(),
+            ExprPatP::ImplPattern {
+                impl_token, fields, ..
+            } => {
+                let field_types = if let Type::Impl { name, parameters } = &ty {
+                    let aspecti = &self.project_index[&name.source_file].aspects[&name.name];
+                    aspecti
+                        .definitions
+                        .iter()
+                        .map(|def| {
+                            (
+                                &def.name,
+                                replace_type_variables(
+                                    def.symbol_type.clone(),
+                                    &aspecti.type_variables,
+                                    parameters,
+                                ),
+                            )
                         })
+                        .collect::<Vec<_>>()
+                } else {
+                    unreachable!()
+                };
+
+                let fields = self.resolve_destructure(visible_names, fields, &field_types);
+
+                fields.map(|fields| {
+                    // Find the fields on the type, and cache their types.
+                    Pattern::Impl {
+                        impl_token,
+                        fields: fields
+                            .into_iter()
+                            .map(|(name, pat)| {
+                                let ty = field_types
+                                    .iter()
+                                    .find_map(|(fname, ftype)| {
+                                        if **fname == name {
+                                            Some(ftype.clone())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap();
+                                (name, ty, pat)
+                            })
+                            .collect(),
+                    }
                 })
             }
-            ExprPatP::Impl { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("`impl` expressions are not allowed in patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &impl_token),
-            )),
         }
+    }
+
+    fn resolve_destructure(
+        &self,
+        visible_names: &VisibleNames,
+        fields: ConstructDataFields,
+        field_types: &[(&NameP, Type)],
+    ) -> DiagnosticResult<Vec<(NameP, Pattern)>> {
+        // Use the known types of each fields to find the real types of each field
+        // in this destructure block.
+        fields
+            .fields
+            .into_iter()
+            .map(|(field_name, field_pattern)| {
+                self.resolve_type_pattern(
+                    visible_names,
+                    field_pattern,
+                    field_types
+                        .iter()
+                        .find_map(
+                            |(name, ty)| {
+                                if **name == field_name {
+                                    Some(ty)
+                                } else {
+                                    None
+                                }
+                            },
+                        )
+                        .unwrap()
+                        .clone(),
+                )
+                .map(|pat| (field_name, pat))
+            })
+            .chain(fields.auto_fields.into_iter().map(|field_name| {
+                DiagnosticResult::ok((field_name.clone(), Pattern::Named(field_name)))
+            }))
+            .collect::<DiagnosticResult<_>>()
     }
 
     /// Type check the implementation of an aspect.

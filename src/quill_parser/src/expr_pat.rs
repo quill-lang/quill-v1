@@ -54,10 +54,17 @@ pub enum ExprPatP {
         close_brace: Range,
         fields: ConstructDataFields,
     },
-    /// An implementation of an aspect.
+    /// An implementation of an aspect. Only used in expressions, not patterns (see [ExprPatP::ImplPattern]).
     Impl {
         impl_token: Range,
         body: DefinitionBodyP,
+    },
+    /// A pattern destructuring an implementation of an aspect. Only used in patterns, not expressions (see [ExprPatP::Impl]).
+    ImplPattern {
+        impl_token: Range,
+        open_brace: Range,
+        close_brace: Range,
+        fields: ConstructDataFields,
     },
     /// An underscore `_` representing an unknown.
     /// This is valid only in patterns, not normal expressions.
@@ -116,6 +123,11 @@ impl Ranged for ExprPatP {
                 ..
             } => data_constructor.range().union(close_brace.range()),
             ExprPatP::Impl { impl_token, .. } => impl_token.range(),
+            ExprPatP::ImplPattern {
+                impl_token,
+                close_brace,
+                ..
+            } => impl_token.range().union(close_brace.range()),
         }
     }
 }
