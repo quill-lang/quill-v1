@@ -1,10 +1,13 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    convert::{TryFrom, TryInto},
+};
 
 use data::FieldIndex;
 use inkwell::{
     debug_info::{AsDIScope, DIDerivedType, DIFlagsConstants},
     types::{BasicType, BasicTypeEnum},
-    values::PointerValue,
+    values::{CallableValue, PointerValue},
     AddressSpace,
 };
 use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
@@ -49,11 +52,26 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
     ) -> Self {
         let general_func_obj_ty = codegen.context.opaque_struct_type("fobj");
         general_func_obj_ty.set_body(
-            &[codegen
-                .context
-                .i8_type()
-                .ptr_type(AddressSpace::Generic)
-                .into()],
+            &[
+                // The function ptr to call
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+                // The copy function
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+                // The drop function
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+            ],
             false,
         );
         let mut reprs = Self {
@@ -271,9 +289,13 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     .get_function(&format!("drop/{}", mono_ty))
                     .unwrap();
                 if repr.is_some() {
+                    let variable = self
+                        .codegen
+                        .builder
+                        .build_load(variable_ptr, "value_to_drop");
                     self.codegen.builder.build_call(
                         func,
-                        &[variable_ptr.into()],
+                        &[variable],
                         &format!("drop_{}", mono_ty),
                     );
                 } else {
@@ -287,9 +309,50 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 unreachable!()
             }
             Type::Function(_, _) => {
-                // TODO drop functions.
-                // This will have to be done using dynamic (single) dispatch,
-                // since function objects might contain things that need to be dropped/freed.
+                let func_object_ptr = self
+                    .codegen
+                    .builder
+                    .build_load(variable_ptr, "fobj_loaded")
+                    .into_pointer_value();
+                // Get the third element of this function object, which is the drop function.
+                let fptr_raw = self
+                    .codegen
+                    .builder
+                    .build_struct_gep(func_object_ptr, 2, "drop_raw_ptr")
+                    .unwrap();
+                let fptr_raw = self.codegen.builder.build_load(fptr_raw, "drop_raw");
+                let fptr = self
+                    .codegen
+                    .builder
+                    .build_bitcast(
+                        fptr_raw,
+                        self.codegen
+                            .context
+                            .void_type()
+                            .fn_type(
+                                &[variable_ptr
+                                    .get_type()
+                                    .get_element_type()
+                                    .try_into()
+                                    .unwrap()],
+                                false,
+                            )
+                            .ptr_type(AddressSpace::Generic),
+                        "drop",
+                    )
+                    .into_pointer_value();
+
+                let args = &[self.codegen.builder.build_bitcast(
+                    func_object_ptr,
+                    self.general_func_obj_ty.llvm_type,
+                    "fobj_bitcast",
+                )];
+
+                self.codegen.builder.build_call(
+                    CallableValue::try_from(fptr).unwrap(),
+                    args,
+                    "drop_call",
+                );
             }
             Type::Primitive(_) => {
                 // No operation is required.
@@ -312,9 +375,13 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     .get_function(&format!("drop/{}", mono_asp))
                     .unwrap();
                 if repr.is_some() {
+                    let variable = self
+                        .codegen
+                        .builder
+                        .build_load(variable_ptr, "value_to_drop");
                     self.codegen.builder.build_call(
                         func,
-                        &[variable_ptr.into()],
+                        &[variable],
                         &format!("drop_{}", mono_asp),
                     );
                 } else {
@@ -326,16 +393,27 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         }
     }
 
-    /// Create a `drop` function for each type.
-    /// It is automatically populated with code that will drop each field.
-    /// However, if a custom implementation of `drop` is provided, this will overwrite the default `drop` implementation.
-    pub fn create_drop_funcs(&self) {
+    /// Create a `drop` and `copy` function for each type.
+    /// These functions are guaranteed to be free of side effects and cannot be overridden inside Quill.
+    pub fn create_drop_copy_funcs(&self) {
         // First, declare all the function signatures.
         for (ty, repr) in &self.datas {
             self.codegen.module.add_function(
                 &format!("drop/{}", ty),
                 if let Some(llvm_repr) = &repr.llvm_repr {
-                    self.codegen.context.void_type().fn_type(
+                    self.codegen
+                        .context
+                        .void_type()
+                        .fn_type(&[llvm_repr.ty.into()], false)
+                } else {
+                    self.codegen.context.void_type().fn_type(&[], false)
+                },
+                None,
+            );
+            self.codegen.module.add_function(
+                &format!("copy/{}", ty),
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    llvm_repr.ty.fn_type(
                         &[llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                         false,
                     )
@@ -348,7 +426,15 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         for (ty, repr) in &self.enums {
             self.codegen.module.add_function(
                 &format!("drop/{}", ty),
-                self.codegen.context.void_type().fn_type(
+                self.codegen
+                    .context
+                    .void_type()
+                    .fn_type(&[repr.llvm_repr.ty.into()], false),
+                None,
+            );
+            self.codegen.module.add_function(
+                &format!("copy/{}", ty),
+                repr.llvm_repr.ty.fn_type(
                     &[repr.llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                     false,
                 ),
@@ -359,7 +445,19 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             self.codegen.module.add_function(
                 &format!("drop/{}", ty),
                 if let Some(llvm_repr) = &repr.llvm_repr {
-                    self.codegen.context.void_type().fn_type(
+                    self.codegen
+                        .context
+                        .void_type()
+                        .fn_type(&[llvm_repr.ty.into()], false)
+                } else {
+                    self.codegen.context.void_type().fn_type(&[], false)
+                },
+                None,
+            );
+            self.codegen.module.add_function(
+                &format!("copy/{}", ty),
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    llvm_repr.ty.fn_type(
                         &[llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                         false,
                     )
@@ -382,15 +480,20 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             self.codegen.builder.position_at_end(block);
 
             if repr.llvm_repr.is_some() {
-                let variable = func.get_first_param().unwrap().into_pointer_value();
+                let value = func.get_first_param().unwrap();
+                let ptr = self
+                    .codegen
+                    .builder
+                    .build_alloca(value.get_type(), "value_to_drop");
+                self.codegen.builder.build_store(ptr, value);
 
                 for heap_field in repr.field_names_on_heap() {
-                    let ptr_to_field = repr.load(self.codegen, self, variable, heap_field).unwrap();
+                    let ptr_to_field = repr.load(self.codegen, self, ptr, heap_field).unwrap();
                     let ty = repr.field_ty(heap_field).unwrap().clone();
                     self.drop_ptr(ty, ptr_to_field);
                 }
 
-                repr.free_fields(self.codegen, variable);
+                repr.free_fields(self.codegen, ptr);
             }
 
             self.codegen.builder.build_return(None);
@@ -405,10 +508,15 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             let block = self.codegen.context.append_basic_block(func, "drop");
             self.codegen.builder.position_at_end(block);
 
-            let variable = func.get_first_param().unwrap().into_pointer_value();
+            let value = func.get_first_param().unwrap();
+            let ptr = self
+                .codegen
+                .builder
+                .build_alloca(value.get_type(), "value_to_drop");
+            self.codegen.builder.build_store(ptr, value);
 
             // Switch on the discriminant to see what needs dropping.
-            let disc = repr.get_discriminant(self.codegen, variable);
+            let disc = repr.get_discriminant(self.codegen, ptr);
             let disc_loaded = self
                 .codegen
                 .builder
@@ -432,7 +540,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     .codegen
                     .builder
                     .build_bitcast(
-                        variable,
+                        ptr,
                         variant
                             .llvm_repr
                             .as_ref()
@@ -469,15 +577,20 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             self.codegen.builder.position_at_end(block);
 
             if repr.llvm_repr.is_some() {
-                let variable = func.get_first_param().unwrap().into_pointer_value();
+                let value = func.get_first_param().unwrap();
+                let ptr = self
+                    .codegen
+                    .builder
+                    .build_alloca(value.get_type(), "value_to_drop");
+                self.codegen.builder.build_store(ptr, value);
 
                 for heap_field in repr.field_names_on_heap() {
-                    let ptr_to_field = repr.load(self.codegen, self, variable, heap_field).unwrap();
+                    let ptr_to_field = repr.load(self.codegen, self, ptr, heap_field).unwrap();
                     let ty = repr.field_ty(heap_field).unwrap().clone();
                     self.drop_ptr(ty, ptr_to_field);
                 }
 
-                repr.free_fields(self.codegen, variable);
+                repr.free_fields(self.codegen, ptr);
             }
 
             self.codegen.builder.build_return(None);

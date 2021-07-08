@@ -372,6 +372,32 @@ impl MonomorphisedFunction {
                     reprs.general_func_obj_ty.di_type,
                 )),
             );
+            // Add the copy function as the second field.
+            builder.add_field_raw(
+                ".copy".to_string(),
+                Some(AnyTypeRepresentation::new(
+                    codegen,
+                    codegen
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::Generic)
+                        .into(),
+                    reprs.general_func_obj_ty.di_type,
+                )),
+            );
+            // Add the drop function as the third field.
+            builder.add_field_raw(
+                ".drop".to_string(),
+                Some(AnyTypeRepresentation::new(
+                    codegen,
+                    codegen
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::Generic)
+                        .into(),
+                    reprs.general_func_obj_ty.di_type,
+                )),
+            );
             // Add only the arguments not pertaining to the last currying step.
             for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
                 if let Some(repr) = arg_repr_indices[i as usize].map(|i| args_with_reprs[i]) {

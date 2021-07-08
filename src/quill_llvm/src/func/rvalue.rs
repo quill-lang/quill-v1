@@ -215,10 +215,9 @@ pub fn get_pointer_to_rvalue<'ctx>(
                     // Call the copy function for this type.
                     todo!()
                 }
-                Type::Variable {
-                    variable,
-                    parameters,
-                } => todo!(),
+                Type::Variable { .. } => {
+                    panic!("shouldn't still have type variables at this point")
+                }
                 Type::Function(_, _) => {
                     // This is a function object.
                     todo!()
