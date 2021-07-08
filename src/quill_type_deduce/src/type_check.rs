@@ -819,98 +819,71 @@ impl<'a> TypeChecker<'a> {
         expression: ExprPatP,
         symbol_type: Type,
     ) -> DiagnosticResult<Vec<Pattern>> {
-        match expression {
-            ExprPatP::Variable(identifier) => {
-                // This identifier should be the function.
-                if identifier.segments.len() == 1 && identifier.segments[0].name == function_name {
-                    DiagnosticResult::ok(Vec::new())
-                } else {
-                    DiagnosticResult::fail(ErrorMessage::new_with(
-                        String::from("this did not match the function being defined"),
-                        Severity::Error,
-                        Diagnostic::at(self.source_file, &identifier),
-                        HelpMessage {
-                            message: format!("replace this with `{}`", function_name),
-                            help_type: HelpType::Help,
-                            diagnostic: Diagnostic::at(self.source_file, &identifier),
-                        },
-                    ))
-                }
-            }
-            ExprPatP::Immediate { range, value } => {
-                DiagnosticResult::ok(vec![Pattern::Constant { range, value }])
-            }
-            ExprPatP::Apply(left, right) => {
-                // The left hand side should be a function pattern, and the right hand side should be a type pattern.
-                if let Type::Function(left_type, right_type) = symbol_type {
-                    self.resolve_func_pattern(visible_names, function_name, *left, *left_type)
-                        .bind(|mut left| {
-                            self.resolve_type_pattern(visible_names, *right, *right_type)
-                                .map(|right| {
-                                    left.push(right);
-                                    left
-                                })
-                        })
-                } else {
-                    DiagnosticResult::fail(ErrorMessage::new(
-                        String::from("too many parameters in this function pattern"),
-                        Severity::Error,
-                        Diagnostic::at(self.source_file, &*left),
-                    ))
-                }
-            }
-            ExprPatP::Unknown(range) => {
-                // This is invalid, the function must be the pattern.
-                DiagnosticResult::fail(ErrorMessage::new_with(
+        // We decompose the pattern into the name of the function followed by its arguments.
+        let mut args = Vec::new();
+        let mut function_name_expr = expression;
+        while let ExprPatP::Apply(left, right) = function_name_expr {
+            function_name_expr = *left;
+            args.insert(0, *right);
+        }
+
+        if let ExprPatP::Variable(identifier) = function_name_expr {
+            // This identifier should be the function.
+            if identifier.segments.len() == 1 && identifier.segments[0].name == function_name {
+            } else {
+                return DiagnosticResult::fail(ErrorMessage::new_with(
                     String::from("this did not match the function being defined"),
                     Severity::Error,
-                    Diagnostic::at(self.source_file, &range),
+                    Diagnostic::at(self.source_file, &identifier),
                     HelpMessage {
                         message: format!("replace this with `{}`", function_name),
                         help_type: HelpType::Help,
-                        diagnostic: Diagnostic::at(self.source_file, &range),
+                        diagnostic: Diagnostic::at(self.source_file, &identifier),
                     },
-                ))
+                ));
             }
-            ExprPatP::Lambda { lambda_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("lambda abstractions are not allowed in patterns"),
+        } else {
+            return DiagnosticResult::fail(ErrorMessage::new_with(
+                String::from("expected the name of the function"),
                 Severity::Error,
-                Diagnostic::at(self.source_file, &lambda_token),
-            )),
-            ExprPatP::Let { let_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("let expressions are not allowed in patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &let_token),
-            )),
-            ExprPatP::Block { open_bracket, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("blocks are not allowed in patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &open_bracket),
-            )),
-            ExprPatP::Borrow { borrow_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("borrows are not allowed in patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &borrow_token),
-            )),
-            ExprPatP::Copy { copy_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("copies are not allowed in patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &copy_token),
-            )),
-            ExprPatP::ConstructData {
-                data_constructor, ..
-            } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("data constructors are not allowed in function patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &data_constructor),
-            )),
-            ExprPatP::Impl { .. } => unreachable!(),
-            ExprPatP::ImplPattern { impl_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("`impl` blocks are not allowed in function patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &impl_token),
-            )),
+                Diagnostic::at(self.source_file, &function_name_expr),
+                HelpMessage {
+                    message: format!("replace this with `{}`", function_name),
+                    help_type: HelpType::Help,
+                    diagnostic: Diagnostic::at(self.source_file, &function_name_expr),
+                },
+            ));
         }
+
+        // Check that the amount of arguments is at most the arity of this function.
+        // This is done by first finding the maximal list of arguments to be supplied to this function.
+        let (param_types, _return_type) = get_args_of_type(&symbol_type);
+
+        if param_types.len() < args.len() {
+            return DiagnosticResult::fail(ErrorMessage::new_with(
+                String::from("too many arguments"),
+                Severity::Error,
+                Diagnostic::at(
+                    self.source_file,
+                    &args[param_types.len()..]
+                        .iter()
+                        .map(|arg| arg.range())
+                        .reduce(Range::union)
+                        .unwrap(),
+                ),
+                HelpMessage {
+                    message: "remove this extra argument".to_string(),
+                    help_type: HelpType::Help,
+                    diagnostic: Diagnostic::at(self.source_file, &args[param_types.len()]),
+                },
+            ));
+        }
+
+        // Now that the function's name has been parsed, let's process each argument.
+        args.into_iter()
+            .zip(param_types)
+            .map(|(expression, ty)| self.resolve_type_pattern(visible_names, expression, ty))
+            .collect::<DiagnosticResult<Vec<_>>>()
     }
 
     /// Converts a pattern representing a value or type constructor into a pattern object.
@@ -976,9 +949,6 @@ impl<'a> TypeChecker<'a> {
                 ..
             } => resolve_type_constructor(self.source_file, &data_constructor, visible_names).bind(
                 |type_ctor| {
-                    dbg!(&data_constructor);
-                    dbg!(&fields);
-                    dbg!(&ty);
                     let field_types = if let Type::Named { name, parameters } = ty {
                         match &self.project_index[&name.source_file].types[&name.name].decl_type {
                             TypeDeclarationTypeI::Data(datai) => datai
