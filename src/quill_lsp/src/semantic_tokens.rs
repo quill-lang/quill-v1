@@ -288,15 +288,22 @@ impl SemanticTokenGenerator {
             ExprPatP::Impl { body, .. } => {
                 self.gen_def_body(body);
             }
-            ExprPatP::Field {
-                container, field, ..
-            } => {
-                self.gen_expr(*container, conditions);
-                self.push_token(
-                    field.range,
-                    SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PROPERTY],
-                    0,
-                )
+            ExprPatP::ImplPattern { fields, .. } => {
+                for (name, pat) in fields.fields {
+                    self.push_token(
+                        name.range,
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PROPERTY],
+                        0,
+                    );
+                    self.gen_expr(pat, conditions.clone());
+                }
+                for name in fields.auto_fields {
+                    self.push_token(
+                        name.range,
+                        SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PROPERTY],
+                        0,
+                    );
+                }
             }
         }
     }
@@ -335,7 +342,16 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
         ExprPatP::Borrow { .. } => unreachable!(),
         ExprPatP::Copy { .. } => unreachable!(),
         ExprPatP::Impl { .. } => unreachable!(),
-        ExprPatP::Field { .. } => unreachable!(),
+        ExprPatP::ImplPattern { fields, .. } => {
+            let mut result = Vec::new();
+            for (_, pat) in &fields.fields {
+                result.extend(get_named_parameters(pat, false));
+            }
+            for name in &fields.auto_fields {
+                result.push(name.name.clone());
+            }
+            result
+        }
     }
 }
 
