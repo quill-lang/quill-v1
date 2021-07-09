@@ -156,6 +156,8 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             }
         }
 
+        reprs.create_drop_copy_funcs();
+
         reprs
     }
 
@@ -369,6 +371,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                         type_parameters: parameters,
                     },
                 };
+                eprintln!("drop/{}", mono_asp);
                 let func = self
                     .codegen
                     .module
@@ -518,7 +521,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
 
     /// Create a `drop` and `copy` function for each type.
     /// These functions are guaranteed to be free of side effects and cannot be overridden inside Quill.
-    pub fn create_drop_copy_funcs(&self) {
+    fn create_drop_copy_funcs(&self) {
         // First, declare all the function signatures.
         for (ty, repr) in &self.datas {
             self.codegen.module.add_function(

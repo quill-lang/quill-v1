@@ -304,7 +304,8 @@ struct ArgReprs<'ctx> {
     /// For each argument of the original Quill function, what argument index in LLVM was it mapped to?
     /// If it had no representation, this returns None.
     arg_repr_indices: Vec<Option<usize>>,
-    args_with_reprs: Vec<AnyTypeRepresentation<'ctx>>,
+    /// The list of arguments that had representations, along with their Quill types.
+    args_with_reprs: Vec<(AnyTypeRepresentation<'ctx>, Type)>,
     return_type: Option<BasicTypeEnum<'ctx>>,
     arity: u64,
     function_object: DataRepresentation<'ctx>,
@@ -338,15 +339,15 @@ impl MonomorphisedFunction {
                     &def.type_variables,
                     &self.mono.type_parameters,
                 );
-                reprs.repr(ty)
+                reprs.repr(ty.clone()).map(|repr| (repr, ty))
             })
             .collect::<Vec<_>>();
 
         let mut arg_repr_indices = Vec::new();
         for arg in &args_options {
-            arg_repr_indices.push(arg.map(|_| arg_repr_indices.len()));
+            arg_repr_indices.push(arg.as_ref().map(|_| arg_repr_indices.len()));
         }
-        let args_with_reprs = args_options.iter().copied().flatten().collect::<Vec<_>>();
+        let args_with_reprs = args_options.iter().cloned().flatten().collect::<Vec<_>>();
 
         let return_type = replace_type_variables(
             def.return_type.clone(),
@@ -400,8 +401,10 @@ impl MonomorphisedFunction {
             );
             // Add only the arguments not pertaining to the last currying step.
             for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
-                if let Some(repr) = arg_repr_indices[i as usize].map(|i| args_with_reprs[i]) {
-                    builder.add_field_raw(format!("field_{}", i), Some(repr));
+                if let Some((repr, ty)) =
+                    arg_repr_indices[i as usize].map(|i| args_with_reprs[i].clone())
+                {
+                    builder.add_field_raw_with_type(format!("field_{}", i), Some(repr), ty);
                 }
             }
 
@@ -438,17 +441,17 @@ impl MonomorphisedFunction {
                     codegen.builder.unset_current_debug_location();
 
                     let ptr = func.get_first_param().unwrap().into_pointer_value();
-                    for heap_field in repr.field_names_on_heap() {
+                    for field_name in repr.field_indices().keys() {
                         // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
-                        let assigned = if let FieldIndex::Heap(i) = repr.field_indices()[heap_field]
-                        {
-                            i < fields_stored as u32
-                        } else {
-                            false
+                        let assigned = match repr.field_indices()[field_name] {
+                            FieldIndex::Heap(i) | FieldIndex::Literal(i) => {
+                                // The +3 and minimum value of 3 are because fptr/drop/copy functions are the first three entries of the structure.
+                                3 <= i && i < fields_stored as u32 + 3
+                            }
                         };
                         if assigned {
-                            let ptr_to_field = repr.load(codegen, reprs, ptr, heap_field).unwrap();
-                            let ty = repr.field_ty(heap_field).unwrap().clone();
+                            let ptr_to_field = repr.load(codegen, reprs, ptr, field_name).unwrap();
+                            let ty = repr.field_ty(field_name).unwrap().clone();
                             reprs.drop_ptr(ty, ptr_to_field);
                         }
                     }
@@ -529,12 +532,25 @@ impl MonomorphisedFunction {
 
                     // Now, for each field, copy it over.
                     for field_name in repr.field_indices().keys() {
-                        // Get the field from the source.
-                        if let Some(source_field) = repr.load(codegen, reprs, source, field_name) {
-                            // Copy the field.
-                            if let Some(ty) = repr.field_ty(field_name) {
-                                let source_field_copied =
-                                    reprs.copy_ptr(ty.clone(), source_field).unwrap();
+                        // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
+                        let assigned = match repr.field_indices()[field_name] {
+                            FieldIndex::Heap(i) | FieldIndex::Literal(i) => {
+                                // The +3 and minimum value of 3 are because fptr/drop/copy functions are the first three entries of the structure.
+                                3 <= i && i < fields_stored as u32 + 3
+                            }
+                        };
+                        if assigned {
+                            // Get the field from the source.
+                            if let Some(source_field) =
+                                repr.load(codegen, reprs, source, field_name)
+                            {
+                                // Copy the field.
+                                let source_field_copied = reprs
+                                    .copy_ptr(
+                                        repr.field_ty(field_name).unwrap().clone(),
+                                        source_field,
+                                    )
+                                    .unwrap();
                                 repr.store(codegen, reprs, ptr, source_field_copied, field_name);
                             }
                         }
@@ -575,7 +591,7 @@ impl MonomorphisedFunction {
                 - self.curry_steps.iter().sum::<u64>() as usize)
                 .filter_map(|idx| {
                     arg_reprs.arg_repr_indices[idx]
-                        .map(|idx| arg_reprs.args_with_reprs[idx].llvm_type)
+                        .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
                 })
                 .collect::<Vec<_>>();
 
@@ -617,7 +633,7 @@ impl MonomorphisedFunction {
                 (args_already_calculated..args_already_calculated + self.curry_steps[0] as usize)
                     .filter_map(|idx| {
                         arg_reprs.arg_repr_indices[idx]
-                            .map(|idx| arg_reprs.args_with_reprs[idx].llvm_type)
+                            .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
                     }),
             );
 

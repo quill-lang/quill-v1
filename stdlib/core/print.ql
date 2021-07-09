@@ -14,11 +14,7 @@ aspect Print[T] {
 
 def print_list: impl Print[List[Int]] {
     print_list = impl {
-        print Cons { value, list } = (
-            putchar value
-            perform_print_list print_list list
-        )
-        print _ = unit
+        print = for_each putchar
     }
 }
 
