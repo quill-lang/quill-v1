@@ -480,8 +480,39 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     ),
                 }
             }
-            Type::Borrow { ty, borrow } => todo!(),
-            Type::Impl { name, parameters } => todo!(),
+            Type::Borrow { .. } => {
+                // Borrows can be trivially copied.
+                // The validity of the borrow has already been checked by the borrow checker.
+                Some(
+                    self.codegen
+                        .builder
+                        .build_load(variable_ptr, "copied_value"),
+                )
+            }
+            Type::Impl { name, parameters } => {
+                // Call the copy function for this type.
+                let repr = self.repr(ty);
+                let mono_asp = MonomorphisedAspect {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                if repr.is_some() {
+                    let function = self
+                        .codegen
+                        .module
+                        .get_function(&format!("copy/{}", mono_asp))
+                        .unwrap();
+                    self.codegen
+                        .builder
+                        .build_call(function, &[variable_ptr.into()], "copied_value")
+                        .try_as_basic_value()
+                        .left()
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -818,33 +849,80 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         }
 
         for (ty, repr) in &self.aspects {
-            let func = self
-                .codegen
-                .module
-                .get_function(&format!("drop/{}", ty))
-                .unwrap();
-
-            let block = self.codegen.context.append_basic_block(func, "drop");
-            self.codegen.builder.position_at_end(block);
-
-            if repr.llvm_repr.is_some() {
-                let value = func.get_first_param().unwrap();
-                let ptr = self
+            // Generate the drop function.
+            {
+                let func = self
                     .codegen
-                    .builder
-                    .build_alloca(value.get_type(), "value_to_drop");
-                self.codegen.builder.build_store(ptr, value);
+                    .module
+                    .get_function(&format!("drop/{}", ty))
+                    .unwrap();
 
-                for heap_field in repr.field_names_on_heap() {
-                    let ptr_to_field = repr.load(self.codegen, self, ptr, heap_field).unwrap();
-                    let ty = repr.field_ty(heap_field).unwrap().clone();
-                    self.drop_ptr(ty, ptr_to_field);
+                let block = self.codegen.context.append_basic_block(func, "drop");
+                self.codegen.builder.position_at_end(block);
+
+                if repr.llvm_repr.is_some() {
+                    let value = func.get_first_param().unwrap();
+                    let ptr = self
+                        .codegen
+                        .builder
+                        .build_alloca(value.get_type(), "value_to_drop");
+                    self.codegen.builder.build_store(ptr, value);
+
+                    for heap_field in repr.field_names_on_heap() {
+                        let ptr_to_field = repr.load(self.codegen, self, ptr, heap_field).unwrap();
+                        let ty = repr.field_ty(heap_field).unwrap().clone();
+                        self.drop_ptr(ty, ptr_to_field);
+                    }
+
+                    repr.free_fields(self.codegen, ptr);
                 }
 
-                repr.free_fields(self.codegen, ptr);
+                self.codegen.builder.build_return(None);
             }
 
-            self.codegen.builder.build_return(None);
+            // Generate the copy function.
+            {
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("copy/{}", ty))
+                    .unwrap();
+
+                let block = self.codegen.context.append_basic_block(func, "copy");
+                self.codegen.builder.position_at_end(block);
+
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    let source = func.get_first_param().unwrap().into_pointer_value();
+                    let ptr = self
+                        .codegen
+                        .builder
+                        .build_alloca(llvm_repr.ty, "return_value");
+
+                    // Copy each field over into the new value.
+                    // Start by allocating sufficient space on the heap for the new values.
+                    repr.malloc_fields(self.codegen, self, ptr);
+
+                    // Now, for each field, copy it over.
+                    for field_name in repr.field_indices().keys() {
+                        // Get the field from the source.
+                        if let Some(source_field) =
+                            repr.load(self.codegen, self, source, field_name)
+                        {
+                            // Copy the field.
+                            let source_field_copied = self
+                                .copy_ptr(repr.field_ty(field_name).unwrap().clone(), source_field)
+                                .unwrap();
+                            repr.store(self.codegen, self, ptr, source_field_copied, field_name);
+                        }
+                    }
+
+                    self.codegen.builder.build_return(Some(
+                        &self.codegen.builder.build_load(ptr, "return_value_deref"),
+                    ));
+                } else {
+                    self.codegen.builder.build_return(None);
+                }
+            }
         }
     }
 
