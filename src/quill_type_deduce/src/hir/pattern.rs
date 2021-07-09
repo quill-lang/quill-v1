@@ -20,6 +20,13 @@ pub enum Pattern {
         /// If no pattern is provided in Quill code, an automatic pattern is created, that simply assigns the field to a new variable with the same name.
         fields: Vec<(NameP, Type, Pattern)>,
     },
+    /// An impl, e.g. `impl { print }`.
+    Impl {
+        impl_token: Range,
+        /// The list of fields. If a pattern is provided, the pattern is matched against the named field.
+        /// If no pattern is provided in Quill code, an automatic pattern is created, that simply assigns the field to a new variable with the same name.
+        fields: Vec<(NameP, Type, Pattern)>,
+    },
     /// A function pattern. This cannot be used directly in code,
     /// this is created only for working with functions that have multiple patterns.
     Function {
@@ -35,12 +42,16 @@ impl Ranged for Pattern {
         match self {
             Pattern::Named(identifier) => identifier.range,
             Pattern::Constant { range, .. } => *range,
-            Pattern::TypeConstructor {
-                type_ctor,
-                fields: args,
-            } => args.iter().fold(type_ctor.range, |acc, (_name, _ty, pat)| {
-                acc.union(pat.range())
-            }),
+            Pattern::TypeConstructor { type_ctor, fields } => fields
+                .iter()
+                .fold(type_ctor.range, |acc, (_name, _ty, pat)| {
+                    acc.union(pat.range())
+                }),
+            Pattern::Impl {
+                impl_token, fields, ..
+            } => fields
+                .iter()
+                .fold(*impl_token, |acc, (_name, _ty, pat)| acc.union(pat.range())),
             Pattern::Unknown(range) => *range,
             Pattern::Function { args, .. } => args
                 .iter()
@@ -54,16 +65,28 @@ impl Display for Pattern {
         match self {
             Pattern::Named(identifier) => write!(f, "{}", identifier.name),
             Pattern::Constant { value, .. } => write!(f, "const {}", value),
-            Pattern::TypeConstructor {
-                type_ctor,
-                fields: args,
-            } => {
-                if args.is_empty() {
+            Pattern::TypeConstructor { type_ctor, fields } => {
+                if fields.is_empty() {
                     return write!(f, "{}", type_ctor.data_type.name);
                 }
 
                 write!(f, "{} {{ ", type_ctor.data_type.name)?;
-                for (i, (name, _ty, pat)) in args.iter().enumerate() {
+                for (i, (name, _ty, pat)) in fields.iter().enumerate() {
+                    if i != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, " {}", name.name)?;
+                    write!(f, " = {}", pat)?;
+                }
+                write!(f, " }}")
+            }
+            Pattern::Impl { fields, .. } => {
+                if fields.is_empty() {
+                    return write!(f, "impl {{}}");
+                }
+
+                write!(f, "impl {{ ")?;
+                for (i, (name, _ty, pat)) in fields.iter().enumerate() {
                     if i != 0 {
                         write!(f, ", ")?;
                     }

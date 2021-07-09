@@ -8,7 +8,6 @@ use quill_index::ProjectIndex;
 
 use crate::{
     hir::expr::{Expression, ExpressionT, TypeVariable},
-    index_resolve::instantiate_with,
     type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
@@ -50,7 +49,6 @@ pub(crate) fn solve_type_constraints(
                 }
                 _ => mid_priority_constraints.push_back(constraint),
             },
-            Constraint::FieldAccess { .. } => mid_priority_constraints.push_back(constraint),
         }
     }
     // To solve the constraints, we will pop entries off the front of the queue, process them, and if needed push them to the back of the queue.
@@ -142,124 +140,6 @@ fn solve_type_constraint_queue(
                             error,
                             reason,
                             substitution,
-                        ));
-                    }
-                }
-            }
-            Constraint::FieldAccess {
-                ty: container_ty,
-                field,
-                reason,
-            } => {
-                // This constraint specifies that `type_variable` has a field named `field` with type `field_ty`.
-                // At this point, we should know the container's type.
-                match container_ty {
-                    TypeVariable::Impl { name, parameters } => {
-                        let aspect = &project_index[&name.source_file].aspects[&name.name];
-                        match aspect
-                            .definitions
-                            .iter()
-                            .find(|def| def.name.name == field.name)
-                        {
-                            Some(field) => {
-                                constraint_queue.push_front((
-                                    type_variable,
-                                    Constraint::Equality {
-                                        ty: instantiate_with(
-                                            &field.symbol_type,
-                                            &mut {
-                                                let mut map = HashMap::new();
-                                                for (param, var) in
-                                                    aspect.type_variables.iter().zip(parameters)
-                                                {
-                                                    map.insert(param.name.clone(), var);
-                                                }
-                                                map
-                                            },
-                                            &mut HashMap::new(),
-                                        ),
-                                        reason: ConstraintEqualityReason::FieldAccess(reason),
-                                    },
-                                ));
-                            }
-                            None => {
-                                return DiagnosticResult::fail(ErrorMessage::new(
-                                    format!("aspect `{}` has no definition `{}`", name, field),
-                                    Severity::Error,
-                                    Diagnostic::at(source_file, &reason.field),
-                                ));
-                            }
-                        }
-                    }
-                    TypeVariable::Unknown { id } => {
-                        // Check to see if there are any constraints on this type variable left to be processed.
-                        let constraint_left = constraint_queue.iter().any(|(var, constraint)| {
-                            let matches_var = if let TypeVariable::Unknown { id: inner } = var {
-                                *inner == id
-                            } else {
-                                false
-                            };
-                            let matches_constraint = match constraint {
-                                Constraint::Equality { ty, .. } => {
-                                    if let TypeVariable::Unknown { id: inner } = ty {
-                                        *inner == id
-                                    } else {
-                                        false
-                                    }
-                                }
-                                Constraint::FieldAccess { ty, .. } => {
-                                    if let TypeVariable::Unknown { id: inner } = ty {
-                                        *inner == id
-                                    } else {
-                                        false
-                                    }
-                                }
-                            };
-                            matches_var || matches_constraint
-                        });
-
-                        if constraint_left {
-                            // Process this constraint later.
-                            constraint_queue.push_back((
-                                type_variable,
-                                Constraint::FieldAccess {
-                                    ty: container_ty,
-                                    field,
-                                    reason,
-                                },
-                            ));
-                        } else {
-                            return DiagnosticResult::fail(ErrorMessage::new(
-                                "could not deduce the type of this expression, so cannot deduce the type of its field".to_string(),
-                                Severity::Error,
-                                Diagnostic::at(source_file, &reason.container),
-                            ));
-                        }
-                    }
-                    container_ty => {
-                        return DiagnosticResult::fail(ErrorMessage::new(
-                            match container_ty {
-                                TypeVariable::Named { .. } => {
-                                    "cannot use `.` syntax on data or enum types (yet)".to_string()
-                                }
-                                t @ TypeVariable::Function(_, _) => {
-                                    let mut p = TypeVariablePrinter::new(substitution);
-                                    format!("cannot use `.` syntax on functions; this expression is a function of type {}", p.print(t))
-                                }
-                                TypeVariable::Variable { .. } => {
-                                    "cannot use `.` syntax on type variables".to_string()
-                                }
-                                TypeVariable::Primitive(_) => {
-                                    "cannot use `.` syntax on primitive types".to_string()
-                                }
-                                TypeVariable::Borrow { .. } => {
-                                    "cannot use `.` syntax on borrowed types".to_string()
-                                }
-                                TypeVariable::Unknown { .. } => unreachable!(),
-                                TypeVariable::Impl { .. } => unreachable!(),
-                            },
-                            Severity::Error,
-                            Diagnostic::at(source_file, &reason.container),
                         ));
                     }
                 }
@@ -500,7 +380,6 @@ fn apply_substitution_to_constraints(
         apply_substitution(mgu, ty);
         match constraint {
             Constraint::Equality { ty: other, .. } => apply_substitution(mgu, other),
-            Constraint::FieldAccess { ty, .. } => apply_substitution(mgu, ty),
         }
     }
 }

@@ -6,7 +6,7 @@ use quill_common::{
 };
 use quill_mir::mir::{
     ArgumentIndex, BasicBlockId, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableName,
-    Operand, Place, Rvalue, Statement, StatementKind, TerminatorKind,
+    Place, Rvalue, Statement, StatementKind, TerminatorKind,
 };
 
 #[derive(Debug, Clone)]
@@ -92,8 +92,9 @@ pub(crate) fn check_ownership(
             match stat {
                 OwnershipStatus::Owned { assignment } => messages.push(ErrorMessage::new(
                     format!(
-                        "local variable `{}` was not moved or dropped (this is a compiler bug)",
-                        name
+                        "local variable `{}` was not moved or dropped (this is a compiler bug), MIR was:\n{}",
+                        name,
+                        cfg,
                     ),
                     Severity::Error,
                     Diagnostic::at(source_file, &assignment),
@@ -102,8 +103,9 @@ pub(crate) fn check_ownership(
                 OwnershipStatus::Dropped { .. } => {}
                 OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new(
                     format!(
-                    "local variable `{}` was destructured but not freed (this is a compiler bug)",
-                    name
+                    "local variable `{}` was destructured but not freed (this is a compiler bug), MIR was:\n{}",
+                    name,
+                    cfg,
                 ),
                     Severity::Error,
                     Diagnostic::at(source_file, &destructured),
@@ -116,8 +118,10 @@ pub(crate) fn check_ownership(
                     if !not_moved_blocks.is_empty() {
                         messages.push(ErrorMessage::new(
                         format!(
-                            "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}; {:#?}",
-                            name, moved_into_blocks, destructured_in_blocks, not_moved_blocks,
+                            "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}; {:#?}; MIR was {}",
+                            name,
+                            moved_into_blocks, destructured_in_blocks, not_moved_blocks,
+                            cfg,
                         ),
                         Severity::Error,
                         Diagnostic::at(source_file, &range),
@@ -227,7 +231,7 @@ fn check_ownership_walk(
                         messages,
                         statuses,
                         stmt.range,
-                        Rvalue::Use(Operand::Move(Place::new(*def))),
+                        Rvalue::Move(Place::new(*def)),
                     );
                 }
 
@@ -436,7 +440,7 @@ fn make_rvalue_used(
     rvalue: Rvalue,
 ) {
     match rvalue {
-        Rvalue::Use(Operand::Move(place)) => {
+        Rvalue::Move(place) => {
             // If we're moving out of a place contained inside a local variable, that variable is said to have been 'destructured'.
             make_used(
                 source_file,
@@ -451,15 +455,6 @@ fn make_rvalue_used(
                 },
             )
         }
-        Rvalue::Use(Operand::Copy(place)) => make_used(
-            source_file,
-            messages,
-            statuses,
-            range,
-            place.local,
-            UseType::Reference,
-        ),
-        Rvalue::Use(Operand::Constant(_)) => {}
         Rvalue::Borrow(local) => make_used(
             source_file,
             messages,
@@ -468,6 +463,15 @@ fn make_rvalue_used(
             local,
             UseType::Reference,
         ),
+        Rvalue::Copy(local) => make_used(
+            source_file,
+            messages,
+            statuses,
+            range,
+            local,
+            UseType::Reference,
+        ),
+        Rvalue::Constant(_) => {}
     }
 }
 
@@ -612,6 +616,8 @@ fn make_dropped(
         }
         OwnershipStatus::Destructured { .. } => {
             // Unconditionally do not drop this variable, but free its memory.
+            // Set its ownership status to "dropped" so we do not free its memory twice.
+            *stat = OwnershipStatus::Dropped { dropped: range };
             vec![Statement {
                 range,
                 kind: StatementKind::Free { variable },

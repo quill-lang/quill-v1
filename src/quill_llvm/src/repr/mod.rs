@@ -1,10 +1,13 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    convert::{TryFrom, TryInto},
+};
 
 use data::FieldIndex;
 use inkwell::{
     debug_info::{AsDIScope, DIDerivedType, DIFlagsConstants},
     types::{BasicType, BasicTypeEnum},
-    values::PointerValue,
+    values::{BasicValueEnum, CallableValue, PointerValue},
     AddressSpace,
 };
 use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
@@ -49,11 +52,26 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
     ) -> Self {
         let general_func_obj_ty = codegen.context.opaque_struct_type("fobj");
         general_func_obj_ty.set_body(
-            &[codegen
-                .context
-                .i8_type()
-                .ptr_type(AddressSpace::Generic)
-                .into()],
+            &[
+                // The function ptr to call
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+                // The copy function
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+                // The drop function
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+            ],
             false,
         );
         let mut reprs = Self {
@@ -271,9 +289,13 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     .get_function(&format!("drop/{}", mono_ty))
                     .unwrap();
                 if repr.is_some() {
+                    let variable = self
+                        .codegen
+                        .builder
+                        .build_load(variable_ptr, "value_to_drop");
                     self.codegen.builder.build_call(
                         func,
-                        &[variable_ptr.into()],
+                        &[variable],
                         &format!("drop_{}", mono_ty),
                     );
                 } else {
@@ -287,9 +309,50 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 unreachable!()
             }
             Type::Function(_, _) => {
-                // TODO drop functions.
-                // This will have to be done using dynamic (single) dispatch,
-                // since function objects might contain things that need to be dropped/freed.
+                let func_object_ptr = self
+                    .codegen
+                    .builder
+                    .build_load(variable_ptr, "fobj_loaded")
+                    .into_pointer_value();
+                // Get the third element of this function object, which is the drop function.
+                let fptr_raw = self
+                    .codegen
+                    .builder
+                    .build_struct_gep(func_object_ptr, 2, "drop_raw_ptr")
+                    .unwrap();
+                let fptr_raw = self.codegen.builder.build_load(fptr_raw, "drop_raw");
+                let fptr = self
+                    .codegen
+                    .builder
+                    .build_bitcast(
+                        fptr_raw,
+                        self.codegen
+                            .context
+                            .void_type()
+                            .fn_type(
+                                &[variable_ptr
+                                    .get_type()
+                                    .get_element_type()
+                                    .try_into()
+                                    .unwrap()],
+                                false,
+                            )
+                            .ptr_type(AddressSpace::Generic),
+                        "drop",
+                    )
+                    .into_pointer_value();
+
+                let args = &[self.codegen.builder.build_bitcast(
+                    func_object_ptr,
+                    self.general_func_obj_ty.llvm_type,
+                    "fobj_bitcast",
+                )];
+
+                self.codegen.builder.build_call(
+                    CallableValue::try_from(fptr).unwrap(),
+                    args,
+                    "drop_call",
+                );
             }
             Type::Primitive(_) => {
                 // No operation is required.
@@ -312,9 +375,13 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     .get_function(&format!("drop/{}", mono_asp))
                     .unwrap();
                 if repr.is_some() {
+                    let variable = self
+                        .codegen
+                        .builder
+                        .build_load(variable_ptr, "value_to_drop");
                     self.codegen.builder.build_call(
                         func,
-                        &[variable_ptr.into()],
+                        &[variable],
                         &format!("drop_{}", mono_asp),
                     );
                 } else {
@@ -326,16 +393,150 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         }
     }
 
-    /// Create a `drop` function for each type.
-    /// It is automatically populated with code that will drop each field.
-    /// However, if a custom implementation of `drop` is provided, this will overwrite the default `drop` implementation.
-    pub fn create_drop_funcs(&self) {
+    /// Copies a value of the given type behind the given (single) pointer.
+    /// The result is the copy of the value if the type had a representation, given as a direct value (not an alloca).
+    pub fn copy_ptr(
+        &self,
+        ty: Type,
+        variable_ptr: PointerValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        match ty.clone() {
+            Type::Named { name, parameters } => {
+                // Call the copy function for this type.
+                let repr = self.repr(ty);
+                let mono_ty = MonomorphisedType {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                if repr.is_some() {
+                    let function = self
+                        .codegen
+                        .module
+                        .get_function(&format!("copy/{}", mono_ty))
+                        .unwrap();
+                    self.codegen
+                        .builder
+                        .build_call(function, &[variable_ptr.into()], "copied_value")
+                        .try_as_basic_value()
+                        .left()
+                } else {
+                    None
+                }
+            }
+            Type::Variable { .. } => {
+                panic!("shouldn't still have type variables at this point")
+            }
+            Type::Function(_, _) => {
+                // This is a function object. Specifically, a `fobj**`.
+                // The output value should just be an `fobj*`.
+                let fobj = self
+                    .codegen
+                    .builder
+                    .build_load(variable_ptr, "loaded_fobj")
+                    .into_pointer_value();
+                // The `copy` function is the second field of the function object.
+                let copy = self
+                    .codegen
+                    .builder
+                    .build_struct_gep(fobj, 1, "loaded_copy_fn_ptr")
+                    .unwrap();
+                let copy = self.codegen.builder.build_load(copy, "loaded_copy_fn");
+                let copy = self
+                    .codegen
+                    .builder
+                    .build_bitcast(
+                        copy,
+                        self.general_func_obj_ty
+                            .llvm_type
+                            .fn_type(&[self.general_func_obj_ty.llvm_type], false)
+                            .ptr_type(AddressSpace::Generic),
+                        "fptr",
+                    )
+                    .into_pointer_value();
+
+                // Invoke this function.
+                let result = self.codegen.builder.build_call(
+                    CallableValue::try_from(copy).unwrap(),
+                    &[fobj.into()],
+                    "copied_fobj",
+                );
+                result.try_as_basic_value().left()
+            }
+            Type::Primitive(ty) => {
+                // Primitive types can simply be copied bitwise.
+                match ty {
+                    PrimitiveType::Unit => None,
+                    PrimitiveType::Bool => Some(
+                        self.codegen
+                            .builder
+                            .build_load(variable_ptr, "copied_value"),
+                    ),
+                    PrimitiveType::Int => Some(
+                        self.codegen
+                            .builder
+                            .build_load(variable_ptr, "copied_value"),
+                    ),
+                }
+            }
+            Type::Borrow { .. } => {
+                // Borrows can be trivially copied.
+                // The validity of the borrow has already been checked by the borrow checker.
+                Some(
+                    self.codegen
+                        .builder
+                        .build_load(variable_ptr, "copied_value"),
+                )
+            }
+            Type::Impl { name, parameters } => {
+                // Call the copy function for this type.
+                let repr = self.repr(ty);
+                let mono_asp = MonomorphisedAspect {
+                    name,
+                    mono: MonomorphisationParameters {
+                        type_parameters: parameters,
+                    },
+                };
+                if repr.is_some() {
+                    let function = self
+                        .codegen
+                        .module
+                        .get_function(&format!("copy/{}", mono_asp))
+                        .unwrap();
+                    self.codegen
+                        .builder
+                        .build_call(function, &[variable_ptr.into()], "copied_value")
+                        .try_as_basic_value()
+                        .left()
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Create a `drop` and `copy` function for each type.
+    /// These functions are guaranteed to be free of side effects and cannot be overridden inside Quill.
+    pub fn create_drop_copy_funcs(&self) {
         // First, declare all the function signatures.
         for (ty, repr) in &self.datas {
             self.codegen.module.add_function(
                 &format!("drop/{}", ty),
                 if let Some(llvm_repr) = &repr.llvm_repr {
-                    self.codegen.context.void_type().fn_type(
+                    self.codegen
+                        .context
+                        .void_type()
+                        .fn_type(&[llvm_repr.ty.into()], false)
+                } else {
+                    self.codegen.context.void_type().fn_type(&[], false)
+                },
+                None,
+            );
+            self.codegen.module.add_function(
+                &format!("copy/{}", ty),
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    llvm_repr.ty.fn_type(
                         &[llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                         false,
                     )
@@ -348,7 +549,15 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         for (ty, repr) in &self.enums {
             self.codegen.module.add_function(
                 &format!("drop/{}", ty),
-                self.codegen.context.void_type().fn_type(
+                self.codegen
+                    .context
+                    .void_type()
+                    .fn_type(&[repr.llvm_repr.ty.into()], false),
+                None,
+            );
+            self.codegen.module.add_function(
+                &format!("copy/{}", ty),
+                repr.llvm_repr.ty.fn_type(
                     &[repr.llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                     false,
                 ),
@@ -359,7 +568,19 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             self.codegen.module.add_function(
                 &format!("drop/{}", ty),
                 if let Some(llvm_repr) = &repr.llvm_repr {
-                    self.codegen.context.void_type().fn_type(
+                    self.codegen
+                        .context
+                        .void_type()
+                        .fn_type(&[llvm_repr.ty.into()], false)
+                } else {
+                    self.codegen.context.void_type().fn_type(&[], false)
+                },
+                None,
+            );
+            self.codegen.module.add_function(
+                &format!("copy/{}", ty),
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    llvm_repr.ty.fn_type(
                         &[llvm_repr.ty.ptr_type(AddressSpace::Generic).into()],
                         false,
                     )
@@ -372,115 +593,336 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
 
         // Now, implement the functions.
         for (ty, repr) in &self.datas {
-            let func = self
-                .codegen
-                .module
-                .get_function(&format!("drop/{}", ty))
-                .unwrap();
-
-            let block = self.codegen.context.append_basic_block(func, "drop");
-            self.codegen.builder.position_at_end(block);
-
-            if repr.llvm_repr.is_some() {
-                let variable = func.get_first_param().unwrap().into_pointer_value();
-
-                for heap_field in repr.field_names_on_heap() {
-                    let ptr_to_field = repr.load(self.codegen, self, variable, heap_field).unwrap();
-                    let ty = repr.field_ty(heap_field).unwrap().clone();
-                    self.drop_ptr(ty, ptr_to_field);
-                }
-
-                repr.free_fields(self.codegen, variable);
-            }
-
-            self.codegen.builder.build_return(None);
-        }
-        for (ty, repr) in &self.enums {
-            let func = self
-                .codegen
-                .module
-                .get_function(&format!("drop/{}", ty))
-                .unwrap();
-
-            let block = self.codegen.context.append_basic_block(func, "drop");
-            self.codegen.builder.position_at_end(block);
-
-            let variable = func.get_first_param().unwrap().into_pointer_value();
-
-            // Switch on the discriminant to see what needs dropping.
-            let disc = repr.get_discriminant(self.codegen, variable);
-            let disc_loaded = self
-                .codegen
-                .builder
-                .build_load(disc, "discriminant")
-                .into_int_value();
-
-            // Build the blocks for each case.
-            let mut cases = Vec::new();
-            for (discriminant, int_value) in &repr.variant_discriminants {
-                let block = self
+            // Generate the drop function.
+            {
+                let func = self
                     .codegen
-                    .context
-                    .insert_basic_block_after(block, &format!("discriminant_{}", int_value));
-                cases.push((
-                    self.codegen.context.i64_type().const_int(*int_value, false),
-                    block,
-                ));
+                    .module
+                    .get_function(&format!("drop/{}", ty))
+                    .unwrap();
+
+                let block = self.codegen.context.append_basic_block(func, "drop");
                 self.codegen.builder.position_at_end(block);
-                let variant = &repr.variants[discriminant];
-                let variable = self
-                    .codegen
-                    .builder
-                    .build_bitcast(
-                        variable,
-                        variant
-                            .llvm_repr
-                            .as_ref()
-                            .unwrap()
-                            .ty
-                            .ptr_type(AddressSpace::Generic),
-                        &format!("as_{}", discriminant),
-                    )
-                    .into_pointer_value();
-                for heap_field in variant.field_names_on_heap() {
-                    let ptr_to_field = variant
-                        .load(self.codegen, self, variable, heap_field)
-                        .unwrap();
-                    let ty = variant.field_ty(heap_field).unwrap().clone();
-                    self.drop_ptr(ty, ptr_to_field);
+
+                if repr.llvm_repr.is_some() {
+                    let value = func.get_first_param().unwrap();
+                    let ptr = self
+                        .codegen
+                        .builder
+                        .build_alloca(value.get_type(), "value_to_drop");
+                    self.codegen.builder.build_store(ptr, value);
+
+                    for heap_field in repr.field_names_on_heap() {
+                        let ptr_to_field = repr.load(self.codegen, self, ptr, heap_field).unwrap();
+                        let ty = repr.field_ty(heap_field).unwrap().clone();
+                        self.drop_ptr(ty, ptr_to_field);
+                    }
+
+                    repr.free_fields(self.codegen, ptr);
                 }
-                variant.free_fields(self.codegen, variable);
+
                 self.codegen.builder.build_return(None);
             }
 
-            self.codegen.builder.position_at_end(block);
-            self.codegen
-                .builder
-                .build_switch(disc_loaded, cases[0].1, &cases);
+            // Generate the copy function.
+            {
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("copy/{}", ty))
+                    .unwrap();
+
+                let block = self.codegen.context.append_basic_block(func, "copy");
+                self.codegen.builder.position_at_end(block);
+
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    let source = func.get_first_param().unwrap().into_pointer_value();
+                    let ptr = self
+                        .codegen
+                        .builder
+                        .build_alloca(llvm_repr.ty, "return_value");
+
+                    // Copy each field over into the new value.
+                    // Start by allocating sufficient space on the heap for the new values.
+                    repr.malloc_fields(self.codegen, self, ptr);
+
+                    // Now, for each field, copy it over.
+                    for field_name in repr.field_indices().keys() {
+                        // Get the field from the source.
+                        if let Some(source_field) =
+                            repr.load(self.codegen, self, source, field_name)
+                        {
+                            // Copy the field.
+                            let source_field_copied = self
+                                .copy_ptr(repr.field_ty(field_name).unwrap().clone(), source_field)
+                                .unwrap();
+                            repr.store(self.codegen, self, ptr, source_field_copied, field_name);
+                        }
+                    }
+
+                    self.codegen.builder.build_return(Some(
+                        &self.codegen.builder.build_load(ptr, "return_value_deref"),
+                    ));
+                } else {
+                    self.codegen.builder.build_return(None);
+                }
+            }
         }
-        for (ty, repr) in &self.aspects {
-            let func = self
-                .codegen
-                .module
-                .get_function(&format!("drop/{}", ty))
-                .unwrap();
 
-            let block = self.codegen.context.append_basic_block(func, "drop");
-            self.codegen.builder.position_at_end(block);
+        for (ty, repr) in &self.enums {
+            // Generate the drop function.
+            {
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("drop/{}", ty))
+                    .unwrap();
 
-            if repr.llvm_repr.is_some() {
-                let variable = func.get_first_param().unwrap().into_pointer_value();
+                let block = self.codegen.context.append_basic_block(func, "drop");
+                self.codegen.builder.position_at_end(block);
 
-                for heap_field in repr.field_names_on_heap() {
-                    let ptr_to_field = repr.load(self.codegen, self, variable, heap_field).unwrap();
-                    let ty = repr.field_ty(heap_field).unwrap().clone();
-                    self.drop_ptr(ty, ptr_to_field);
+                let value = func.get_first_param().unwrap();
+                let ptr = self
+                    .codegen
+                    .builder
+                    .build_alloca(value.get_type(), "value_to_drop");
+                self.codegen.builder.build_store(ptr, value);
+
+                // Switch on the discriminant to see what needs dropping.
+                let disc = repr.get_discriminant(self.codegen, ptr);
+                let disc_loaded = self
+                    .codegen
+                    .builder
+                    .build_load(disc, "discriminant")
+                    .into_int_value();
+
+                // Build the blocks for each case.
+                let mut cases = Vec::new();
+                for (discriminant, int_value) in &repr.variant_discriminants {
+                    let block = self
+                        .codegen
+                        .context
+                        .insert_basic_block_after(block, &format!("discriminant_{}", int_value));
+                    cases.push((
+                        self.codegen.context.i64_type().const_int(*int_value, false),
+                        block,
+                    ));
+                    self.codegen.builder.position_at_end(block);
+                    let variant = &repr.variants[discriminant];
+                    let variable = self
+                        .codegen
+                        .builder
+                        .build_bitcast(
+                            ptr,
+                            variant
+                                .llvm_repr
+                                .as_ref()
+                                .unwrap()
+                                .ty
+                                .ptr_type(AddressSpace::Generic),
+                            &format!("as_{}", discriminant),
+                        )
+                        .into_pointer_value();
+                    for heap_field in variant.field_names_on_heap() {
+                        let ptr_to_field = variant
+                            .load(self.codegen, self, variable, heap_field)
+                            .unwrap();
+                        let ty = variant.field_ty(heap_field).unwrap().clone();
+                        self.drop_ptr(ty, ptr_to_field);
+                    }
+                    variant.free_fields(self.codegen, variable);
+                    self.codegen.builder.build_return(None);
                 }
 
-                repr.free_fields(self.codegen, variable);
+                self.codegen.builder.position_at_end(block);
+                self.codegen
+                    .builder
+                    .build_switch(disc_loaded, cases[0].1, &cases);
             }
 
-            self.codegen.builder.build_return(None);
+            // Generate the copy function.
+            {
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("copy/{}", ty))
+                    .unwrap();
+
+                let block = self.codegen.context.append_basic_block(func, "copy");
+                self.codegen.builder.position_at_end(block);
+
+                let ptr = func.get_first_param().unwrap().into_pointer_value();
+
+                // Switch on the discriminant to see what needs copying.
+                let disc = repr.get_discriminant(self.codegen, ptr);
+                let disc_loaded = self
+                    .codegen
+                    .builder
+                    .build_load(disc, "discriminant")
+                    .into_int_value();
+
+                // Build the blocks for each case.
+                let mut cases = Vec::new();
+                for (discriminant, int_value) in &repr.variant_discriminants {
+                    let block = self
+                        .codegen
+                        .context
+                        .insert_basic_block_after(block, &format!("discriminant_{}", int_value));
+                    cases.push((
+                        self.codegen.context.i64_type().const_int(*int_value, false),
+                        block,
+                    ));
+                    self.codegen.builder.position_at_end(block);
+                    let variant = &repr.variants[discriminant];
+                    let source = self
+                        .codegen
+                        .builder
+                        .build_bitcast(
+                            ptr,
+                            variant
+                                .llvm_repr
+                                .as_ref()
+                                .unwrap()
+                                .ty
+                                .ptr_type(AddressSpace::Generic),
+                            &format!("as_{}", discriminant),
+                        )
+                        .into_pointer_value();
+
+                    if let Some(llvm_repr) = &variant.llvm_repr {
+                        let ptr = self
+                            .codegen
+                            .builder
+                            .build_alloca(llvm_repr.ty, "return_value");
+
+                        // Copy each field over into the new value.
+                        // Start by allocating sufficient space on the heap for the new values.
+                        variant.malloc_fields(self.codegen, self, ptr);
+
+                        // Now, for each field, copy it over.
+                        for field_name in variant.field_indices().keys() {
+                            // Get the field from the source.
+                            if let Some(source_field) =
+                                variant.load(self.codegen, self, source, field_name)
+                            {
+                                // Copy the field.
+                                let source_field_copied = self
+                                    .copy_ptr(
+                                        variant.field_ty(field_name).unwrap().clone(),
+                                        source_field,
+                                    )
+                                    .unwrap();
+                                variant.store(
+                                    self.codegen,
+                                    self,
+                                    ptr,
+                                    source_field_copied,
+                                    field_name,
+                                );
+                            }
+                        }
+
+                        // Finally, bitcast this specific variant to the enum's representation.
+                        let ptr = self
+                            .codegen
+                            .builder
+                            .build_bitcast(
+                                ptr,
+                                repr.llvm_repr.ty.ptr_type(AddressSpace::Generic),
+                                "return_value_bitcast",
+                            )
+                            .into_pointer_value();
+
+                        self.codegen.builder.build_return(Some(
+                            &self.codegen.builder.build_load(ptr, "return_value_deref"),
+                        ));
+                    } else {
+                        self.codegen.builder.build_return(None);
+                    }
+                }
+
+                self.codegen.builder.position_at_end(block);
+                self.codegen
+                    .builder
+                    .build_switch(disc_loaded, cases[0].1, &cases);
+            }
+        }
+
+        for (ty, repr) in &self.aspects {
+            // Generate the drop function.
+            {
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("drop/{}", ty))
+                    .unwrap();
+
+                let block = self.codegen.context.append_basic_block(func, "drop");
+                self.codegen.builder.position_at_end(block);
+
+                if repr.llvm_repr.is_some() {
+                    let value = func.get_first_param().unwrap();
+                    let ptr = self
+                        .codegen
+                        .builder
+                        .build_alloca(value.get_type(), "value_to_drop");
+                    self.codegen.builder.build_store(ptr, value);
+
+                    for heap_field in repr.field_names_on_heap() {
+                        let ptr_to_field = repr.load(self.codegen, self, ptr, heap_field).unwrap();
+                        let ty = repr.field_ty(heap_field).unwrap().clone();
+                        self.drop_ptr(ty, ptr_to_field);
+                    }
+
+                    repr.free_fields(self.codegen, ptr);
+                }
+
+                self.codegen.builder.build_return(None);
+            }
+
+            // Generate the copy function.
+            {
+                let func = self
+                    .codegen
+                    .module
+                    .get_function(&format!("copy/{}", ty))
+                    .unwrap();
+
+                let block = self.codegen.context.append_basic_block(func, "copy");
+                self.codegen.builder.position_at_end(block);
+
+                if let Some(llvm_repr) = &repr.llvm_repr {
+                    let source = func.get_first_param().unwrap().into_pointer_value();
+                    let ptr = self
+                        .codegen
+                        .builder
+                        .build_alloca(llvm_repr.ty, "return_value");
+
+                    // Copy each field over into the new value.
+                    // Start by allocating sufficient space on the heap for the new values.
+                    repr.malloc_fields(self.codegen, self, ptr);
+
+                    // Now, for each field, copy it over.
+                    for field_name in repr.field_indices().keys() {
+                        // Get the field from the source.
+                        if let Some(source_field) =
+                            repr.load(self.codegen, self, source, field_name)
+                        {
+                            // Copy the field.
+                            let source_field_copied = self
+                                .copy_ptr(repr.field_ty(field_name).unwrap().clone(), source_field)
+                                .unwrap();
+                            repr.store(self.codegen, self, ptr, source_field_copied, field_name);
+                        }
+                    }
+
+                    self.codegen.builder.build_return(Some(
+                        &self.codegen.builder.build_load(ptr, "return_value_deref"),
+                    ));
+                } else {
+                    self.codegen.builder.build_return(None);
+                }
+            }
         }
     }
 

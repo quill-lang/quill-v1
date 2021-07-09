@@ -98,12 +98,28 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
                                     }
                                     let mir = quill_mir::to_mir(&index, typeck, &file_ident);
                                     if build_info.emit_mir {
+                                        std::fs::write(
+                                            f.with_extension("basic.mir"),
+                                            mir.to_string(),
+                                        )
+                                        .unwrap();
+                                    }
+                                    mir
+                                })
+                                .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
+                                .map(|mir| {
+                                    // If the `emit_mir` flag is checked, we output the MIR twice: once before borrowck and once after.
+                                    if build_info.emit_mir {
+                                        let f = build_info.build_folder.join("ir").join(
+                                            fs2.file_path(&file_ident)
+                                                .strip_prefix(&build_info.code_folder)
+                                                .unwrap(),
+                                        );
                                         std::fs::write(f.with_extension("mir"), mir.to_string())
                                             .unwrap();
                                     }
                                     mir
                                 })
-                                .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
                                 .map(|mir| (file_ident, mir))
                         },
                     ))

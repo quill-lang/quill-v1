@@ -402,13 +402,13 @@ impl<'input> Parser<'input> {
 
     /// `def_case ::= pattern = expression`
     fn parse_def_case(&mut self) -> DiagnosticResult<DefinitionCaseP> {
-        self.parse_expr().bind(|pattern| {
+        self.parse_expr(true).bind(|pattern| {
             self.parse_token(
                 |ty| matches!(ty, TokenType::Assign),
                 "expected assign symbol `=`",
             )
             .bind(|_| {
-                self.parse_expr()
+                self.parse_expr(false)
                     .bind(|expr| {
                         let messages = validate::validate(self.source_file, &expr);
                         DiagnosticResult::ok_with_many(expr, messages)
@@ -633,7 +633,12 @@ struct ExprBlockBody {
 impl<'input> Parser<'input> {
     /// Expressions may contain `_` tokens, which represent data that we don't care about.
     /// We will evaluate patterns and normal expressions differently in a later parse step.
-    fn parse_expr(&mut self) -> DiagnosticResult<ExprPatP> {
+    ///
+    /// If `in_pattern` is true, we are in a pattern.
+    /// This changes some slight semantics of how the expression is parsed.
+    /// For instance, `impl` blocks behave like `data` destructuring blocks, in that you can destructure their fields.
+    /// However, this flag does not forbid invalid syntax in patterns (e.g. let statements); this is handled in a later step.
+    fn parse_expr(&mut self, in_pattern: bool) -> DiagnosticResult<ExprPatP> {
         // Check what kind of expression this is.
         // - variable: one term
         // - application: many terms, the leftmost one is considered a function applied to terms on the right
@@ -646,29 +651,26 @@ impl<'input> Parser<'input> {
         // expression types, so that we can apply a Hindley-Milner-like type system solver.
         if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Lambda)) {
             // This is a lambda expression.
-            self.parse_expr_lambda(tk.range)
+            self.parse_expr_lambda(tk.range, in_pattern)
         } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Let)) {
             // This is a let statement.
-            self.parse_expr_let(tk.range)
+            self.parse_expr_let(tk.range, in_pattern)
         } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Copy)) {
             // This is a copy expression.
-            self.parse_expr().map(|expr| ExprPatP::Copy {
+            self.parse_expr(in_pattern).map(|expr| ExprPatP::Copy {
                 copy_token: tk.range,
                 expr: Box::new(expr),
             })
-        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Impl)) {
-            // This is an impl expression.
-            self.parse_expr_impl(tk.range)
         } else {
             // Default to a variable or application expression, since this will show a decent error message.
-            self.parse_expr_app()
+            self.parse_expr_app(in_pattern)
         }
     }
 
     /// Parses a variable or application expression.
-    fn parse_expr_app(&mut self) -> DiagnosticResult<ExprPatP> {
+    fn parse_expr_app(&mut self, in_pattern: bool) -> DiagnosticResult<ExprPatP> {
         let mut terms = Vec::new();
-        while let Some(next_term) = self.parse_expr_term() {
+        while let Some(next_term) = self.parse_expr_term(in_pattern) {
             terms.push(next_term);
         }
 
@@ -685,7 +687,11 @@ impl<'input> Parser<'input> {
     }
 
     /// Parses a lambda expression.
-    fn parse_expr_lambda(&mut self, lambda_token: Range) -> DiagnosticResult<ExprPatP> {
+    fn parse_expr_lambda(
+        &mut self,
+        lambda_token: Range,
+        in_pattern: bool,
+    ) -> DiagnosticResult<ExprPatP> {
         let mut params = Vec::new();
         while let Some(token) = self
             .parse_token_maybe(|ty| matches!(ty, TokenType::Name { .. } | TokenType::Underscore))
@@ -707,7 +713,7 @@ impl<'input> Parser<'input> {
 
         self.parse_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow symbol")
             .bind(|_| {
-                self.parse_expr().map(|expr| ExprPatP::Lambda {
+                self.parse_expr(in_pattern).map(|expr| ExprPatP::Lambda {
                     lambda_token,
                     params,
                     expr: Box::new(expr),
@@ -717,14 +723,14 @@ impl<'input> Parser<'input> {
 
     /// Parses a let expression.
     /// `expr_let ::= name '=' expr ','`
-    fn parse_expr_let(&mut self, let_token: Range) -> DiagnosticResult<ExprPatP> {
+    fn parse_expr_let(&mut self, let_token: Range, in_pattern: bool) -> DiagnosticResult<ExprPatP> {
         self.parse_name().bind(|name| {
             self.parse_token(
                 |ty| matches!(ty, TokenType::Assign),
                 "expected assign symbol",
             )
             .bind(|_| {
-                self.parse_expr().map(|expr| ExprPatP::Let {
+                self.parse_expr(in_pattern).map(|expr| ExprPatP::Let {
                     let_token,
                     name,
                     expr: Box::new(expr),
@@ -733,22 +739,43 @@ impl<'input> Parser<'input> {
         })
     }
 
-    /// Parses an impl expression.
+    /// Parses an impl expression (which is guaranteed not to be in a pattern).
     fn parse_expr_impl(&mut self, impl_token: Range) -> DiagnosticResult<ExprPatP> {
         self.parse_def_body()
             .map(|body| ExprPatP::Impl { impl_token, body })
     }
 
+    /// Parses an impl _pattern_, which acts like a data type destructure block, naming the fields we care about.
+    fn parse_pattern_impl(&mut self, impl_token: Range) -> DiagnosticResult<ExprPatP> {
+        if let Some(tree) = self.parse_tree(BracketType::Brace) {
+            let open_brace = tree.open;
+            let close_brace = tree.close;
+            self.parse_in_tree(tree, |parser| parser.parse_construct_data_body(true))
+                .map(|fields| ExprPatP::ImplPattern {
+                    impl_token,
+                    open_brace,
+                    close_brace,
+                    fields,
+                })
+        } else {
+            DiagnosticResult::fail(ErrorMessage::new(
+                "expected brace bracket block".to_string(),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &self.tokens.range()),
+            ))
+        }
+    }
+
     /// Parses a single term from an expression by consuming either zero or one token trees from the input.
     /// If the token tree is exactly the symbol `&`, it may consume an additional token tree to see what is being borrowed.
     /// If the following token did not constitute an expression, nothing is consumed.
-    fn parse_expr_term(&mut self) -> Option<DiagnosticResult<ExprPatP>> {
+    fn parse_expr_term(&mut self, in_pattern: bool) -> Option<DiagnosticResult<ExprPatP>> {
         if let Some(tree) = self.parse_tree(BracketType::Parentheses) {
             // This is a block, containing statements followed by a final expression.
             let open_bracket = tree.open;
             let close_bracket = tree.close;
             Some(
-                self.parse_in_tree(tree, |parser| parser.parse_expr_block_body())
+                self.parse_in_tree(tree, |parser| parser.parse_expr_block_body(in_pattern))
                     .map(|expr_block_body| ExprPatP::Block {
                         open_bracket,
                         close_bracket,
@@ -763,7 +790,7 @@ impl<'input> Parser<'input> {
             self.parse_token_maybe(|ty| matches!(ty, TokenType::Borrow))
         {
             // This is a borrow of a value.
-            if let Some(expr) = self.parse_expr_term() {
+            if let Some(expr) = self.parse_expr_term(in_pattern) {
                 Some(expr.map(|expr| ExprPatP::Borrow {
                     borrow_token: borrow_token.range,
                     expr: Box::new(expr),
@@ -775,6 +802,14 @@ impl<'input> Parser<'input> {
                     Diagnostic::at(self.source_file, &borrow_token),
                 )))
             }
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Impl)) {
+            // This is an impl expression.
+            // If we're in a pattern, the `impl` expression is like a `data` type destructure block, in that it simply lists some functions it contains.
+            Some(if in_pattern {
+                self.parse_pattern_impl(tk.range)
+            } else {
+                self.parse_expr_impl(tk.range)
+            })
         } else {
             self.parse_identifier_maybe().map(|identifier| identifier.bind(|identifier| {
                 let immediate = if identifier.segments.len() == 1 {
@@ -814,7 +849,7 @@ impl<'input> Parser<'input> {
                         // We are constructing a data type.
                         let open_brace = tree.open;
                         let close_brace = tree.close;
-                        self.parse_in_tree(tree, |parser| parser.parse_construct_data_body())
+                        self.parse_in_tree(tree, |parser| parser.parse_construct_data_body(in_pattern))
                             .map(|fields| ExprPatP::ConstructData {
                                 data_constructor: identifier,
                                 open_brace,
@@ -825,29 +860,13 @@ impl<'input> Parser<'input> {
                         DiagnosticResult::ok(ExprPatP::Variable(identifier))
                     }
                 }
-            }).bind(|expr| {
-                // If followed by a dot `.`, we are referencing some object contained inside this expression.
-                // This is a field of a data type, or a definition in an impl.
-                let mut nested_fields = Vec::new();
-                while let Some(dot) = self.parse_token_maybe(|tk| matches!(tk, TokenType::Dot)) {
-                    nested_fields.push((dot, self.parse_name()));
-                }
-                let mut result = DiagnosticResult::ok(expr);
-                for (dot, field) in nested_fields {
-                    result = result.bind(|expr| field.map(|field| ExprPatP::Field {
-                        container: Box::new(expr),
-                        field,
-                        dot: dot.range,
-                    }))
-                }
-                result
             }))
         }
     }
 
     /// `expr_block_body ::= expr (',' expr_block_body?)?`
-    fn parse_expr_block_body(&mut self) -> DiagnosticResult<ExprBlockBody> {
-        self.parse_expr().bind(|expr| {
+    fn parse_expr_block_body(&mut self, in_pattern: bool) -> DiagnosticResult<ExprBlockBody> {
+        self.parse_expr(in_pattern).bind(|expr| {
             // Is the next token the end of this line (or a comma)?
             if self
                 .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
@@ -856,10 +875,11 @@ impl<'input> Parser<'input> {
                 // We have an EOL, so potentially there's another expression/statement in the block left to parse.
                 if self.tokens.peek().is_some() {
                     // There are more expressions to consider.
-                    self.parse_expr_block_body().map(|mut remaining_body| {
-                        remaining_body.statements.insert(0, expr);
-                        remaining_body
-                    })
+                    self.parse_expr_block_body(in_pattern)
+                        .map(|mut remaining_body| {
+                            remaining_body.statements.insert(0, expr);
+                            remaining_body
+                        })
                 } else {
                     // This is the final EOL, and the end of this expression block.
                     DiagnosticResult::ok(ExprBlockBody {
@@ -876,7 +896,10 @@ impl<'input> Parser<'input> {
     }
 
     /// `construct_data_body = (name ('=' expr)? (',' expr_block_body?)?)?`
-    fn parse_construct_data_body(&mut self) -> DiagnosticResult<ConstructDataFields> {
+    fn parse_construct_data_body(
+        &mut self,
+        in_pattern: bool,
+    ) -> DiagnosticResult<ConstructDataFields> {
         if self.tokens.peek().is_none() {
             return DiagnosticResult::ok(ConstructDataFields {
                 fields: Vec::new(),
@@ -890,7 +913,7 @@ impl<'input> Parser<'input> {
                 .is_some()
             {
                 // We're assigning an expression to this field.
-                self.parse_expr().map(Some)
+                self.parse_expr(in_pattern).map(Some)
             } else {
                 DiagnosticResult::ok(None)
             };
@@ -903,14 +926,15 @@ impl<'input> Parser<'input> {
                     // We might have more of the body to parse.
                     if self.tokens.peek().is_some() {
                         // There is more of the body to parse.
-                        self.parse_construct_data_body().map(|mut remaining_body| {
-                            if let Some(value) = value {
-                                remaining_body.fields.insert(0, (field_name, value));
-                            } else {
-                                remaining_body.auto_fields.insert(0, field_name);
-                            }
-                            remaining_body
-                        })
+                        self.parse_construct_data_body(in_pattern)
+                            .map(|mut remaining_body| {
+                                if let Some(value) = value {
+                                    remaining_body.fields.insert(0, (field_name, value));
+                                } else {
+                                    remaining_body.auto_fields.insert(0, field_name);
+                                }
+                                remaining_body
+                            })
                     } else {
                         // That's the end of the body.
                         if let Some(value) = value {

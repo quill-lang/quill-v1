@@ -133,29 +133,13 @@ impl<'ctx> DataRepresentation<'ctx> {
         src: PointerValue<'ctx>,
         field_name: &str,
     ) {
-        let dest = self.load(codegen, reprs, ptr, field_name).unwrap();
-        let align = reprs
-            .repr(self.field_types[field_name].clone())
-            .unwrap()
-            .abi_alignment();
-        codegen
-            .builder
-            .build_memcpy(
-                dest,
-                align,
-                src,
-                align,
-                codegen
-                    .context
-                    .ptr_sized_int_type(codegen.target_data(), None)
-                    .const_int(
-                        codegen
-                            .target_data()
-                            .get_store_size(&dest.get_type().get_element_type()),
-                        false,
-                    ),
-            )
-            .unwrap();
+        self.store(
+            codegen,
+            reprs,
+            ptr,
+            codegen.builder.build_load(src, "value_to_store"),
+            field_name,
+        )
     }
 
     /// Lists the fields which are stored indirectly (on the heap).

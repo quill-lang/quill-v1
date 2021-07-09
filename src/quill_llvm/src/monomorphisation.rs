@@ -16,7 +16,7 @@ use crate::{
     codegen::CodeGenContext,
     repr::{
         any_type::AnyTypeRepresentation,
-        data::{DataRepresentation, DataRepresentationBuilder},
+        data::{DataRepresentation, DataRepresentationBuilder, FieldIndex},
         Representations,
     },
 };
@@ -293,7 +293,7 @@ impl Display for FunctionObjectDescriptor {
             write!(f, "]")?;
         }
         if let Some(last) = self.last_curry_step {
-            write!(f, "{}", last)?;
+            write!(f, "/{}", last)?;
         }
         Ok(())
     }
@@ -372,6 +372,32 @@ impl MonomorphisedFunction {
                     reprs.general_func_obj_ty.di_type,
                 )),
             );
+            // Add the copy function as the second field.
+            builder.add_field_raw(
+                ".copy".to_string(),
+                Some(AnyTypeRepresentation::new(
+                    codegen,
+                    codegen
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::Generic)
+                        .into(),
+                    reprs.general_func_obj_ty.di_type,
+                )),
+            );
+            // Add the drop function as the third field.
+            builder.add_field_raw(
+                ".drop".to_string(),
+                Some(AnyTypeRepresentation::new(
+                    codegen,
+                    codegen
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::Generic)
+                        .into(),
+                    reprs.general_func_obj_ty.di_type,
+                )),
+            );
             // Add only the arguments not pertaining to the last currying step.
             for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
                 if let Some(repr) = arg_repr_indices[i as usize].map(|i| args_with_reprs[i]) {
@@ -384,6 +410,140 @@ impl MonomorphisedFunction {
                 self.func.range,
                 descriptor.to_string(),
             );
+
+            // Now, define all the relevant copy and drop functions for this function object.
+            // We need to make a copy/drop function for every possible amount of fields stored in this function object.
+            for fields_stored in 0..=def.arity - self.curry_steps.last().copied().unwrap_or(0) {
+                // Unlike the drop/copy functions for known types,
+                // function object drop/copy functions take/return pointers, not raw values.
+
+                // Generate the drop function.
+                {
+                    let func = codegen.module.add_function(
+                        &format!("drop/{}#{}", descriptor.to_string(), fields_stored),
+                        codegen.context.void_type().fn_type(
+                            &[repr
+                                .llvm_repr
+                                .as_ref()
+                                .unwrap()
+                                .ty
+                                .ptr_type(AddressSpace::Generic)
+                                .into()],
+                            false,
+                        ),
+                        None,
+                    );
+                    let block = codegen.context.append_basic_block(func, "drop");
+                    codegen.builder.position_at_end(block);
+                    codegen.builder.unset_current_debug_location();
+
+                    let ptr = func.get_first_param().unwrap().into_pointer_value();
+                    for heap_field in repr.field_names_on_heap() {
+                        // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
+                        let assigned = if let FieldIndex::Heap(i) = repr.field_indices()[heap_field]
+                        {
+                            i < fields_stored as u32
+                        } else {
+                            false
+                        };
+                        if assigned {
+                            let ptr_to_field = repr.load(codegen, reprs, ptr, heap_field).unwrap();
+                            let ty = repr.field_ty(heap_field).unwrap().clone();
+                            reprs.drop_ptr(ty, ptr_to_field);
+                        }
+                    }
+                    repr.free_fields(codegen, ptr);
+                    codegen.builder.build_return(None);
+                }
+
+                // Generate the copy function.
+                {
+                    let func = codegen.module.add_function(
+                        &format!("copy/{}#{}", descriptor.to_string(), fields_stored),
+                        repr.llvm_repr
+                            .as_ref()
+                            .unwrap()
+                            .ty
+                            .ptr_type(AddressSpace::Generic)
+                            .fn_type(
+                                &[repr
+                                    .llvm_repr
+                                    .as_ref()
+                                    .unwrap()
+                                    .ty
+                                    .ptr_type(AddressSpace::Generic)
+                                    .into()],
+                                false,
+                            ),
+                        None,
+                    );
+                    let block = codegen.context.append_basic_block(func, "copy");
+                    codegen.builder.position_at_end(block);
+                    codegen.builder.unset_current_debug_location();
+
+                    // Since we return a pointer, we must malloc the return value.
+                    let source = func.get_first_param().unwrap().into_pointer_value();
+                    let ptr = codegen
+                        .builder
+                        .build_call(
+                            codegen.libc("malloc"),
+                            &[codegen
+                                .context
+                                .i64_type()
+                                .const_int(
+                                    codegen
+                                        .target_data()
+                                        .get_store_size(&repr.llvm_repr.as_ref().unwrap().ty),
+                                    false,
+                                )
+                                .into()],
+                            "return_value_raw",
+                        )
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_pointer_value();
+                    let ptr = codegen
+                        .builder
+                        .build_bitcast(
+                            ptr,
+                            repr.llvm_repr
+                                .as_ref()
+                                .unwrap()
+                                .ty
+                                .ptr_type(AddressSpace::Generic),
+                            "return_value",
+                        )
+                        .into_pointer_value();
+
+                    // Copy each field over into the new value.
+                    // Start by allocating sufficient space on the heap for the new values.
+                    repr.malloc_fields(codegen, reprs, ptr);
+
+                    // Copy over the fptr, copy, drop functions.
+                    let fptr = repr.load(codegen, reprs, source, ".fptr").unwrap();
+                    repr.store_ptr(codegen, reprs, ptr, fptr, ".fptr");
+                    let copy = repr.load(codegen, reprs, source, ".copy").unwrap();
+                    repr.store_ptr(codegen, reprs, ptr, copy, ".copy");
+                    let drop = repr.load(codegen, reprs, source, ".drop").unwrap();
+                    repr.store_ptr(codegen, reprs, ptr, drop, ".drop");
+
+                    // Now, for each field, copy it over.
+                    for field_name in repr.field_indices().keys() {
+                        // Get the field from the source.
+                        if let Some(source_field) = repr.load(codegen, reprs, source, field_name) {
+                            // Copy the field.
+                            if let Some(ty) = repr.field_ty(field_name) {
+                                let source_field_copied =
+                                    reprs.copy_ptr(ty.clone(), source_field).unwrap();
+                                repr.store(codegen, reprs, ptr, source_field_copied, field_name);
+                            }
+                        }
+                    }
+
+                    codegen.builder.build_return(Some(&ptr));
+                }
+            }
+
             reprs.insert_fobj(descriptor, repr.clone());
             repr
         };

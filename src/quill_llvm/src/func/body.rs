@@ -10,8 +10,8 @@ use inkwell::{
 
 use quill_index::TypeParameter;
 use quill_mir::mir::{
-    ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Operand,
-    Place, PlaceSegment, Rvalue, StatementKind, TerminatorKind,
+    ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Place,
+    PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
@@ -550,7 +550,7 @@ fn create_real_func_body_cfg<'ctx>(
                                     ctx.reprs,
                                     &ctx.locals,
                                     local_variable_names,
-                                    &Rvalue::Use(Operand::Move(Place::new(*field_rvalue))),
+                                    &Rvalue::Move(Place::new(*field_rvalue)),
                                 )
                                 .unwrap(),
                                 field_name,
@@ -562,7 +562,7 @@ fn create_real_func_body_cfg<'ctx>(
                         lifetime_end_if_moved(
                             &ctx,
                             local_variable_names,
-                            &Rvalue::Use(Operand::Move(Place::new(*field_value))),
+                            &Rvalue::Move(Place::new(*field_value)),
                         );
                     }
                 }
@@ -589,9 +589,7 @@ fn create_real_func_body_cfg<'ctx>(
                     ctx.reprs,
                     &ctx.locals,
                     local_variable_names,
-                    &Rvalue::Use(Operand::Copy(
-                        enum_place.clone().then(PlaceSegment::EnumDiscriminant),
-                    )),
+                    &Rvalue::Move(enum_place.clone().then(PlaceSegment::EnumDiscriminant)),
                 )
                 .unwrap();
                 let discriminant = ctx
@@ -647,7 +645,10 @@ fn create_real_func_body_cfg<'ctx>(
                     ctx.reprs,
                     &ctx.locals,
                     local_variable_names,
-                    &Rvalue::Use(Operand::Copy(place.clone())),
+                    // Treat this as a move, as far as access to the variable is concerned.
+                    // Really, we're copying the value, but we can't use the [Rvalue::Copy] variant
+                    // because that expects the argument to be behind a borrow.
+                    &Rvalue::Move(place.clone()),
                 )
                 .unwrap();
                 let value = ctx
