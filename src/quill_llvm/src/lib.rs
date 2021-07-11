@@ -95,7 +95,6 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     for func in &mono.functions {
         func.add_llvm_type(&codegen, &mut reprs, mir);
     }
-    reprs.create_drop_copy_funcs();
     reprs.create_debug_info();
     codegen.di_builder.finalize();
 

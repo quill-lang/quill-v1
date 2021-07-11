@@ -254,6 +254,7 @@ impl<'ctx> DataRepresentation<'ctx> {
     }
 }
 
+#[derive(Debug)]
 pub struct EnumRepresentation<'ctx> {
     /// The LLVM representation of the enum structure.
     /// Enums always have a representation, since they always have a discriminant to store.
@@ -509,6 +510,17 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
                     .into(),
             );
         }
+    }
+
+    /// Like `add_field_raw` but you can specify the Quill type associated with this field.
+    pub fn add_field_raw_with_type(
+        &mut self,
+        field_name: String,
+        repr: Option<AnyTypeRepresentation<'ctx>>,
+        ty: Type,
+    ) {
+        self.field_types.insert(field_name.clone(), ty);
+        self.add_field_raw(field_name, repr);
     }
 
     /// Add the fields from a type constructor to this data type.
