@@ -133,12 +133,12 @@ impl PackageFileSystem {
         self.with_module(module_identifier, |module| {
             match module.source_files.entry(file_identifier) {
                 Entry::Occupied(mut occupied) => {
-                    eprintln!("source was {:?}", occupied.get());
+                    // eprintln!("source was {:?}", occupied.get());
                     *occupied.get_mut() = Ok(SourceFile {
                         contents,
                         modified_time: SystemTime::now(),
                     });
-                    eprintln!("source now {:?}", occupied.get());
+                    // eprintln!("source now {:?}", occupied.get());
                 }
                 Entry::Vacant(vacant) => {
                     vacant.insert(Ok(SourceFile {

@@ -371,7 +371,6 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                         type_parameters: parameters,
                     },
                 };
-                eprintln!("drop/{}", mono_asp);
                 let func = self
                     .codegen
                     .module
