@@ -344,6 +344,7 @@ fn reference_place(
             Pattern::TypeConstructor { .. } => false,
             Pattern::Impl { .. } => false,
             Pattern::Function { .. } => unreachable!(),
+            Pattern::Borrow { .. } => false,
             Pattern::Unknown(_) => true,
         };
 
@@ -731,6 +732,14 @@ pub(crate) fn bind_pattern_variables(
         }
         Pattern::Function { .. } => {
             unreachable!("functions are forbidden in arg patterns")
+        }
+        Pattern::Borrow { borrowed, .. } => {
+            if let Type::Borrow { ty, .. } = ty {
+                todo!("value is wrong");
+                bind_pattern_variables(ctx, index, value, &*borrowed, *ty)
+            } else {
+                unreachable!()
+            }
         }
         Pattern::Unknown(range) => {
             // Drop this variable.

@@ -33,6 +33,11 @@ pub enum Pattern {
         param_types: Vec<Type>,
         args: Vec<Pattern>,
     },
+    /// A borrow of a pattern.
+    Borrow {
+        borrow_token: Range,
+        borrowed: Box<Pattern>,
+    },
     /// An underscore representing an ignored pattern.
     Unknown(Range),
 }
@@ -52,6 +57,7 @@ impl Ranged for Pattern {
             } => fields
                 .iter()
                 .fold(*impl_token, |acc, (_name, _ty, pat)| acc.union(pat.range())),
+            Pattern::Borrow { borrowed, .. } => borrowed.range(),
             Pattern::Unknown(range) => *range,
             Pattern::Function { args, .. } => args
                 .iter()
@@ -104,6 +110,7 @@ impl Display for Pattern {
                 }
                 Ok(())
             }
+            Pattern::Borrow { borrowed, .. } => write!(f, "&{}", borrowed),
             Pattern::Unknown(_) => write!(f, "_"),
         }
     }
