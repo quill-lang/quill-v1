@@ -1,6 +1,6 @@
 //! Creates the MIR code that performs a pattern matching operation.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref};
 
 use multimap::MultiMap;
 use quill_common::{
@@ -9,7 +9,7 @@ use quill_common::{
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
-use quill_type::Type;
+use quill_type::{BorrowCondition, Type};
 use quill_type_deduce::{hir::pattern::Pattern, replace_type_variables, TypeConstructorInvocation};
 
 use crate::{definition::DefinitionTranslationContext, mir::*};
@@ -280,8 +280,44 @@ fn first_difference(
                 None
             }
         } else {
-            // The patterns did not reference an immediate value. No mismatch was detected.
-            None
+            // The patterns did not reference an immediate value.
+            // Now, check if any pattern is a borrow of some variable.
+            let borrowed = patterns.iter().find_map(|pat| {
+                if let Pattern::Borrow { borrow_token, .. } = pat {
+                    Some(*borrow_token)
+                } else {
+                    None
+                }
+            });
+
+            if borrowed.is_some() {
+                // We need to pattern-match on the data behind the borrow.
+                let borrowed_patterns = patterns
+                    .iter()
+                    .map(|pat| {
+                        if let Pattern::Borrow { borrowed, .. } = pat {
+                            borrowed.deref().clone()
+                        } else {
+                            Pattern::Unknown(pat.range())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                // Now, check whether the borrow patterns differ.
+                first_difference(
+                    project_index,
+                    var,
+                    if let Type::Borrow { ty, .. } = ty {
+                        *ty
+                    } else {
+                        unreachable!()
+                    },
+                    &borrowed_patterns,
+                )
+            } else {
+                // No mismatch was detected.
+                None
+            }
         }
     }
 }
@@ -597,18 +633,28 @@ pub(crate) struct BoundPatternVariables {
 /// has the given pattern, and the given type.
 /// Returns statements that will initialise these variables, or statements that will *drop* the value
 /// if no variable initialisation is required.
+/// If `borrow` is Some, then this pattern is behind a borrow. This means that fields that we get
+/// will be assigned a borrow condition, and their types will gain a layer of indirection.
 pub(crate) fn bind_pattern_variables(
     ctx: &mut DefinitionTranslationContext,
     index: &ProjectIndex,
     value: Place,
     pat: &Pattern,
     ty: Type,
+    borrow: Option<BorrowCondition>,
 ) -> BoundPatternVariables {
     match pat {
         Pattern::Named(name) => {
             let var = ctx.new_local_variable(LocalVariableInfo {
                 range: name.range,
-                ty,
+                ty: if let Some(borrow) = borrow {
+                    Type::Borrow {
+                        ty: Box::new(ty),
+                        borrow: Some(borrow),
+                    }
+                } else {
+                    ty
+                },
                 name: Some(name.name.clone()),
             });
 
@@ -668,6 +714,7 @@ pub(crate) fn bind_pattern_variables(
                             named_type_parameters,
                             concrete_type_parameters,
                         ),
+                        borrow.clone(),
                     )
                 })
                 .map(|result| (result.statements, result.bound_variables))
@@ -713,6 +760,7 @@ pub(crate) fn bind_pattern_variables(
                             named_type_parameters,
                             concrete_type_parameters,
                         ),
+                        borrow.clone(),
                     )
                 })
                 .map(|result| (result.statements, result.bound_variables))
@@ -734,9 +782,8 @@ pub(crate) fn bind_pattern_variables(
             unreachable!("functions are forbidden in arg patterns")
         }
         Pattern::Borrow { borrowed, .. } => {
-            if let Type::Borrow { ty, .. } = ty {
-                todo!("value is wrong");
-                bind_pattern_variables(ctx, index, value, &*borrowed, *ty)
+            if let Type::Borrow { ty, borrow } = ty {
+                bind_pattern_variables(ctx, index, value, &*borrowed, *ty, borrow)
             } else {
                 unreachable!()
             }
