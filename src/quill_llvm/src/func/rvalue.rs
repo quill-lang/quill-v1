@@ -60,9 +60,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 let data = reprs
                                     .get_data(&MonomorphisedType {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = data.load(codegen, reprs, ptr, &field).unwrap();
@@ -71,7 +69,19 @@ pub fn get_pointer_to_rvalue<'ctx>(
                             }
                         }
                         PlaceSegment::EnumField { variant, field } => {
-                            // rvalue_ty is an enum type.
+                            // rvalue_ty is an enum type, or a sequence of borrows of an enum type.
+                            // If we're manipulating a borrowed value, we need to repeatedly
+                            // dereference the borrow to get the value behind it.
+                            let mut borrowed = false;
+                            while let Type::Borrow { ty, .. } = &rvalue_ty {
+                                ptr = codegen
+                                    .builder
+                                    .build_load(ptr, "value_behind_borrow")
+                                    .into_pointer_value();
+                                rvalue_ty = ty.deref().clone();
+                                borrowed = true;
+                            }
+
                             if let Type::Named { name, parameters } = rvalue_ty {
                                 let decl = &index[&name.source_file].types[&name.name];
                                 if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
@@ -102,14 +112,24 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 let the_enum = reprs
                                     .get_enum(&MonomorphisedType {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = the_enum
                                     .load(codegen, reprs, ptr, &variant, &field)
                                     .unwrap();
+
+                                if borrowed {
+                                    // If we're borrowed, we want to get a double pointer to the value,
+                                    // since borrows are pointers to a memory allocation (such as an alloca).
+                                    // So here, we create the second pointer.
+                                    // LLVM will likely remove this second pointer when converting to SSA form.
+                                    let next = codegen
+                                        .builder
+                                        .build_alloca(ptr.get_type(), "borrowed_value");
+                                    codegen.builder.build_store(next, ptr);
+                                    ptr = next;
+                                }
                             } else {
                                 unreachable!()
                             }
@@ -130,9 +150,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 let the_enum = reprs
                                     .get_enum(&MonomorphisedType {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = the_enum.get_discriminant(codegen, ptr);
@@ -164,9 +182,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 let data = reprs
                                     .get_aspect(&MonomorphisedAspect {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = data.load(codegen, reprs, ptr, &field).unwrap();
@@ -184,7 +200,9 @@ pub fn get_pointer_to_rvalue<'ctx>(
         }
         Rvalue::Borrow(local) => {
             // Return a pointer to the given local variable.
-            // We store variables, and borrows to variables, both as single pointers.
+            // Note that since local variables are stored using `alloca` instructions,
+            // this will return a *double pointer*:
+            // a pointer to the place on the stack (a pointer) that the object is stored.
             let ptr = codegen
                 .builder
                 .build_alloca(locals[local].get_type(), "borrow");
@@ -200,9 +218,13 @@ pub fn get_pointer_to_rvalue<'ctx>(
                 unreachable!()
             };
 
-            // We don't need to dereference the borrow,
-            // since any borrow is a single pointer, just like any local variable (stored as an alloca).
-            if let Some(value) = reprs.copy_ptr(*ty.clone(), locals[local]) {
+            // Since the local is a borrow, it is a double pointer.
+            // Dereference it once.
+            let value = codegen
+                .builder
+                .build_load(locals[local], "alloca_to_copy")
+                .into_pointer_value();
+            if let Some(value) = reprs.copy_ptr(*ty.clone(), value) {
                 let ptr = codegen
                     .builder
                     .build_alloca(value.get_type(), "copied_value_alloca");

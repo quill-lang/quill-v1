@@ -134,9 +134,7 @@ fn create_real_func_body_cfg<'ctx>(
                 } => {
                     let mono_func = MonomorphisedFunction {
                         func: name.clone(),
-                        mono: MonomorphisationParameters {
-                            type_parameters: type_variables.clone(),
-                        },
+                        mono: MonomorphisationParameters::new(type_variables.clone()),
                         curry_steps: Vec::new(),
                         direct: true,
                     };
@@ -201,9 +199,7 @@ fn create_real_func_body_cfg<'ctx>(
                 } => {
                     let mono_func = MonomorphisedFunction {
                         func: name.clone(),
-                        mono: MonomorphisationParameters {
-                            type_parameters: type_variables.clone(),
-                        },
+                        mono: MonomorphisationParameters::new(type_variables.clone()),
                         curry_steps: curry_steps.clone(),
                         direct: true,
                     };
@@ -391,9 +387,7 @@ fn create_real_func_body_cfg<'ctx>(
                     if let Type::Named { name, parameters } = target_ty.clone() {
                         let mono_ty = MonomorphisedType {
                             name,
-                            mono: MonomorphisationParameters {
-                                type_parameters: parameters,
-                            },
+                            mono: MonomorphisationParameters::new(parameters),
                         };
                         if let Some(repr) = ctx.reprs.get_data(&mono_ty) {
                             repr.malloc_fields(ctx.codegen, ctx.reprs, target_value);
@@ -431,9 +425,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .reprs
                             .get_enum(&MonomorphisedType {
                                 name,
-                                mono: MonomorphisationParameters {
-                                    type_parameters: parameters,
-                                },
+                                mono: MonomorphisationParameters::new(parameters),
                             })
                             .unwrap();
                         // Assign the discriminant.
@@ -463,9 +455,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .reprs
                             .get_data(&MonomorphisedType {
                                 name,
-                                mono: MonomorphisationParameters {
-                                    type_parameters: parameters,
-                                },
+                                mono: MonomorphisationParameters::new(parameters),
                             })
                             .unwrap();
                         for (field_name, field_rvalue) in fields {
@@ -511,9 +501,7 @@ fn create_real_func_body_cfg<'ctx>(
                     if let Type::Impl { name, parameters } = target_ty.clone() {
                         let mono_asp = MonomorphisedAspect {
                             name,
-                            mono: MonomorphisationParameters {
-                                type_parameters: parameters,
-                            },
+                            mono: MonomorphisationParameters::new(parameters),
                         };
                         if let Some(repr) = ctx.reprs.get_aspect(&mono_asp) {
                             repr.malloc_fields(ctx.codegen, ctx.reprs, target_value);
@@ -533,9 +521,7 @@ fn create_real_func_body_cfg<'ctx>(
                         .reprs
                         .get_aspect(&MonomorphisedAspect {
                             name,
-                            mono: MonomorphisationParameters {
-                                type_parameters: parameters,
-                            },
+                            mono: MonomorphisationParameters::new(parameters),
                         })
                         .unwrap();
                     for (field_name, field_rvalue) in definitions {
@@ -602,18 +588,18 @@ fn create_real_func_body_cfg<'ctx>(
                     .reprs
                     .get_enum(&MonomorphisedType {
                         name: enum_name.clone(),
-                        mono: MonomorphisationParameters {
-                            type_parameters: enum_parameters
+                        mono: MonomorphisationParameters::new(
+                            enum_parameters
                                 .iter()
                                 .map(|ty| {
                                     replace_type_variables(
                                         ty.clone(),
                                         type_variables,
-                                        &ctx.func.mono.type_parameters,
+                                        ctx.func.mono.type_parameters(),
                                     )
                                 })
                                 .collect(),
-                        },
+                        ),
                     })
                     .unwrap();
                 let cases = cases

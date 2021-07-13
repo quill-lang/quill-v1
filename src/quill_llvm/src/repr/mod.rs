@@ -167,9 +167,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             Type::Named { name, parameters } => {
                 let mono_ty = MonomorphisedType {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 };
                 if let Some(repr) = self.datas.get(&mono_ty) {
                     repr.llvm_repr.as_ref().map(|llvm_repr| {
@@ -224,9 +222,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             Type::Impl { name, parameters } => {
                 let mono_asp = MonomorphisedAspect {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 };
                 if let Some(repr) = self.aspects.get(&mono_asp) {
                     repr.llvm_repr.as_ref().map(|llvm_repr| {
@@ -281,9 +277,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 let repr = self.repr(ty);
                 let mono_ty = MonomorphisedType {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 };
                 let func = self
                     .codegen
@@ -367,9 +361,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 let repr = self.repr(ty);
                 let mono_asp = MonomorphisedAspect {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 };
                 let func = self
                     .codegen
@@ -408,9 +400,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 let repr = self.repr(ty);
                 let mono_ty = MonomorphisedType {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 };
                 if repr.is_some() {
                     let function = self
@@ -496,9 +486,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                 let repr = self.repr(ty);
                 let mono_asp = MonomorphisedAspect {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 };
                 if repr.is_some() {
                     let function = self

@@ -120,9 +120,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
                 &MonomorphisedFunction {
                     func: mir.entry_point.clone(),
                     curry_steps: Vec::new(),
-                    mono: MonomorphisationParameters {
-                        type_parameters: Vec::new(),
-                    },
+                    mono: MonomorphisationParameters::new(Vec::new()),
                     direct: true,
                 }
                 .to_string(),

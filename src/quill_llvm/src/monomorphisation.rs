@@ -184,7 +184,48 @@ impl Monomorphisation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MonomorphisationParameters {
-    pub type_parameters: Vec<Type>,
+    type_parameters: Vec<Type>,
+}
+
+impl MonomorphisationParameters {
+    pub fn new(type_parameters: Vec<Type>) -> Self {
+        Self {
+            type_parameters: type_parameters.into_iter().map(anonymise_borrows).collect(),
+        }
+    }
+
+    /// Get a reference to the type parameters.
+    pub fn type_parameters(&self) -> &[Type] {
+        self.type_parameters.as_slice()
+    }
+}
+
+/// Removes lifetimes from this type.
+/// This means that &'a T and &'b T will compare equal after this step.
+fn anonymise_borrows(ty: Type) -> Type {
+    match ty {
+        Type::Named { name, parameters } => Type::Named {
+            name,
+            parameters: parameters.into_iter().map(anonymise_borrows).collect(),
+        },
+        Type::Variable {
+            variable,
+            parameters,
+        } => Type::Variable {
+            variable,
+            parameters: parameters.into_iter().map(anonymise_borrows).collect(),
+        },
+        Type::Function(l, r) => Type::Function(
+            Box::new(anonymise_borrows(*l)),
+            Box::new(anonymise_borrows(*r)),
+        ),
+        Type::Primitive(prim) => Type::Primitive(prim),
+        Type::Borrow { ty, .. } => Type::Borrow { ty, borrow: None },
+        Type::Impl { name, parameters } => Type::Impl {
+            name,
+            parameters: parameters.into_iter().map(anonymise_borrows).collect(),
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

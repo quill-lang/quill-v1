@@ -61,8 +61,8 @@ pub(crate) fn sort_types(
                     field_type.clone(),
                     type_params,
                     match vertex {
-                        MonomorphisedItem::Type(ty) => &ty.mono.type_parameters,
-                        MonomorphisedItem::Aspect(asp) => &asp.mono.type_parameters,
+                        MonomorphisedItem::Type(ty) => ty.mono.type_parameters(),
+                        MonomorphisedItem::Aspect(asp) => asp.mono.type_parameters(),
                     },
                 );
 
@@ -73,9 +73,7 @@ pub(crate) fn sort_types(
                     } => {
                         let monomorphised_field_type = MonomorphisedItem::Type(MonomorphisedType {
                             name: field_type_name,
-                            mono: MonomorphisationParameters {
-                                type_parameters: field_type_parameters,
-                            },
+                            mono: MonomorphisationParameters::new(field_type_parameters)
                         });
                         // Find this other type in the graph, and connect them with an edge.
                         // The edge leads from the child vertex to the parent vertex, so that the topological sort
@@ -94,9 +92,7 @@ pub(crate) fn sort_types(
                         let monomorphised_field_type =
                             MonomorphisedItem::Aspect(MonomorphisedAspect {
                                 name: field_type_name,
-                                mono: MonomorphisationParameters {
-                                    type_parameters: field_type_parameters,
-                                },
+                                mono:MonomorphisationParameters::new(field_type_parameters)
                             });
                         // Find this other type in the graph, and connect them with an edge.
                         // The edge leads from the child vertex to the parent vertex, so that the topological sort

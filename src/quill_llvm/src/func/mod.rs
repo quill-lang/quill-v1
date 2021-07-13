@@ -32,7 +32,7 @@ pub fn compile_function<'ctx>(
     let func_object_descriptor = func.function_object_descriptor();
 
     let mono =
-        |ty: Type| replace_type_variables(ty, &def.type_variables, &func.mono.type_parameters);
+        |ty: Type| replace_type_variables(ty, &def.type_variables, func.mono.type_parameters());
 
     // Create debug info for the function as a whole.
     let di_file = source_file_debug_info(codegen, &func.func.source_file);
@@ -83,7 +83,7 @@ pub fn compile_function<'ctx>(
                             .ty
                             .clone(),
                         &def.type_variables,
-                        &func.mono.type_parameters,
+                        func.mono.type_parameters(),
                     ))
                     .is_some()
                 {
@@ -219,7 +219,7 @@ pub fn compile_function<'ctx>(
                             .ty
                             .clone(),
                         &def.type_variables,
-                        &func.mono.type_parameters,
+                        func.mono.type_parameters(),
                     ))
                     .is_some()
                 {

@@ -162,11 +162,10 @@ impl CompilerLocation {
                 Command::new(host.as_executable(root.join("quillc").join("quillc")))
             }
         };
+        info!("JSON was {}", json);
         command.arg(json);
         command.stdout(Stdio::piped());
         command.stderr(Stdio::inherit());
-
-        info!("Executing {:#?}", command);
 
         // Keep track of the time taken for each status message to be sent.
         let mut last_status = Instant::now();
