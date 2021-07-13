@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Deref,
+};
 
 use inkwell::{types::BasicType, values::PointerValue, AddressSpace};
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
@@ -113,6 +116,15 @@ pub fn get_pointer_to_rvalue<'ctx>(
                         }
                         PlaceSegment::EnumDiscriminant => {
                             // rvalue_ty is an enum type, or a borrow of an enum type.
+                            // If we're manipulating a borrowed value, we need to repeatedly
+                            // dereference the borrow to get the value behind it.
+                            while let Type::Borrow { ty, .. } = &rvalue_ty {
+                                ptr = codegen
+                                    .builder
+                                    .build_load(ptr, "value_behind_borrow")
+                                    .into_pointer_value();
+                                rvalue_ty = ty.deref().clone();
+                            }
                             if let Type::Named { name, parameters } = rvalue_ty {
                                 rvalue_ty = Type::Primitive(PrimitiveType::Int);
                                 let the_enum = reprs
@@ -124,23 +136,6 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                     })
                                     .unwrap();
                                 ptr = the_enum.get_discriminant(codegen, ptr);
-                            } else if let Type::Borrow { ty, .. } = rvalue_ty {
-                                // We don't need to explicitly dereference the borrow, since borrowed values and
-                                // owned values are both represented as pointers to an alloca in LLVM IR.
-                                if let Type::Named { name, parameters } = *ty {
-                                    rvalue_ty = Type::Primitive(PrimitiveType::Int);
-                                    let the_enum = reprs
-                                        .get_enum(&MonomorphisedType {
-                                            name,
-                                            mono: MonomorphisationParameters {
-                                                type_parameters: parameters,
-                                            },
-                                        })
-                                        .unwrap();
-                                    ptr = the_enum.get_discriminant(codegen, ptr);
-                                } else {
-                                    unreachable!()
-                                }
                             } else {
                                 unreachable!()
                             }
@@ -189,9 +184,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
         }
         Rvalue::Borrow(local) => {
             // Return a pointer to the given local variable.
-            // Note that since local variables are stored using `alloca` instructions,
-            // this will return a *double pointer*:
-            // a pointer to the place on the stack (a pointer) that the object is stored.
+            // We store variables, and borrows to variables, both as single pointers.
             let ptr = codegen
                 .builder
                 .build_alloca(locals[local].get_type(), "borrow");
@@ -207,13 +200,9 @@ pub fn get_pointer_to_rvalue<'ctx>(
                 unreachable!()
             };
 
-            // Since the local is a borrow, it is a double pointer.
-            // Dereference it once.
-            let value = codegen
-                .builder
-                .build_load(locals[local], "alloca_to_copy")
-                .into_pointer_value();
-            if let Some(value) = reprs.copy_ptr(*ty.clone(), value) {
+            // We don't need to dereference the borrow,
+            // since any borrow is a single pointer, just like any local variable (stored as an alloca).
+            if let Some(value) = reprs.copy_ptr(*ty.clone(), locals[local]) {
                 let ptr = codegen
                     .builder
                     .build_alloca(value.get_type(), "copied_value_alloca");

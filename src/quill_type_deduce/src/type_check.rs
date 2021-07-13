@@ -20,7 +20,7 @@ use quill_parser::{
     types::TypeP,
     visibility::Visibility,
 };
-use quill_type::{PrimitiveType, Type};
+use quill_type::{BorrowCondition, PrimitiveType, Type};
 
 use crate::{
     hindley_milner::deduce_expr_type,
@@ -498,7 +498,7 @@ impl<'a> TypeChecker<'a> {
             .iter()
             .zip(symbol_args.into_iter())
             .map(|(pattern, expected_type)| {
-                self.match_and_bind(visible_names, pattern, expected_type)
+                self.match_and_bind(visible_names, pattern, expected_type, None)
             })
             .collect::<DiagnosticResult<_>>();
         // Collect the list of maps into a single map, ensuring that we don't have duplicate variable names.
@@ -522,11 +522,14 @@ impl<'a> TypeChecker<'a> {
 
     /// Match the pattern to the type. If the pattern is a match for the type, a map is returned which
     /// shows what variable names have what types.
+    /// If `borrow_condition` is Some, then this is inside a borrow with the given condition.
+    /// Under this circumstance, the returned type should instead be a borrowed type.
     fn match_and_bind(
         &self,
         visible_names: &VisibleNames,
         pattern: &Pattern,
         expected_type: Type,
+        borrow_condition: Option<BorrowCondition>,
     ) -> DiagnosticResult<HashMap<String, BoundVariable>> {
         match pattern {
             Pattern::Named(identifier) => {
@@ -534,7 +537,14 @@ impl<'a> TypeChecker<'a> {
                 map.insert(
                     identifier.name.clone(),
                     BoundVariable {
-                        var_type: expected_type,
+                        var_type: if let Some(borrow_condition) = borrow_condition {
+                            Type::Borrow {
+                                ty: Box::new(expected_type),
+                                borrow: Some(borrow_condition),
+                            }
+                        } else {
+                            expected_type
+                        },
                         range: identifier.range,
                     },
                 );
@@ -612,6 +622,7 @@ impl<'a> TypeChecker<'a> {
                                 visible_names,
                                 pattern,
                                 expected_type,
+                                borrow_condition.clone(),
                             ));
                         }
                     }
@@ -690,6 +701,7 @@ impl<'a> TypeChecker<'a> {
                                 visible_names,
                                 pattern,
                                 expected_type,
+                                borrow_condition.clone(),
                             ));
                         }
                     }
@@ -719,21 +731,8 @@ impl<'a> TypeChecker<'a> {
                 match expected_type {
                     Type::Borrow { ty, borrow } => {
                         // Add the lifetime to the types inside this borrow.
-                        self.match_and_bind(visible_names, &*borrowed, *ty)
-                            .map(|mut variables| {
-                                for v in variables.values_mut() {
-                                    // Mutate the value by replacing it temporarily.
-                                    let ty = std::mem::replace(
-                                        &mut v.var_type,
-                                        Type::Primitive(PrimitiveType::Unit),
-                                    );
-                                    v.var_type = Type::Borrow {
-                                        ty: Box::new(ty),
-                                        borrow: borrow.clone(),
-                                    };
-                                }
-                                variables
-                            })
+                        // The `Some(borrow.unwrap())` asserts that `borrow` is Some.
+                        self.match_and_bind(visible_names, &*borrowed, *ty, Some(borrow.unwrap()))
                     }
                     _ => panic!("should have errored in resolve_type_pattern"),
                 }

@@ -15,7 +15,8 @@ def main: Unit {
                 perform_print_list print_list (copy &list)
                 // TODO: borrowing `print_list` directly doesn't work
                 let print_list_2 = print_list
-                perform_print_list (copy &print_list_2) list
+                let ref_list = as_ref &list
+                perform_print_list (copy &print_list_2) (copied (as_ref &list))
             )
         )
         newline unit
