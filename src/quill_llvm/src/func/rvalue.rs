@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Deref,
+};
 
 use inkwell::{types::BasicType, values::PointerValue, AddressSpace};
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
@@ -57,9 +60,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 let data = reprs
                                     .get_data(&MonomorphisedType {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = data.load(codegen, reprs, ptr, &field).unwrap();
@@ -68,7 +69,19 @@ pub fn get_pointer_to_rvalue<'ctx>(
                             }
                         }
                         PlaceSegment::EnumField { variant, field } => {
-                            // rvalue_ty is an enum type.
+                            // rvalue_ty is an enum type, or a sequence of borrows of an enum type.
+                            // If we're manipulating a borrowed value, we need to repeatedly
+                            // dereference the borrow to get the value behind it.
+                            let mut borrowed = false;
+                            while let Type::Borrow { ty, .. } = &rvalue_ty {
+                                ptr = codegen
+                                    .builder
+                                    .build_load(ptr, "value_behind_borrow")
+                                    .into_pointer_value();
+                                rvalue_ty = ty.deref().clone();
+                                borrowed = true;
+                            }
+
                             if let Type::Named { name, parameters } = rvalue_ty {
                                 let decl = &index[&name.source_file].types[&name.name];
                                 if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
@@ -99,48 +112,48 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 let the_enum = reprs
                                     .get_enum(&MonomorphisedType {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = the_enum
                                     .load(codegen, reprs, ptr, &variant, &field)
                                     .unwrap();
+
+                                if borrowed {
+                                    // If we're borrowed, we want to get a double pointer to the value,
+                                    // since borrows are pointers to a memory allocation (such as an alloca).
+                                    // So here, we create the second pointer.
+                                    // LLVM will likely remove this second pointer when converting to SSA form.
+                                    let next = codegen
+                                        .builder
+                                        .build_alloca(ptr.get_type(), "borrowed_value");
+                                    codegen.builder.build_store(next, ptr);
+                                    ptr = next;
+                                }
                             } else {
                                 unreachable!()
                             }
                         }
                         PlaceSegment::EnumDiscriminant => {
                             // rvalue_ty is an enum type, or a borrow of an enum type.
+                            // If we're manipulating a borrowed value, we need to repeatedly
+                            // dereference the borrow to get the value behind it.
+                            while let Type::Borrow { ty, .. } = &rvalue_ty {
+                                ptr = codegen
+                                    .builder
+                                    .build_load(ptr, "value_behind_borrow")
+                                    .into_pointer_value();
+                                rvalue_ty = ty.deref().clone();
+                            }
                             if let Type::Named { name, parameters } = rvalue_ty {
                                 rvalue_ty = Type::Primitive(PrimitiveType::Int);
                                 let the_enum = reprs
                                     .get_enum(&MonomorphisedType {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = the_enum.get_discriminant(codegen, ptr);
-                            } else if let Type::Borrow { ty, .. } = rvalue_ty {
-                                // We don't need to explicitly dereference the borrow, since borrowed values and
-                                // owned values are both represented as pointers to an alloca in LLVM IR.
-                                if let Type::Named { name, parameters } = *ty {
-                                    rvalue_ty = Type::Primitive(PrimitiveType::Int);
-                                    let the_enum = reprs
-                                        .get_enum(&MonomorphisedType {
-                                            name,
-                                            mono: MonomorphisationParameters {
-                                                type_parameters: parameters,
-                                            },
-                                        })
-                                        .unwrap();
-                                    ptr = the_enum.get_discriminant(codegen, ptr);
-                                } else {
-                                    unreachable!()
-                                }
                             } else {
                                 unreachable!()
                             }
@@ -169,9 +182,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 let data = reprs
                                     .get_aspect(&MonomorphisedAspect {
                                         name,
-                                        mono: MonomorphisationParameters {
-                                            type_parameters: parameters,
-                                        },
+                                        mono: MonomorphisationParameters::new(parameters),
                                     })
                                     .unwrap();
                                 ptr = data.load(codegen, reprs, ptr, &field).unwrap();

@@ -1,6 +1,6 @@
 //! Creates the MIR code that performs a pattern matching operation.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref};
 
 use multimap::MultiMap;
 use quill_common::{
@@ -9,8 +9,8 @@ use quill_common::{
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
-use quill_type::Type;
-use quill_type_deduce::{hir::pattern::Pattern, replace_type_variables, TypeConstructorInvocation};
+use quill_type::{BorrowCondition, Type};
+use quill_type_deduce::{hir::pattern::Pattern, TypeConstructorInvocation};
 
 use crate::{definition::DefinitionTranslationContext, mir::*};
 
@@ -280,8 +280,44 @@ fn first_difference(
                 None
             }
         } else {
-            // The patterns did not reference an immediate value. No mismatch was detected.
-            None
+            // The patterns did not reference an immediate value.
+            // Now, check if any pattern is a borrow of some variable.
+            let borrowed = patterns.iter().find_map(|pat| {
+                if let Pattern::Borrow { borrow_token, .. } = pat {
+                    Some(*borrow_token)
+                } else {
+                    None
+                }
+            });
+
+            if borrowed.is_some() {
+                // We need to pattern-match on the data behind the borrow.
+                let borrowed_patterns = patterns
+                    .iter()
+                    .map(|pat| {
+                        if let Pattern::Borrow { borrowed, .. } = pat {
+                            borrowed.deref().clone()
+                        } else {
+                            Pattern::Unknown(pat.range())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                // Now, check whether the borrow patterns differ.
+                first_difference(
+                    project_index,
+                    var,
+                    if let Type::Borrow { ty, .. } = ty {
+                        *ty
+                    } else {
+                        unreachable!()
+                    },
+                    &borrowed_patterns,
+                )
+            } else {
+                // No mismatch was detected.
+                None
+            }
         }
     }
 }
@@ -344,6 +380,7 @@ fn reference_place(
             Pattern::TypeConstructor { .. } => false,
             Pattern::Impl { .. } => false,
             Pattern::Function { .. } => unreachable!(),
+            Pattern::Borrow { .. } => false,
             Pattern::Unknown(_) => true,
         };
 
@@ -596,18 +633,28 @@ pub(crate) struct BoundPatternVariables {
 /// has the given pattern, and the given type.
 /// Returns statements that will initialise these variables, or statements that will *drop* the value
 /// if no variable initialisation is required.
+/// If `borrow` is Some, then this pattern is behind a borrow. This means that fields that we get
+/// will be assigned a borrow condition, and their types will gain a layer of indirection.
 pub(crate) fn bind_pattern_variables(
     ctx: &mut DefinitionTranslationContext,
     index: &ProjectIndex,
     value: Place,
     pat: &Pattern,
     ty: Type,
+    borrow: Option<BorrowCondition>,
 ) -> BoundPatternVariables {
     match pat {
         Pattern::Named(name) => {
             let var = ctx.new_local_variable(LocalVariableInfo {
                 range: name.range,
-                ty,
+                ty: if let Some(borrow) = borrow {
+                    Type::Borrow {
+                        ty: Box::new(ty),
+                        borrow: Some(borrow),
+                    }
+                } else {
+                    ty
+                },
                 name: Some(name.name.clone()),
             });
 
@@ -631,18 +678,6 @@ pub(crate) fn bind_pattern_variables(
         },
         Pattern::TypeConstructor { type_ctor, fields } => {
             // Bind each field individually, then chain all the blocks together.
-            // First work out the type parameters used for this type.
-            let decl = &index[&type_ctor.data_type.source_file].types[&type_ctor.data_type.name];
-            let named_type_parameters = match &decl.decl_type {
-                TypeDeclarationTypeI::Data(datai) => &datai.type_params,
-                TypeDeclarationTypeI::Enum(enumi) => &enumi.type_params,
-            };
-            let concrete_type_parameters = if let Type::Named { ref parameters, .. } = ty {
-                parameters
-            } else {
-                unreachable!()
-            };
-
             let results = fields
                 .iter()
                 .map(|(field_name, ty, pat)| {
@@ -662,11 +697,8 @@ pub(crate) fn bind_pattern_variables(
                                 }
                             }),
                         pat,
-                        replace_type_variables(
-                            ty.clone(),
-                            named_type_parameters,
-                            concrete_type_parameters,
-                        ),
+                        ty.clone(),
+                        borrow.clone(),
                     )
                 })
                 .map(|result| (result.statements, result.bound_variables))
@@ -685,18 +717,7 @@ pub(crate) fn bind_pattern_variables(
             }
         }
         Pattern::Impl { fields, .. } => {
-            let (aspect_name, concrete_type_parameters) =
-                if let Type::Impl { name, parameters } = &ty {
-                    (name, parameters)
-                } else {
-                    unreachable!()
-                };
-
             // Bind each field individually, then chain all the blocks together.
-            // First work out the type parameters used for this type.
-            let decl = &index[&aspect_name.source_file].aspects[&aspect_name.name];
-            let named_type_parameters = &decl.type_variables;
-
             let results = fields
                 .iter()
                 .map(|(field_name, ty, pat)| {
@@ -707,11 +728,8 @@ pub(crate) fn bind_pattern_variables(
                             field: field_name.name.clone(),
                         }),
                         pat,
-                        replace_type_variables(
-                            ty.clone(),
-                            named_type_parameters,
-                            concrete_type_parameters,
-                        ),
+                        ty.clone(),
+                        borrow.clone(),
                     )
                 })
                 .map(|result| (result.statements, result.bound_variables))
@@ -731,6 +749,14 @@ pub(crate) fn bind_pattern_variables(
         }
         Pattern::Function { .. } => {
             unreachable!("functions are forbidden in arg patterns")
+        }
+        Pattern::Borrow { borrowed, .. } => {
+            if let Type::Borrow { ty, borrow } = ty {
+                // TODO: what happens with nested borrows?
+                bind_pattern_variables(ctx, index, value, &*borrowed, *ty, borrow)
+            } else {
+                unreachable!()
+            }
         }
         Pattern::Unknown(range) => {
             // Drop this variable.

@@ -448,9 +448,8 @@ fn parse_token(
                 ));
             };
             if nextch.is_alphanumeric() {
-                let (lifetime, range) = consume_predicate_one(line, col, nextch, chars, |c| {
-                    c.is_alphanumeric() || c == '_'
-                });
+                let (lifetime, range) =
+                    consume_predicate(line, chars, |c| c.is_alphanumeric() || c == '_');
                 DiagnosticResult::ok(
                     Token {
                         token_type: TokenType::Lifetime(lifetime),

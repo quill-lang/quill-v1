@@ -14,13 +14,13 @@ use quill_index::{
 };
 use quill_parser::{
     definition::{DefinitionBodyP, DefinitionCaseP, DefinitionDeclP, DefinitionP, TypeParameterP},
-    expr_pat::{ConstructDataFields, ExprPatP},
+    expr_pat::{ConstantValue, ConstructDataFields, ExprPatP},
     file::FileP,
     identifier::{IdentifierP, NameP},
     types::TypeP,
     visibility::Visibility,
 };
-use quill_type::{PrimitiveType, Type};
+use quill_type::{BorrowCondition, PrimitiveType, Type};
 
 use crate::{
     hindley_milner::deduce_expr_type,
@@ -367,7 +367,6 @@ impl<'a> TypeChecker<'a> {
     ) -> Option<(String, Definition)> {
         let def_name = definition.decl.name;
         let type_parameters = definition.decl.type_parameters;
-
         match definition.body {
             DefinitionBodyP::PatternMatch(cases) => {
                 // We need to check pattern exhaustiveness in the definition's cases.
@@ -499,7 +498,7 @@ impl<'a> TypeChecker<'a> {
             .iter()
             .zip(symbol_args.into_iter())
             .map(|(pattern, expected_type)| {
-                self.match_and_bind(visible_names, pattern, expected_type)
+                self.match_and_bind(visible_names, pattern, expected_type, None)
             })
             .collect::<DiagnosticResult<_>>();
         // Collect the list of maps into a single map, ensuring that we don't have duplicate variable names.
@@ -523,11 +522,14 @@ impl<'a> TypeChecker<'a> {
 
     /// Match the pattern to the type. If the pattern is a match for the type, a map is returned which
     /// shows what variable names have what types.
+    /// If `borrow_condition` is Some, then this is inside a borrow with the given condition.
+    /// Under this circumstance, the returned type should instead be a borrowed type.
     fn match_and_bind(
         &self,
         visible_names: &VisibleNames,
         pattern: &Pattern,
         expected_type: Type,
+        borrow_condition: Option<BorrowCondition>,
     ) -> DiagnosticResult<HashMap<String, BoundVariable>> {
         match pattern {
             Pattern::Named(identifier) => {
@@ -535,7 +537,14 @@ impl<'a> TypeChecker<'a> {
                 map.insert(
                     identifier.name.clone(),
                     BoundVariable {
-                        var_type: expected_type,
+                        var_type: if let Some(borrow_condition) = borrow_condition {
+                            Type::Borrow {
+                                ty: Box::new(expected_type),
+                                borrow: Some(borrow_condition),
+                            }
+                        } else {
+                            expected_type
+                        },
                         range: identifier.range,
                     },
                 );
@@ -613,6 +622,7 @@ impl<'a> TypeChecker<'a> {
                                 visible_names,
                                 pattern,
                                 expected_type,
+                                borrow_condition.clone(),
                             ));
                         }
                     }
@@ -636,102 +646,13 @@ impl<'a> TypeChecker<'a> {
                             DiagnosticResult::ok_with_many(result, messages)
                         })
                 }
-                Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
-                    String::from("expected a name for a function, not a type constructor"),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, &type_ctor.range),
-                )),
-                Type::Variable { variable, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                    format!(
-                        "expected a name for a variable of type `{}`, not a type constructor",
-                        variable
-                    ),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, &type_ctor.range),
-                )),
-                Type::Primitive(prim) => DiagnosticResult::fail(ErrorMessage::new(
-                    format!(
-                        "expected a name for a variable of type {}, not a type constructor",
-                        prim
-                    ),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, &type_ctor.range),
-                )),
-                Type::Borrow { ty, borrow } => {
-                    // Add the lifetime to the types inside this borrow.
-                    self.match_and_bind(visible_names, pattern, *ty)
-                        .map(|mut variables| {
-                            for v in variables.values_mut() {
-                                // Mutate the value by replacing it temporarily.
-                                let ty = std::mem::replace(
-                                    &mut v.var_type,
-                                    Type::Primitive(PrimitiveType::Unit),
-                                );
-                                v.var_type = Type::Borrow {
-                                    ty: Box::new(ty),
-                                    borrow: borrow.clone(),
-                                };
-                            }
-                            variables
-                        })
-                }
-                Type::Impl { .. } => DiagnosticResult::fail(ErrorMessage::new(
-                    String::from(
-                        "expected a name for an aspect implementation, not a type constructor",
-                    ),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, &type_ctor.range),
-                )),
+                _ => panic!("should have errored in resolve_type_pattern"),
             },
             Pattern::Impl {
                 impl_token,
                 fields: provided_fields,
                 ..
             } => match expected_type {
-                Type::Named { .. } => DiagnosticResult::fail(ErrorMessage::new(
-                    String::from("expected a type constructor, not an impl"),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, impl_token),
-                )),
-                Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
-                    String::from("expected a name for a function, not an impl"),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, impl_token),
-                )),
-                Type::Variable { variable, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                    format!(
-                        "expected a name for a variable of type `{}`, not an impl",
-                        variable
-                    ),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, impl_token),
-                )),
-                Type::Primitive(prim) => DiagnosticResult::fail(ErrorMessage::new(
-                    format!(
-                        "expected a name for a variable of type {}, not an impl",
-                        prim
-                    ),
-                    Severity::Error,
-                    Diagnostic::at(self.source_file, impl_token),
-                )),
-                Type::Borrow { ty, borrow } => {
-                    // Add the lifetime to the types inside this borrow.
-                    self.match_and_bind(visible_names, pattern, *ty)
-                        .map(|mut variables| {
-                            for v in variables.values_mut() {
-                                // Mutate the value by replacing it temporarily.
-                                let ty = std::mem::replace(
-                                    &mut v.var_type,
-                                    Type::Primitive(PrimitiveType::Unit),
-                                );
-                                v.var_type = Type::Borrow {
-                                    ty: Box::new(ty),
-                                    borrow: borrow.clone(),
-                                };
-                            }
-                            variables
-                        })
-                }
                 Type::Impl {
                     name: aspect_name,
                     parameters: concrete_type_parameters,
@@ -780,6 +701,7 @@ impl<'a> TypeChecker<'a> {
                                 visible_names,
                                 pattern,
                                 expected_type,
+                                borrow_condition.clone(),
                             ));
                         }
                     }
@@ -803,7 +725,18 @@ impl<'a> TypeChecker<'a> {
                             DiagnosticResult::ok_with_many(result, messages)
                         })
                 }
+                _ => panic!("should have errored in resolve_type_pattern"),
             },
+            Pattern::Borrow { borrowed, .. } => {
+                match expected_type {
+                    Type::Borrow { ty, borrow } => {
+                        // Add the lifetime to the types inside this borrow.
+                        // The `Some(borrow.unwrap())` asserts that `borrow` is Some.
+                        self.match_and_bind(visible_names, &*borrowed, *ty, Some(borrow.unwrap()))
+                    }
+                    _ => panic!("should have errored in resolve_type_pattern"),
+                }
+            }
             Pattern::Unknown(_) => DiagnosticResult::ok(HashMap::new()),
             Pattern::Function { .. } => unimplemented!(),
         }
@@ -887,12 +820,13 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Converts a pattern representing a value or type constructor into a pattern object.
-    /// We know ahead of time what type this value should be.
+    /// We know ahead of time what type this value should be, but we have no guarantee that the given
+    /// pattern really matches this type. If a type mismatch is found, an error is emitted.
     fn resolve_type_pattern(
         &self,
         visible_names: &VisibleNames,
         expression: ExprPatP,
-        ty: Type,
+        expected_type: Type,
     ) -> DiagnosticResult<Pattern> {
         match expression {
             ExprPatP::Variable(identifier) => {
@@ -909,9 +843,63 @@ impl<'a> TypeChecker<'a> {
                     ))
                 }
             }
-            ExprPatP::Immediate { range, value } => {
-                DiagnosticResult::ok(Pattern::Constant { range, value })
-            }
+            ExprPatP::Immediate { range, value } => match expected_type {
+                Type::Borrow { ty, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "expected a borrow of a value of type {}, not `{}`",
+                        ty,
+                        get_constant_type(&value)
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &range),
+                )),
+                Type::Named { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "expected a type constructor, not `{}`",
+                        get_constant_type(&value)
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &range),
+                )),
+                Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
+                    format!("expected a function, not `{}`", get_constant_type(&value)),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &range),
+                )),
+                Type::Variable { variable, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "expected a value of type `{}`, not `{}`",
+                        variable,
+                        get_constant_type(&value)
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &range),
+                )),
+                Type::Primitive(prim) => {
+                    // We need to check that the expected type and the value's type are the same.
+                    if prim == get_constant_type(&value) {
+                        DiagnosticResult::ok(Pattern::Constant { range, value })
+                    } else {
+                        DiagnosticResult::fail(ErrorMessage::new(
+                            format!(
+                                "expected a value of type `{}`, not `{}`",
+                                prim,
+                                get_constant_type(&value)
+                            ),
+                            Severity::Error,
+                            Diagnostic::at(self.source_file, &range),
+                        ))
+                    }
+                }
+                Type::Impl { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    format!(
+                        "expected an aspect implementation, not `{}`",
+                        get_constant_type(&value),
+                    ),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &range),
+                )),
+            },
             ExprPatP::Apply(left, _right) => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("expected a type constructor pattern"),
                 Severity::Error,
@@ -933,11 +921,41 @@ impl<'a> TypeChecker<'a> {
                 Severity::Error,
                 Diagnostic::at(self.source_file, &open_bracket),
             )),
-            ExprPatP::Borrow { borrow_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
-                String::from("borrows are not allowed in patterns"),
-                Severity::Error,
-                Diagnostic::at(self.source_file, &borrow_token),
-            )),
+            ExprPatP::Borrow {
+                borrow_token, expr, ..
+            } => match expected_type {
+                Type::Borrow { ty, .. } => self
+                    .resolve_type_pattern(visible_names, *expr, *ty)
+                    .map(|pat| Pattern::Borrow {
+                        borrow_token,
+                        borrowed: Box::new(pat),
+                    }),
+                Type::Named { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    String::from("expected a type constructor, not a borrow"),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &borrow_token),
+                )),
+                Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
+                    String::from("expected a function, not a borrow"),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &borrow_token),
+                )),
+                Type::Variable { variable, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    format!("expected a value of type `{}`, not a borrow", variable),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &borrow_token),
+                )),
+                Type::Primitive(prim) => DiagnosticResult::fail(ErrorMessage::new(
+                    format!("expected a value of type {}, not a borrow", prim),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &borrow_token),
+                )),
+                Type::Impl { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                    String::from("expected an aspect implementation, not a borrow"),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &borrow_token),
+                )),
+            },
             ExprPatP::Copy { copy_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("copies are not allowed in patterns"),
                 Severity::Error,
@@ -949,123 +967,187 @@ impl<'a> TypeChecker<'a> {
                 ..
             } => resolve_type_constructor(self.source_file, &data_constructor, visible_names).bind(
                 |type_ctor| {
-                    let field_types = if let Type::Named { name, parameters } = ty {
-                        match &self.project_index[&name.source_file].types[&name.name].decl_type {
-                            TypeDeclarationTypeI::Data(datai) => datai
-                                .type_ctor
-                                .fields
-                                .iter()
-                                .map(|(name, ty)| {
-                                    (
-                                        name,
-                                        replace_type_variables(
-                                            ty.clone(),
-                                            &datai.type_params,
-                                            &parameters,
-                                        ),
-                                    )
-                                })
-                                .collect::<Vec<_>>(),
-                            TypeDeclarationTypeI::Enum(enumi) => enumi
-                                .variants
-                                .iter()
-                                .find(|variant| {
-                                    variant.name.name == type_ctor.variant.as_deref().unwrap()
-                                })
-                                .unwrap()
-                                .type_ctor
-                                .fields
-                                .iter()
-                                .map(|(name, ty)| {
-                                    (
-                                        name,
-                                        replace_type_variables(
-                                            ty.clone(),
-                                            &enumi.type_params,
-                                            &parameters,
-                                        ),
-                                    )
-                                })
-                                .collect::<Vec<_>>(),
-                        }
-                    } else {
-                        panic!("ty was {}", ty)
-                    };
+                    match expected_type {
+                        Type::Named { name, parameters } => {
+                            let field_types = match &self.project_index[&name.source_file].types
+                                [&name.name]
+                                .decl_type
+                            {
+                                TypeDeclarationTypeI::Data(datai) => datai
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .map(|(name, ty)| {
+                                        (
+                                            name,
+                                            replace_type_variables(
+                                                ty.clone(),
+                                                &datai.type_params,
+                                                &parameters,
+                                            ),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                                TypeDeclarationTypeI::Enum(enumi) => enumi
+                                    .variants
+                                    .iter()
+                                    .find(|variant| {
+                                        variant.name.name == type_ctor.variant.as_deref().unwrap()
+                                    })
+                                    .unwrap()
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .map(|(name, ty)| {
+                                        (
+                                            name,
+                                            replace_type_variables(
+                                                ty.clone(),
+                                                &enumi.type_params,
+                                                &parameters,
+                                            ),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                            };
 
-                    let fields = self.resolve_destructure(visible_names, fields, &field_types);
+                            let fields =
+                                self.resolve_destructure(visible_names, fields, &field_types);
 
-                    fields.map(|fields| {
-                        // Find the fields on the type, and cache their types.
-                        Pattern::TypeConstructor {
-                            type_ctor,
-                            fields: fields
-                                .into_iter()
-                                .map(|(name, pat)| {
-                                    let ty = field_types
-                                        .iter()
-                                        .find_map(|(fname, ftype)| {
-                                            if **fname == name {
-                                                Some(ftype.clone())
-                                            } else {
-                                                None
-                                            }
+                            fields.map(|fields| {
+                                // Find the fields on the type, and cache their types.
+                                Pattern::TypeConstructor {
+                                    type_ctor,
+                                    fields: fields
+                                        .into_iter()
+                                        .map(|(name, pat)| {
+                                            let ty = field_types
+                                                .iter()
+                                                .find_map(|(fname, ftype)| {
+                                                    if **fname == name {
+                                                        Some(ftype.clone())
+                                                    } else {
+                                                        None
+                                                    }
+                                                })
+                                                .unwrap();
+                                            (name, ty, pat)
                                         })
-                                        .unwrap();
-                                    (name, ty, pat)
-                                })
-                                .collect(),
+                                        .collect(),
+                                }
+                            })
                         }
-                    })
+                        Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
+                            String::from("expected a function, not a type constructor"),
+                            Severity::Error,
+                            Diagnostic::at(self.source_file, &type_ctor.range),
+                        )),
+                        Type::Variable { variable, .. } => {
+                            DiagnosticResult::fail(ErrorMessage::new(
+                                format!(
+                                    "expected a value of type `{}`, not a type constructor",
+                                    variable
+                                ),
+                                Severity::Error,
+                                Diagnostic::at(self.source_file, &type_ctor.range),
+                            ))
+                        }
+                        Type::Primitive(prim) => DiagnosticResult::fail(ErrorMessage::new(
+                            format!("expected a value of type {}, not a type constructor", prim),
+                            Severity::Error,
+                            Diagnostic::at(self.source_file, &type_ctor.range),
+                        )),
+                        Type::Borrow { ty, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                            format!(
+                                "expected a borrow of a value of type {}, not a type constructor",
+                                ty
+                            ),
+                            Severity::Error,
+                            Diagnostic::at(self.source_file, &type_ctor.range),
+                        )),
+                        Type::Impl { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                            String::from(
+                                "expected an aspect implementation, not a type constructor",
+                            ),
+                            Severity::Error,
+                            Diagnostic::at(self.source_file, &type_ctor.range),
+                        )),
+                    }
                 },
             ),
             ExprPatP::Impl { .. } => unreachable!(),
             ExprPatP::ImplPattern {
                 impl_token, fields, ..
             } => {
-                let field_types = if let Type::Impl { name, parameters } = &ty {
-                    let aspecti = &self.project_index[&name.source_file].aspects[&name.name];
-                    aspecti
-                        .definitions
-                        .iter()
-                        .map(|def| {
-                            (
-                                &def.name,
-                                replace_type_variables(
-                                    def.symbol_type.clone(),
-                                    &aspecti.type_variables,
-                                    parameters,
-                                ),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    unreachable!()
-                };
-
-                let fields = self.resolve_destructure(visible_names, fields, &field_types);
-
-                fields.map(|fields| {
-                    // Find the fields on the type, and cache their types.
-                    Pattern::Impl {
-                        impl_token,
-                        fields: fields
-                            .into_iter()
-                            .map(|(name, pat)| {
-                                let ty = field_types
-                                    .iter()
-                                    .find_map(|(fname, ftype)| {
-                                        if **fname == name {
-                                            Some(ftype.clone())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .unwrap();
-                                (name, ty, pat)
+                match &expected_type {
+                    Type::Impl { name, parameters } => {
+                        let aspecti = &self.project_index[&name.source_file].aspects[&name.name];
+                        let field_types = aspecti
+                            .definitions
+                            .iter()
+                            .map(|def| {
+                                (
+                                    &def.name,
+                                    replace_type_variables(
+                                        def.symbol_type.clone(),
+                                        &aspecti.type_variables,
+                                        parameters,
+                                    ),
+                                )
                             })
-                            .collect(),
+                            .collect::<Vec<_>>();
+
+                        let fields = self.resolve_destructure(visible_names, fields, &field_types);
+
+                        fields.map(|fields| {
+                            // Find the fields on the type, and cache their types.
+                            Pattern::Impl {
+                                impl_token,
+                                fields: fields
+                                    .into_iter()
+                                    .map(|(name, pat)| {
+                                        let ty = field_types
+                                            .iter()
+                                            .find_map(|(fname, ftype)| {
+                                                if **fname == name {
+                                                    Some(ftype.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .unwrap();
+                                        (name, ty, pat)
+                                    })
+                                    .collect(),
+                            }
+                        })
                     }
-                })
+                    Type::Named { .. } => DiagnosticResult::fail(ErrorMessage::new(
+                        String::from("expected a type constructor, not an impl"),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &impl_token),
+                    )),
+                    Type::Function(_, _) => DiagnosticResult::fail(ErrorMessage::new(
+                        String::from("expected a function, not an impl"),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &impl_token),
+                    )),
+                    Type::Variable { variable, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                        format!("expected a value of type `{}`, not an impl", variable),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &impl_token),
+                    )),
+                    Type::Primitive(prim) => DiagnosticResult::fail(ErrorMessage::new(
+                        format!("expected a value of type {}, not an impl", prim),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &impl_token),
+                    )),
+                    Type::Borrow { ty, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                        format!("expected a borrow of a value of type {}, not an impl", ty),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &impl_token),
+                    )),
+                }
             }
         }
     }
@@ -1170,6 +1252,14 @@ impl<'a> TypeChecker<'a> {
             },
             std::mem::take(&mut self.messages),
         )
+    }
+}
+
+fn get_constant_type(constant: &ConstantValue) -> PrimitiveType {
+    match constant {
+        ConstantValue::Unit => PrimitiveType::Unit,
+        ConstantValue::Bool(_) => PrimitiveType::Bool,
+        ConstantValue::Int(_) => PrimitiveType::Int,
     }
 }
 

@@ -14,7 +14,7 @@ pub fn monomorphise<'ctx>(
     let mut result = def.clone();
 
     let mono = |ty: &mut Type| {
-        *ty = replace_type_variables(ty.clone(), &def.type_variables, &func.mono.type_parameters);
+        *ty = replace_type_variables(ty.clone(), &def.type_variables, func.mono.type_parameters());
     };
 
     // Monomorphise all the types inside the definition.

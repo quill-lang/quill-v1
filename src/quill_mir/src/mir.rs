@@ -251,7 +251,9 @@ impl ControlFlowGraph {
 
         // If this assert fails, then some blocks in the CFG are never reached from the entry point.
         // This could happen if the MIR generation does not correctly represent the HIR's control flow.
-        assert!(edges.is_empty());
+        if !edges.is_empty() {
+            panic!("edges: {:?}\ncfg: {}", edges, self);
+        }
 
         // Now, reorder the basic block IDs according to this new order in `l`.
         // This map maps from old block IDs to new block IDs.

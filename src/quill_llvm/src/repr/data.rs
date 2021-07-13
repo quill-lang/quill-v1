@@ -479,7 +479,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         } else if let Some(repr) = self.reprs.repr(replace_type_variables(
             field_type,
             type_params,
-            &mono.type_parameters,
+            mono.type_parameters(),
         )) {
             self.add_field_raw(field_name, Some(repr));
         } else {
@@ -533,22 +533,18 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
     ) {
         for (field_name, field_ty) in &type_ctor.fields {
             let field_ty =
-                replace_type_variables(field_ty.clone(), type_params, &mono.type_parameters);
+                replace_type_variables(field_ty.clone(), type_params, mono.type_parameters());
             let indirect = match &field_ty {
                 Type::Named { name, parameters } => {
                     indirected_types.contains(&MonomorphisedItem::Type(MonomorphisedType {
                         name: name.clone(),
-                        mono: MonomorphisationParameters {
-                            type_parameters: parameters.clone(),
-                        },
+                        mono: MonomorphisationParameters::new(parameters.clone()),
                     }))
                 }
                 Type::Impl { name, parameters } => {
                     indirected_types.contains(&MonomorphisedItem::Aspect(MonomorphisedAspect {
                         name: name.clone(),
-                        mono: MonomorphisationParameters {
-                            type_parameters: parameters.clone(),
-                        },
+                        mono: MonomorphisationParameters::new(parameters.clone()),
                     }))
                 }
                 _ => false,

@@ -164,6 +164,7 @@ fn create_cfg(
                         Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
                         arg_pattern,
                         arg_type.clone(),
+                        None,
                     )
                 })
                 .map(|result| (result.statements, result.bound_variables));
