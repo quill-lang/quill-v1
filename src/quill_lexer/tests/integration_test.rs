@@ -2,7 +2,7 @@
 fn test_lexer() {
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
-    use quill_source_file::ErrorEmitter;
+    use quill_error::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
     use std::collections::HashMap;
     use std::path::PathBuf;

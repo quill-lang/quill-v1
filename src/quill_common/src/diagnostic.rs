@@ -3,7 +3,7 @@ use std::iter::FromIterator;
 use crate::location::{Location, Range, Ranged, SourceFileIdentifier};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub source_file: SourceFileIdentifier,
     /// If the location is not specified, then the diagnostic refers to the entire file.

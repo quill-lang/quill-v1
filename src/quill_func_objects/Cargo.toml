@@ -18,3 +18,4 @@ quill_type = { path = "../quill_type" }
 quill_parser = { path = "../quill_parser" }
 quill_index = { path = "../quill_index" }
 quill_borrow_check = { path = "../quill_borrow_check" }
+quill_error = { path = "../quill_error" }

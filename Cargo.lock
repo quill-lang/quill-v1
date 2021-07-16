@@ -37,9 +37,18 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.41"
+version = "1.0.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15af2628f6890fe2609a3b91bef4c83450512802e59489f9c1cb1fa5df064a61"
+checksum = "595d3cfa7a60d4555cb5067b99f07142a08ea778de5cf993f7b75c7d8fabc486"
+
+[[package]]
+name = "ariadne"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebdeb4a07877a6acf136e528fdecb31df5e0b152d9b091ace3139d0f2fcb7bde"
+dependencies = [
+ "yansi",
+]
 
 [[package]]
 name = "async-recursion"
@@ -133,9 +142,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.0.68"
+version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a72c244c1ff497a746a7e1fb3d14bd08420ecda70c8f25c7112f2781652d787"
+checksum = "e70cc2f62c6ce1868963827bd677764c62d07c3d9a3e1fb1177ee1a9ab199eb2"
 
 [[package]]
 name = "cfg-if"
@@ -519,9 +528,9 @@ dependencies = [
 
 [[package]]
 name = "instant"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61124eeebbd69b8190558df225adf7e4caafce0d743919e5d6b19652314ec5ec"
+checksum = "bee0328b1209d157ef001c94dd85b4f8f64139adb0eac2659f4b08382b2f474d"
 dependencies = [
  "cfg-if",
 ]
@@ -540,9 +549,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.97"
+version = "0.2.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12b8adadd720df158f4d70dfe7ccc6adb0472d7c55ca83445f6a5ab3e36f8fb6"
+checksum = "320cfe77175da3a483efed4bc0adc1968ca050b098ce4f2f1c13a56626128790"
 
 [[package]]
 name = "libz-sys"
@@ -914,6 +923,7 @@ dependencies = [
  "indicatif",
  "lazy_static",
  "quill_common",
+ "quill_error",
  "quill_source_file",
  "quill_target",
  "quillc_api",
@@ -933,6 +943,7 @@ name = "quill_borrow_check"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_mir",
@@ -950,11 +961,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill_error"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "quill_common",
+ "quill_source_file",
+]
+
+[[package]]
 name = "quill_func_objects"
 version = "0.1.0"
 dependencies = [
  "quill_borrow_check",
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_mir",
@@ -971,6 +992,7 @@ dependencies = [
  "either",
  "multimap",
  "quill_common",
+ "quill_error",
  "quill_lexer",
  "quill_parser",
  "quill_source_file",
@@ -995,6 +1017,7 @@ name = "quill_lexer"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_error",
  "quill_source_file",
  "unicode-normalization",
 ]
@@ -1057,6 +1080,7 @@ version = "0.1.0"
 dependencies = [
  "multimap",
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_parser",
@@ -1070,6 +1094,7 @@ name = "quill_parser"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_error",
  "quill_lexer",
  "quill_source_file",
 ]
@@ -1103,6 +1128,7 @@ version = "0.1.0"
 dependencies = [
  "multimap",
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_parser",
@@ -1492,9 +1518,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c49e3df43841dafb86046472506755d8501c5615673955f6aa17181125d13c37"
+checksum = "54473be61f4ebe4efd09cec9bd5d16fa51d70ea0192213d754d2d500457db110"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1739,6 +1765,12 @@ checksum = "c179869f34fc7c01830d3ce7ea2086bc3a07e0d35289b667d0a8bf910258926c"
 dependencies = [
  "lzma-sys",
 ]
+
+[[package]]
+name = "yansi"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fc79f4a1e39857fc00c3f662cbf2651c771f00e9c15fe2abc341806bd46bd71"
 
 [[package]]
 name = "zip"

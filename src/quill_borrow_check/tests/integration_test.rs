@@ -3,13 +3,13 @@ fn test_borrowck() {
     use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
+    use quill_error::ErrorEmitter;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_mir::to_mir;
     use quill_mir::SourceFileMIR;
     use quill_parser::parse;
-    use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
     use quill_type_deduce::check;
     use std::collections::HashMap;

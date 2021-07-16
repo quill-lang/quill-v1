@@ -1,5 +1,5 @@
 [package]
-name = "quill_parser"
+name = "quill_error"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
 edition = "2018"
@@ -7,7 +7,4 @@ edition = "2018"
 [dependencies]
 quill_common = { path = "../quill_common" }
 quill_source_file = { path = "../quill_source_file" }
-quill_lexer = { path = "../quill_lexer" }
-
-[dev-dependencies]
-quill_error = { path = "../quill_error" }
+ariadne = "^0.1"

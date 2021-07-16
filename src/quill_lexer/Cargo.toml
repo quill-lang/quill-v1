@@ -8,3 +8,6 @@ edition = "2018"
 quill_common = { path = "../quill_common" }
 quill_source_file = { path = "../quill_source_file" }
 unicode-normalization = "0.1.17"
+
+[dev-dependencies]
+quill_error = { path = "../quill_error" }
