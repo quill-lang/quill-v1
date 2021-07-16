@@ -943,6 +943,7 @@ name = "quill_borrow_check"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_mir",
@@ -974,6 +975,7 @@ version = "0.1.0"
 dependencies = [
  "quill_borrow_check",
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_mir",
@@ -990,6 +992,7 @@ dependencies = [
  "either",
  "multimap",
  "quill_common",
+ "quill_error",
  "quill_lexer",
  "quill_parser",
  "quill_source_file",
@@ -1014,6 +1017,7 @@ name = "quill_lexer"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_error",
  "quill_source_file",
  "unicode-normalization",
 ]
@@ -1076,6 +1080,7 @@ version = "0.1.0"
 dependencies = [
  "multimap",
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_parser",
@@ -1089,6 +1094,7 @@ name = "quill_parser"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_error",
  "quill_lexer",
  "quill_source_file",
 ]
@@ -1122,6 +1128,7 @@ version = "0.1.0"
 dependencies = [
  "multimap",
  "quill_common",
+ "quill_error",
  "quill_index",
  "quill_lexer",
  "quill_parser",

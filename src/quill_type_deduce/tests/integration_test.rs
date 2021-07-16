@@ -2,11 +2,11 @@
 fn test_typeck() {
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
+    use quill_error::ErrorEmitter;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_parser::parse;
-    use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
     use std::collections::HashMap;
     use std::path::PathBuf;

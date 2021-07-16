@@ -8,3 +8,6 @@ edition = "2018"
 quill_common = { path = "../quill_common" }
 quill_source_file = { path = "../quill_source_file" }
 quill_lexer = { path = "../quill_lexer" }
+
+[dev-dependencies]
+quill_error = { path = "../quill_error" }

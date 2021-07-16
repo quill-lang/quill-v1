@@ -8,6 +8,7 @@ fn test_convert_func_objects() {
         location::{Location, SourceFileType},
         name::QualifiedName,
     };
+    use quill_error::ErrorEmitter;
     use quill_func_objects::convert_func_objects;
     use quill_index::index_single_file;
     use quill_index::ProjectIndex;
@@ -15,7 +16,6 @@ fn test_convert_func_objects() {
     use quill_mir::to_mir;
     use quill_mir::ProjectMIR;
     use quill_parser::parse;
-    use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
     use quill_type_deduce::check;
     use std::path::PathBuf;

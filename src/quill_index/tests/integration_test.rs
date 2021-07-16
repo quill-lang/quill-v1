@@ -2,9 +2,9 @@
 fn test_index() {
     use quill_common::location::SourceFileIdentifier;
     use quill_common::location::SourceFileType;
+    use quill_error::ErrorEmitter;
     use quill_lexer::lex;
     use quill_parser::parse;
-    use quill_source_file::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
     use std::collections::HashMap;
     use std::path::PathBuf;
