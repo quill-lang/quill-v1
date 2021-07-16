@@ -93,7 +93,10 @@ impl<'fs> ErrorEmitter<'fs> {
             Label::new(diagnostic_to_span(message.diagnostic))
                 .with_message(message.message)
                 .with_priority(10)
-                .with_color(Color::Red),
+                .with_color(match message.severity {
+                    Severity::Error => Color::Red,
+                    Severity::Warning => Color::Yellow,
+                }),
         );
 
         let mut other_builders = Vec::new();
