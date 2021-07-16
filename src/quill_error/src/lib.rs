@@ -96,9 +96,25 @@ impl<'fs> ErrorEmitter<'fs> {
                 .with_color(Color::Red),
         );
 
+        let mut other_builders = Vec::new();
         for help in message.help {
             match help.help_type {
-                HelpType::Help => todo!(),
+                HelpType::Help => {
+                    let builder = Report::<(SourceFileIdentifier, Range<usize>)>::build(
+                        ReportKind::Advice,
+                        help.diagnostic.source_file.clone(),
+                        0,
+                    )
+                    //.with_message(message.message.clone())
+                    .with_label(
+                        Label::new(diagnostic_to_span(help.diagnostic))
+                            .with_message(help.message)
+                            .with_priority(10)
+                            // This is the "advice" colour used by ariadne.
+                            .with_color(Color::Fixed(147)),
+                    );
+                    other_builders.push(builder);
+                }
                 HelpType::Note => {
                     builder = builder.with_label(
                         Label::new(diagnostic_to_span(help.diagnostic))
@@ -116,5 +132,14 @@ impl<'fs> ErrorEmitter<'fs> {
                 cache: HashMap::new(),
             })
             .unwrap();
+        for builder in other_builders {
+            builder
+                .finish()
+                .eprint(PackageFileSystemCache {
+                    fs: self.fs,
+                    cache: HashMap::new(),
+                })
+                .unwrap();
+        }
     }
 }
