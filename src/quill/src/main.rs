@@ -26,7 +26,8 @@ use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, Severity},
     location::{Location, SourceFileIdentifier, SourceFileType},
 };
-use quill_source_file::{ErrorEmitter, PackageFileSystem};
+use quill_error::ErrorEmitter;
+use quill_source_file::PackageFileSystem;
 use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
 };
@@ -185,7 +186,7 @@ impl CompilerLocation {
             style("compiling").green(),
             project_config.project_info.name
         ));
-        progress.enable_steady_tick(50);
+        //progress.enable_steady_tick(50);
 
         let fs = PackageFileSystem::new({
             let mut map = HashMap::new();
