@@ -80,17 +80,17 @@ impl<'fs> ErrorEmitter<'fs> {
             )
         };
 
+        let span = diagnostic_to_span(message.diagnostic.clone());
         let mut builder = Report::<(SourceFileIdentifier, Range<usize>)>::build(
             match message.severity {
                 Severity::Error => ReportKind::Error,
                 Severity::Warning => ReportKind::Warning,
             },
-            message.diagnostic.source_file.clone(),
-            0,
+            message.diagnostic.source_file,
+            span.1.start,
         )
-        //.with_message(message.message.clone())
         .with_label(
-            Label::new(diagnostic_to_span(message.diagnostic))
+            Label::new(span)
                 .with_message(message.message)
                 .with_priority(10)
                 .with_color(match message.severity {
@@ -103,14 +103,14 @@ impl<'fs> ErrorEmitter<'fs> {
         for help in message.help {
             match help.help_type {
                 HelpType::Help => {
+                    let span = diagnostic_to_span(help.diagnostic.clone());
                     let builder = Report::<(SourceFileIdentifier, Range<usize>)>::build(
                         ReportKind::Advice,
-                        help.diagnostic.source_file.clone(),
-                        0,
+                        help.diagnostic.source_file,
+                        span.1.start,
                     )
-                    //.with_message(message.message.clone())
                     .with_label(
-                        Label::new(diagnostic_to_span(help.diagnostic))
+                        Label::new(span)
                             .with_message(help.message)
                             .with_priority(10)
                             // This is the "advice" colour used by ariadne.

@@ -186,6 +186,8 @@ impl CompilerLocation {
             style("compiling").green(),
             project_config.project_info.name
         ));
+        // TODO: re-enable this with a guard so that it doesn't print anything while
+        // we're emitting messages.
         //progress.enable_steady_tick(50);
 
         let fs = PackageFileSystem::new({
