@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use lspower::lsp::*;
 use quill_common::location::Ranged;
@@ -381,8 +381,8 @@ lazy_static::lazy_static! {
             SemanticTokenType::NUMBER,
         ]
     };
-    static ref SEMANTIC_TOKEN_LEGEND: BTreeMap<SemanticTokenType, u32> = {
-        let mut m = BTreeMap::new();
+    static ref SEMANTIC_TOKEN_LEGEND: HashMap<SemanticTokenType, u32> = {
+        let mut m = HashMap::new();
         for (i, value) in SEMANTIC_TOKEN_LEGEND_VEC.iter().enumerate() {
             m.insert(value.clone(), i as u32);
         }
