@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{btree_map::Entry, BTreeMap};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -42,9 +42,9 @@ pub(crate) fn generate_constraints(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
     visible_names: &VisibleNames,
-    args: &HashMap<String, BoundVariable>,
-    mut lambda_variables: HashMap<String, AbstractionVariable>,
-    mut let_variables: HashMap<String, AbstractionVariable>,
+    args: &BTreeMap<String, BoundVariable>,
+    mut lambda_variables: BTreeMap<String, AbstractionVariable>,
+    mut let_variables: BTreeMap<String, AbstractionVariable>,
     expr: ExprPatP,
 ) -> DiagnosticResult<ExprTypeCheck> {
     match expr {
@@ -60,7 +60,7 @@ pub(crate) fn generate_constraints(
                             type_variable: as_variable(&arg.var_type),
                             contents: ExpressionContentsT::Argument(name),
                         },
-                        type_variable_definition_ranges: HashMap::new(),
+                        type_variable_definition_ranges: BTreeMap::new(),
                         assumptions: Assumptions::default(),
                         constraints: Constraints::default(),
                         let_variables,
@@ -72,7 +72,7 @@ pub(crate) fn generate_constraints(
                 if lambda_variables.get(&name.name).is_some() {
                     let type_variable = TypeVariableId::default();
                     let identifier_name = name.clone();
-                    let mut type_variable_definition_ranges = HashMap::new();
+                    let mut type_variable_definition_ranges = BTreeMap::new();
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
@@ -93,7 +93,7 @@ pub(crate) fn generate_constraints(
                 if let_variables.get(&name.name).is_some() {
                     let type_variable = TypeVariableId::default();
                     let identifier_name = name.clone();
-                    let mut type_variable_definition_ranges = HashMap::new();
+                    let mut type_variable_definition_ranges = BTreeMap::new();
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
@@ -137,7 +137,7 @@ pub(crate) fn generate_constraints(
                                 type_variables,
                             },
                         },
-                        type_variable_definition_ranges: HashMap::new(),
+                        type_variable_definition_ranges: BTreeMap::new(),
                         assumptions: Assumptions::default(),
                         constraints: Constraints::default(),
                         let_variables,
@@ -167,7 +167,7 @@ pub(crate) fn generate_constraints(
                     value: ConstantValue::Unit,
                 },
             },
-            type_variable_definition_ranges: HashMap::new(),
+            type_variable_definition_ranges: BTreeMap::new(),
             assumptions: Assumptions::default(),
             constraints: Constraints::default(),
             let_variables,
@@ -184,7 +184,7 @@ pub(crate) fn generate_constraints(
                     value: ConstantValue::Bool(value),
                 },
             },
-            type_variable_definition_ranges: HashMap::new(),
+            type_variable_definition_ranges: BTreeMap::new(),
             assumptions: Assumptions::default(),
             constraints: Constraints::default(),
             let_variables,
@@ -201,7 +201,7 @@ pub(crate) fn generate_constraints(
                     value: ConstantValue::Int(value),
                 },
             },
-            type_variable_definition_ranges: HashMap::new(),
+            type_variable_definition_ranges: BTreeMap::new(),
             assumptions: Assumptions::default(),
             constraints: Constraints::default(),
             let_variables,
@@ -241,7 +241,7 @@ pub(crate) fn generate_constraints(
 
                     // This expression was: left_type right_type : result_type
                     // Constraint: left_type === right_type -> result_type
-                    let mut type_variable_definition_ranges = HashMap::new();
+                    let mut type_variable_definition_ranges = BTreeMap::new();
                     type_variable_definition_ranges.extend(left.type_variable_definition_ranges);
                     type_variable_definition_ranges.extend(right.type_variable_definition_ranges);
                     ExprTypeCheck {
@@ -286,7 +286,7 @@ pub(crate) fn generate_constraints(
             // This introduces new lambda variables, so we'll need to edit the `lambda_variables` map.
             let mut messages = Vec::new();
             let mut param_types = Vec::new();
-            let mut type_variable_definition_ranges = HashMap::new();
+            let mut type_variable_definition_ranges = BTreeMap::new();
 
             for param in &params {
                 let NameP { name, range, .. } = param;
@@ -426,7 +426,7 @@ pub(crate) fn generate_constraints(
                 // This introduces new let variables, so we'll need to edit the `let_variables` map.
                 let mut messages = Vec::new();
                 let new_variable_type = TypeVariableId::default();
-                let mut type_variable_definition_ranges = HashMap::new();
+                let mut type_variable_definition_ranges = BTreeMap::new();
 
                 let NameP { name, range } = &name;
                 match let_variables.entry(name.clone()) {
@@ -499,7 +499,7 @@ pub(crate) fn generate_constraints(
             let mut statements_with_constraints = Vec::new();
             let mut messages = Vec::new();
             let mut let_variables = let_variables;
-            let mut type_variable_definition_ranges = HashMap::new();
+            let mut type_variable_definition_ranges = BTreeMap::new();
             let mut assumptions = Assumptions::default();
             let mut constraints = Constraints::default();
             // The list of new variables is updated whenever we introduce a `let` statement in this block.
@@ -658,11 +658,11 @@ pub(crate) fn generate_constraints(
 
                     // Generate constraints for each field.
                     let mut fields_with_constraints = Vec::new();
-                    let mut type_variable_definition_ranges = HashMap::new();
+                    let mut type_variable_definition_ranges = BTreeMap::new();
                     let mut assumptions = Assumptions::default();
                     let mut constraints = Constraints::default();
 
-                    let mut ids = HashMap::new();
+                    let mut ids = BTreeMap::new();
                     for (i, type_param) in type_params.iter().enumerate() {
                         ids.insert(
                             type_param.name.clone(),
@@ -672,7 +672,7 @@ pub(crate) fn generate_constraints(
                         );
                     }
                     // TODO deal with higher kinded type variables here.
-                    let mut higher_kinded_ids = HashMap::new();
+                    let mut higher_kinded_ids = BTreeMap::new();
 
                     for (field_name, field_expr) in fields.fields {
                         let (result, inner_messages) = generate_constraints(
@@ -883,13 +883,13 @@ pub(crate) fn generate_constraints(
                     },
                 },
                 type_variable_definition_ranges: {
-                    let mut map = HashMap::new();
+                    let mut map = BTreeMap::new();
                     map.insert(type_variable, impl_token);
                     map
                 },
                 assumptions: Assumptions::default(),
                 constraints: Constraints::default(),
-                let_variables: HashMap::new(),
+                let_variables: BTreeMap::new(),
                 new_variables: None,
             })
         }

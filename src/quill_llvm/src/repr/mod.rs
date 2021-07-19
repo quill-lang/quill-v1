@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     convert::{TryFrom, TryInto},
 };
 
@@ -34,11 +34,11 @@ mod llvm_struct;
 /// Stores the representations of all data/struct types in a project, post monomorphisation.
 pub struct Representations<'a, 'ctx> {
     codegen: &'a CodeGenContext<'ctx>,
-    datas: HashMap<MonomorphisedType, DataRepresentation<'ctx>>,
-    enums: HashMap<MonomorphisedType, EnumRepresentation<'ctx>>,
-    func_objects: HashMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
+    datas: BTreeMap<MonomorphisedType, DataRepresentation<'ctx>>,
+    enums: BTreeMap<MonomorphisedType, EnumRepresentation<'ctx>>,
+    func_objects: BTreeMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
     /// The representation of an arbitrary impl for a given aspect.
-    aspects: HashMap<MonomorphisedAspect, DataRepresentation<'ctx>>,
+    aspects: BTreeMap<MonomorphisedAspect, DataRepresentation<'ctx>>,
     /// Use this type for a general function object that you don't know the type of.
     pub general_func_obj_ty: AnyTypeRepresentation<'ctx>,
 }
@@ -76,10 +76,10 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         );
         let mut reprs = Self {
             codegen,
-            datas: HashMap::new(),
-            enums: HashMap::new(),
-            func_objects: HashMap::new(),
-            aspects: HashMap::new(),
+            datas: BTreeMap::new(),
+            enums: BTreeMap::new(),
+            func_objects: BTreeMap::new(),
+            aspects: BTreeMap::new(),
             general_func_obj_ty: AnyTypeRepresentation::new(
                 codegen,
                 general_func_obj_ty.ptr_type(AddressSpace::Generic).into(),

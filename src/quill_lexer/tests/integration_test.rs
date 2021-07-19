@@ -4,13 +4,13 @@ fn test_lexer() {
     use quill_common::location::SourceFileType;
     use quill_error::ErrorEmitter;
     use quill_source_file::PackageFileSystem;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use quill_lexer::lex;
 
     let fs = PackageFileSystem::new({
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(
             "test_project".to_string(),
             PathBuf::from("../../test_sources"),

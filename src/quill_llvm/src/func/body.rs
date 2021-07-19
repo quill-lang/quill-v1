@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    convert::TryFrom,
-};
+use std::{collections::BTreeMap, convert::TryFrom};
 
 use inkwell::{
     basic_block::BasicBlock, debug_info::DIScope, types::BasicTypeEnum, values::CallableValue,
@@ -71,7 +68,7 @@ fn create_real_func_body_cfg<'ctx>(
                 .append_basic_block(ctx.func_value, &id.to_string());
             (*id, block)
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
 
     // Compile each MIR basic block into LLVM IR.
     for (id, block) in std::mem::take(&mut cfg.basic_blocks) {

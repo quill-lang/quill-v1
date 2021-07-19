@@ -1,6 +1,6 @@
 //! Utilities for representations of data types and enum types.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use inkwell::{
     debug_info::{AsDIScope, DIDerivedType, DIFile, DIFlagsConstants, DIType},
@@ -37,8 +37,8 @@ pub struct DataRepresentation<'ctx> {
 
     /// Maps Quill field names to the index of the field in the LLVM struct representation.
     /// If this contains *any* fields, `llvm_repr` is Some.
-    field_indices: HashMap<String, FieldIndex>,
-    field_types: HashMap<String, Type>,
+    field_indices: BTreeMap<String, FieldIndex>,
+    field_types: BTreeMap<String, Type>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -244,12 +244,12 @@ impl<'ctx> DataRepresentation<'ctx> {
     }
 
     /// Get a reference to the data representation's field indices.
-    pub fn field_indices(&self) -> &HashMap<String, FieldIndex> {
+    pub fn field_indices(&self) -> &BTreeMap<String, FieldIndex> {
         &self.field_indices
     }
 
     /// Get a reference to the data representation's field types.
-    pub fn field_types(&self) -> &HashMap<String, Type> {
+    pub fn field_types(&self) -> &BTreeMap<String, Type> {
         &self.field_types
     }
 }
@@ -262,9 +262,9 @@ pub struct EnumRepresentation<'ctx> {
     pub di_type: DIType<'ctx>,
     /// Maps variant names to data representations of the enum variants.
     /// If a discriminant is required in the data representation, it will have field name `.discriminant`.
-    pub variants: HashMap<String, DataRepresentation<'ctx>>,
+    pub variants: BTreeMap<String, DataRepresentation<'ctx>>,
     /// The discriminant values associated with each variant, if there is a discriminant.
-    pub variant_discriminants: HashMap<String, u64>,
+    pub variant_discriminants: BTreeMap<String, u64>,
 }
 
 impl<'ctx> EnumRepresentation<'ctx> {
@@ -305,7 +305,7 @@ impl<'ctx> EnumRepresentation<'ctx> {
                     ),
                 )
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         // Now work out the largest size of an enum variant and use that as the size of the "base" enum case.
         let size = variants
@@ -351,7 +351,7 @@ impl<'ctx> EnumRepresentation<'ctx> {
             .iter()
             .enumerate()
             .map(|(i, variant)| (variant.name.name.clone(), i as u64))
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         let file = source_file_debug_info(codegen, &mono.name.source_file);
         let di_type = codegen.di_builder.create_struct_type(
@@ -445,8 +445,8 @@ pub struct DataRepresentationBuilder<'a, 'ctx> {
     reprs: &'a Representations<'a, 'ctx>,
 
     llvm_field_types: Vec<BasicTypeEnum<'ctx>>,
-    field_indices: HashMap<String, FieldIndex>,
-    field_types: HashMap<String, Type>,
+    field_indices: BTreeMap<String, FieldIndex>,
+    field_types: BTreeMap<String, Type>,
 
     /// If a field's name is in this set, it can be accessed only behind a heap pointer.
     indirect_fields: HashSet<String>,
@@ -457,8 +457,8 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
         Self {
             reprs,
             llvm_field_types: Vec::new(),
-            field_indices: HashMap::new(),
-            field_types: HashMap::new(),
+            field_indices: BTreeMap::new(),
+            field_types: BTreeMap::new(),
             indirect_fields: HashSet::new(),
         }
     }

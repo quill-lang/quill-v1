@@ -1,6 +1,6 @@
 #[test]
 fn test_convert_func_objects() {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use quill_borrow_check::borrow_check;
     use quill_common::location::SourceFileIdentifier;
@@ -21,7 +21,7 @@ fn test_convert_func_objects() {
     use std::path::PathBuf;
 
     let fs = PackageFileSystem::new({
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(
             "test_project".to_string(),
             PathBuf::from("../../test_sources"),
@@ -61,7 +61,7 @@ fn test_convert_func_objects() {
         let (mir, index) = mir.unwrap();
         let mut proj = ProjectMIR {
             files: {
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(file_ident.clone(), mir);
                 map
             },

@@ -5,13 +5,13 @@ fn test_parser() {
     use quill_error::ErrorEmitter;
     use quill_lexer::lex;
     use quill_source_file::PackageFileSystem;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use quill_parser::parse;
 
     let fs = PackageFileSystem::new({
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(
             "test_project".to_string(),
             PathBuf::from("../../test_sources"),

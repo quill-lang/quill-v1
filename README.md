@@ -75,3 +75,7 @@ The same code should behave exactly the same on all platforms, wherever possible
 
 The language is compiled down into machine code, which allows Quill's theoretical maximum speed to be the same as C, C++ or Rust.
 Quill contains a lot of zero-cost abstractions, such as the effect system or the ability to partially apply functions.
+
+### Reproducibility
+
+Builds in Quill are [reproducible](https://reproducible-builds.org/). We aim to increase the determinism of Quill builds as much as possible, but since we rely on non-deterministic technologies such as the Zig compiler, we can't guarantee binary determinism. However, MIR (an intermediate representation of Quill source code) determinism is guaranteed.

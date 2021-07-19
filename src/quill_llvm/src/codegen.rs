@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use inkwell::{
     builder::Builder,
@@ -33,7 +33,7 @@ pub struct BodyCreationContext<'a, 'ctx> {
     pub index: &'a ProjectIndex,
     pub func: MonomorphisedFunction,
     pub func_value: FunctionValue<'ctx>,
-    pub locals: HashMap<LocalVariableName, PointerValue<'ctx>>,
+    pub locals: BTreeMap<LocalVariableName, PointerValue<'ctx>>,
     pub di_file: DIFile<'ctx>,
 }
 

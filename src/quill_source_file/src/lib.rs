@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{btree_map::Entry, BTreeMap},
     fmt::Debug,
     io::Read,
     path::{Path, PathBuf},
@@ -42,8 +42,8 @@ impl SourceFile {
 /// A tree of source files and other modules.
 #[derive(Debug, Default)]
 pub struct Module {
-    pub submodules: HashMap<String, Module>,
-    pub source_files: HashMap<String, Result<SourceFile, SourceFileLoadError>>,
+    pub submodules: BTreeMap<String, Module>,
+    pub source_files: BTreeMap<String, Result<SourceFile, SourceFileLoadError>>,
 }
 
 /// Represents the file structure of an entire package on disk.
@@ -52,13 +52,13 @@ pub struct Module {
 /// or something else of that kind.
 pub struct PackageFileSystem {
     /// Maps project names (e.g. `core`) to the path their sources (and the `quill.toml` file) are stored at.
-    pub project_directories: HashMap<String, PathBuf>,
+    pub project_directories: BTreeMap<String, PathBuf>,
     root_module: RwLock<Module>,
 }
 
 impl PackageFileSystem {
     /// TODO: Make only one project_directories map in `quill` and send it to `quillc`.
-    pub fn new(project_directories: HashMap<String, PathBuf>) -> Self {
+    pub fn new(project_directories: BTreeMap<String, PathBuf>) -> Self {
         Self {
             project_directories,
             root_module: RwLock::new(Module::default()),

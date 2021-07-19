@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::collections::{btree_map::Entry, BTreeMap, VecDeque};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -58,7 +58,7 @@ pub(crate) fn solve_type_constraints(
         source_file,
         project_index,
         high_priority_constraints,
-        HashMap::<TypeVariableId, TypeVariable>::new(),
+        BTreeMap::<TypeVariableId, TypeVariable>::new(),
     )
     .bind(|substitution| {
         solve_type_constraint_queue(
@@ -93,8 +93,8 @@ fn solve_type_constraint_queue(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
     mut constraint_queue: VecDeque<(TypeVariable, Constraint)>,
-    mut substitution: HashMap<TypeVariableId, TypeVariable>,
-) -> DiagnosticResult<HashMap<TypeVariableId, TypeVariable>> {
+    mut substitution: BTreeMap<TypeVariableId, TypeVariable>,
+) -> DiagnosticResult<BTreeMap<TypeVariableId, TypeVariable>> {
     //dbg!(&constraint_queue);
     while let Some((type_variable, constraint)) = constraint_queue.pop_front() {
         // println!(
@@ -158,7 +158,7 @@ struct InfiniteTypeError {
 /// If an infinite type was found, the substitution referencing it is removed from the substitution,
 /// so that error messages do not stack overflow trying to print the infinite type.
 fn fix_infinite_type(
-    substitution: &mut HashMap<TypeVariableId, TypeVariable>,
+    substitution: &mut BTreeMap<TypeVariableId, TypeVariable>,
 ) -> Result<(), InfiniteTypeError> {
     let mut to_remove = Vec::new();
     for (k, v) in substitution.iter() {
@@ -309,7 +309,7 @@ fn process_infinite_type_error(
     source_file: &SourceFileIdentifier,
     error: InfiniteTypeError,
     reason: ConstraintEqualityReason,
-    substitution: HashMap<TypeVariableId, TypeVariable>,
+    substitution: BTreeMap<TypeVariableId, TypeVariable>,
 ) -> ErrorMessage {
     let mut ty_printer = TypeVariablePrinter::new(substitution);
 
@@ -334,7 +334,7 @@ fn process_unification_error(
     source_file: &SourceFileIdentifier,
     error: UnificationError,
     reason: ConstraintEqualityReason,
-    substitution: HashMap<TypeVariableId, TypeVariable>,
+    substitution: BTreeMap<TypeVariableId, TypeVariable>,
 ) -> ErrorMessage {
     let mut ty_printer = TypeVariablePrinter::new(substitution);
 
@@ -373,7 +373,7 @@ fn process_unification_error(
 }
 
 fn apply_substitution_to_constraints(
-    mgu: &HashMap<TypeVariableId, TypeVariable>,
+    mgu: &BTreeMap<TypeVariableId, TypeVariable>,
     constraint_queue: &mut VecDeque<(TypeVariable, Constraint)>,
 ) {
     for (ty, constraint) in constraint_queue {
@@ -384,7 +384,7 @@ fn apply_substitution_to_constraints(
     }
 }
 
-fn apply_substitution(sub: &HashMap<TypeVariableId, TypeVariable>, ty: &mut TypeVariable) {
+fn apply_substitution(sub: &BTreeMap<TypeVariableId, TypeVariable>, ty: &mut TypeVariable) {
     if let TypeVariable::Unknown { id } = ty {
         if let Some(sub_value) = sub.get(id) {
             *ty = sub_value.clone();
@@ -441,7 +441,7 @@ fn most_general_unifier(
     project_index: &ProjectIndex,
     expected: TypeVariable,
     actual: TypeVariable,
-) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
+) -> Result<BTreeMap<TypeVariableId, TypeVariable>, UnificationError> {
     // If one of them is an unknown type variable, just set it to the other one.
     match expected {
         TypeVariable::Named {
@@ -458,7 +458,7 @@ fn most_general_unifier(
                     if left_name == right_name {
                         // Unify the type parameters.
                         // The lists must have equal length, since the names matched.
-                        let mut mgu = HashMap::new();
+                        let mut mgu = BTreeMap::new();
                         for (left_param, right_param) in
                             left_parameters.into_iter().zip(right_parameters)
                         {
@@ -481,7 +481,7 @@ fn most_general_unifier(
                     }
                 }
                 TypeVariable::Unknown { id: right } => {
-                    let mut map = HashMap::new();
+                    let mut map = BTreeMap::new();
                     map.insert(
                         right,
                         TypeVariable::Named {
@@ -519,7 +519,7 @@ fn most_general_unifier(
             }
         }
         TypeVariable::Unknown { id } => {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(id, actual);
             Ok(map)
         }
@@ -532,7 +532,7 @@ fn most_general_unifier(
                     unify(project_index, mgu1, mgu2)
                 }
                 TypeVariable::Unknown { id: right } => {
-                    let mut map = HashMap::new();
+                    let mut map = BTreeMap::new();
                     map.insert(right, TypeVariable::Function(left_param, left_result));
                     Ok(map)
                 }
@@ -557,7 +557,7 @@ fn most_general_unifier(
                 ..
             } => {
                 if other_variable == variable {
-                    Ok(HashMap::new())
+                    Ok(BTreeMap::new())
                 } else {
                     Err(UnificationError::VariableNameMismatch {
                         name: variable,
@@ -566,7 +566,7 @@ fn most_general_unifier(
                 }
             }
             TypeVariable::Unknown { id: right } => {
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     right,
                     TypeVariable::Variable {
@@ -580,13 +580,13 @@ fn most_general_unifier(
         },
         TypeVariable::Primitive(prim) => match actual {
             TypeVariable::Unknown { id } => {
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(id, TypeVariable::Primitive(prim));
                 Ok(map)
             }
             TypeVariable::Primitive(actual) => {
                 if prim == actual {
-                    Ok(HashMap::new())
+                    Ok(BTreeMap::new())
                 } else {
                     Err(UnificationError::ExpectedDifferent {
                         expected: TypeVariable::Primitive(prim),
@@ -601,7 +601,7 @@ fn most_general_unifier(
         },
         TypeVariable::Borrow { ty } => match actual {
             TypeVariable::Unknown { id } => {
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(id, TypeVariable::Borrow { ty });
                 Ok(map)
             }
@@ -627,7 +627,7 @@ fn most_general_unifier(
                     if left_name == right_name {
                         // Unify the type parameters.
                         // The lists must have equal length, since the names matched.
-                        let mut mgu = HashMap::new();
+                        let mut mgu = BTreeMap::new();
                         for (left_param, right_param) in
                             left_parameters.into_iter().zip(right_parameters)
                         {
@@ -650,7 +650,7 @@ fn most_general_unifier(
                     }
                 }
                 TypeVariable::Unknown { id: right } => {
-                    let mut map = HashMap::new();
+                    let mut map = BTreeMap::new();
                     map.insert(
                         right,
                         TypeVariable::Impl {
@@ -692,9 +692,9 @@ fn most_general_unifier(
 
 fn unify(
     project_index: &ProjectIndex,
-    mut a: HashMap<TypeVariableId, TypeVariable>,
-    b: HashMap<TypeVariableId, TypeVariable>,
-) -> Result<HashMap<TypeVariableId, TypeVariable>, UnificationError> {
+    mut a: BTreeMap<TypeVariableId, TypeVariable>,
+    b: BTreeMap<TypeVariableId, TypeVariable>,
+) -> Result<BTreeMap<TypeVariableId, TypeVariable>, UnificationError> {
     for (id, v) in b {
         match a.entry(id) {
             Entry::Occupied(occupied) => {

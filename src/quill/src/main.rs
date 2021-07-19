@@ -11,7 +11,7 @@
 //! - (no suffix): types have been deduced and references have been resolved.
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     fmt::Display,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -191,7 +191,7 @@ impl CompilerLocation {
         //progress.enable_steady_tick(50);
 
         let fs = PackageFileSystem::new({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(
                 project_config.project_info.name.clone(),
                 invocation.build_info.code_folder.clone(),
@@ -360,7 +360,7 @@ fn gen_project_config(args: &ArgMatches<'_>) -> ProjectConfig {
     // Check that the code folder contains a `quill.toml` file.
     // TODO check parent directories to see if we're in a subfolder of a Quill project.
 
-    let dummy_fs = PackageFileSystem::new(HashMap::new());
+    let dummy_fs = PackageFileSystem::new(BTreeMap::new());
 
     let project_info = if let Ok(project_config_str) = std::fs::read(code_folder.join("quill.toml"))
     {

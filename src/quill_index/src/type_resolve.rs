@@ -2,7 +2,7 @@
 //! Use this for the intermediate type index, not for the main index.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -36,7 +36,7 @@ pub(crate) fn resolve_typep(
     source_file: &SourceFileIdentifier,
     typep: &TypeP,
     type_params: &HashSet<String>,
-    visible_types_and_aspects: &HashMap<&str, ForeignItemDeclarationC<'_>>,
+    visible_types_and_aspects: &BTreeMap<&str, ForeignItemDeclarationC<'_>>,
 ) -> DiagnosticResult<Type> {
     match typep {
         TypeP::Named { identifier, params } => params
@@ -106,7 +106,7 @@ pub(crate) fn resolve_typep(
 pub(crate) fn resolve_type_identifier(
     source_file: &SourceFileIdentifier,
     identifier: &IdentifierP,
-    visible_types_and_aspects: &HashMap<&str, ForeignItemDeclarationC<'_>>,
+    visible_types_and_aspects: &BTreeMap<&str, ForeignItemDeclarationC<'_>>,
     parameters: Vec<Type>,
     impl_token: Option<Range>,
 ) -> DiagnosticResult<Type> {

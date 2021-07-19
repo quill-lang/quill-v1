@@ -6,7 +6,7 @@ mod expr;
 pub mod mir;
 mod pattern_match;
 
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::BTreeMap, fmt::Display};
 
 use quill_common::{location::SourceFileIdentifier, name::QualifiedName};
 use quill_index::ProjectIndex;
@@ -14,7 +14,7 @@ use quill_type_deduce::hir::SourceFileHIR;
 
 #[derive(Debug)]
 pub struct ProjectMIR {
-    pub files: HashMap<SourceFileIdentifier, SourceFileMIR>,
+    pub files: BTreeMap<SourceFileIdentifier, SourceFileMIR>,
     /// The qualified name where the "main" function is.
     pub entry_point: QualifiedName,
     pub index: ProjectIndex,
@@ -32,7 +32,7 @@ impl Display for ProjectMIR {
 
 #[derive(Debug)]
 pub struct SourceFileMIR {
-    pub definitions: HashMap<String, mir::DefinitionM>,
+    pub definitions: BTreeMap<String, mir::DefinitionM>,
 }
 
 impl Display for SourceFileMIR {

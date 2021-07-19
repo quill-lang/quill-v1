@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    ops::Deref,
-};
+use std::{collections::BTreeMap, ops::Deref};
 
 use inkwell::{types::BasicType, values::PointerValue, AddressSpace};
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
@@ -21,7 +18,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     index: &ProjectIndex,
     reprs: &Representations<'_, 'ctx>,
-    locals: &HashMap<LocalVariableName, PointerValue<'ctx>>,
+    locals: &BTreeMap<LocalVariableName, PointerValue<'ctx>>,
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     rvalue: &Rvalue,
 ) -> Option<PointerValue<'ctx>> {
@@ -389,7 +386,7 @@ pub fn get_pointer_to_rvalue_arg<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     index: &ProjectIndex,
     reprs: &Representations<'_, 'ctx>,
-    locals: &HashMap<LocalVariableName, PointerValue<'ctx>>,
+    locals: &BTreeMap<LocalVariableName, PointerValue<'ctx>>,
     local_variable_names: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     rvalue: &Rvalue,
 ) -> Option<PointerValue<'ctx>> {

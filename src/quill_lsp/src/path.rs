@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     path::{Component, Path, PathBuf},
 };
 
@@ -39,7 +39,7 @@ pub fn path_to_file(root_module: String, path: &Path) -> SourceFileIdentifier {
     }
 }
 
-pub fn file_to_url(project_roots: &HashMap<String, PathBuf>, file: SourceFileIdentifier) -> Url {
+pub fn file_to_url(project_roots: &BTreeMap<String, PathBuf>, file: SourceFileIdentifier) -> Url {
     let mut iter = file
         .module
         .segments

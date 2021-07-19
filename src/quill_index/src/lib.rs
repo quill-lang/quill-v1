@@ -1,7 +1,7 @@
 mod main_index;
 mod type_index;
 pub(crate) mod type_resolve;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub use main_index::*;
 
@@ -23,7 +23,7 @@ pub fn index_single_file(
 }
 
 pub fn index_project(
-    files: &HashMap<SourceFileIdentifier, FileP>,
+    files: &BTreeMap<SourceFileIdentifier, FileP>,
 ) -> DiagnosticResult<ProjectIndex> {
     let project_types_cache =
         DiagnosticResult::sequence_unfail(files.iter().map(|(file, parsed)| {

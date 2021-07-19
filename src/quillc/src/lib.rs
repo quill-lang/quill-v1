@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
@@ -31,7 +31,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
     println!("status parsed project config");
 
     let fs = Arc::new(PackageFileSystem::new({
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(
             project_config.name.clone(),
             invocation.build_info.code_folder.clone(),
@@ -56,7 +56,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
                 .push(quill_lexer::lex(&fs, file_ident).map(|lexed| (file_ident.clone(), lexed)));
         }
         DiagnosticResult::sequence_unfail(results)
-            .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+            .map(|results| results.into_iter().collect::<BTreeMap<_, _>>())
             .deny()
     };
 
@@ -70,7 +70,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
             DiagnosticResult::sequence_unfail(lexed.into_iter().map(|(file, lexed)| {
                 quill_parser::parse(lexed, &file).map(|parsed| (file, parsed))
             }))
-            .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+            .map(|results| results.into_iter().collect::<BTreeMap<_, _>>())
             .deny()
         });
 
@@ -123,7 +123,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
                                 .map(|mir| (file_ident, mir))
                         },
                     ))
-                    .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                    .map(|results| results.into_iter().collect::<BTreeMap<_, _>>())
                     .deny()
                     .map(|result| (result, index))
                 })

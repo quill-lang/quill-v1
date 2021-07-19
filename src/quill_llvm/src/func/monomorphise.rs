@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_mir::mir::{DefinitionBodyM, DefinitionM, StatementKind};
 use quill_type::Type;
@@ -60,7 +60,7 @@ pub fn monomorphise<'ctx>(
             .local_variable_names
             .iter()
             .map(|(name, info)| (*name, reprs.repr(info.ty.clone())))
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         for block in cfg.basic_blocks.values_mut() {
             let mut stmts = Vec::new();

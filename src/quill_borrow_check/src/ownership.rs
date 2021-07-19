@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -36,18 +36,18 @@ enum OwnershipStatus {
     Conditional {
         /// Originally, this object is considered 'owned'. But if we pass through the given basic blocks, its ownership
         /// status is considered 'moved' into the given range.
-        moved_into_blocks: HashMap<BasicBlockId, Range>,
+        moved_into_blocks: BTreeMap<BasicBlockId, Range>,
         /// If we pass through the given blocks, its ownership status is considered 'destructured'.
         /// We must free its memory, but not call its drop code.
-        destructured_in_blocks: HashMap<BasicBlockId, Range>,
+        destructured_in_blocks: BTreeMap<BasicBlockId, Range>,
         /// Through these paths, the object is still owned. Drop and free must be called.
-        not_moved_blocks: HashMap<BasicBlockId, Range>,
+        not_moved_blocks: BTreeMap<BasicBlockId, Range>,
     },
 }
 
 #[derive(Clone)]
 struct OwnershipStatuses {
-    locals: HashMap<LocalVariableName, OwnershipStatus>,
+    locals: BTreeMap<LocalVariableName, OwnershipStatus>,
 }
 
 /// Checks whether data is owned when it is used or referenced.
@@ -345,7 +345,7 @@ fn collate_statuses(
     let flattened =
         branch_statuses
             .into_iter()
-            .fold(HashMap::new(), |mut acc, (block, statuses)| {
+            .fold(BTreeMap::new(), |mut acc, (block, statuses)| {
                 for (k, v) in statuses.locals {
                     acc.entry(k).or_insert_with(Vec::new).push((block, v));
                 }
@@ -373,9 +373,9 @@ fn collate_statuses_single(
     // where the variable was defined.
     let mut not_initialised_but_defined_at = None;
 
-    let mut moved_into_blocks = HashMap::new();
-    let mut destructured_in_blocks = HashMap::new();
-    let mut not_moved_blocks = HashMap::new();
+    let mut moved_into_blocks = BTreeMap::new();
+    let mut destructured_in_blocks = BTreeMap::new();
+    let mut not_moved_blocks = BTreeMap::new();
 
     for (block, status) in branch_statuses {
         match status {
