@@ -215,5 +215,7 @@ pub fn find_all_source_files(
             ));
         }
     }
+    // Sort the list of source files so that the build is completely reproducible.
+    result.sort_unstable();
     result
 }
