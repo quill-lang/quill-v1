@@ -7,7 +7,7 @@ use crate::location::{Range, SourceFileIdentifier, SourceFileType};
 /// This should not be used for qualified identifiers, since in this case we need to also keep track
 /// of where the identifier was written; this type is concerned only with the name itself.
 /// This implements Ord to make Quill builds reproducible.
-#[derive(Clone, Eq, Ord)]
+#[derive(Clone)]
 pub struct QualifiedName {
     /// The source file path that the name was defined at, not the path at which the name was used.
     pub source_file: SourceFileIdentifier,
@@ -23,13 +23,23 @@ impl PartialEq for QualifiedName {
     }
 }
 
+impl Eq for QualifiedName {}
+
 impl PartialOrd for QualifiedName {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if let Some(result) = self.source_file.partial_cmp(&other.source_file) {
-            Some(result)
-        } else {
-            self.name.partial_cmp(&other.name)
-        }
+        Some(
+            self.source_file
+                .cmp(&other.source_file)
+                .then(self.name.cmp(&other.name)),
+        )
+    }
+}
+
+impl Ord for QualifiedName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.source_file
+            .cmp(&other.source_file)
+            .then(self.name.cmp(&other.name))
     }
 }
 
