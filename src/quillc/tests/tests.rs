@@ -24,6 +24,7 @@ include!(concat!(env!("OUT_DIR"), "/tests.rs"));
 fn build_determinism() {
     let code_folder = PathBuf::from("../../stdlib/core").canonicalize().unwrap();
     let build_folder = code_folder.join("build");
+    let other_build_folder = code_folder.join("build_other");
 
     let triples = [
         TargetTriple {
@@ -41,65 +42,74 @@ fn build_determinism() {
         TargetTriple::wasm32_wasi(),
     ];
 
+    let mut failed = false;
+
+    // Clean the build folder to clean up from previous builds.
+    let _ = std::fs::remove_dir_all(&build_folder);
+    let _ = std::fs::remove_dir_all(&other_build_folder);
+
     for target_triple in triples {
-        // Clean the build folder to clean up from previous tests.
-        let _ = std::fs::remove_dir_all(&build_folder);
+        eprintln!("---\ntesting {}\n---", target_triple);
 
         // Invoke quillc.
-        assert!(
-            invoke(QuillcInvocation {
-                build_info: BuildInfo {
-                    target_triple,
-                    code_folder: code_folder.clone(),
-                    build_folder: build_folder.clone(),
+        if !invoke(QuillcInvocation {
+            build_info: BuildInfo {
+                target_triple,
+                code_folder: code_folder.clone(),
+                build_folder: build_folder.clone(),
 
-                    optimisation_type: quill_target::OptimisationType::ReleaseSafe,
-                    emit_hir: false,
-                    emit_mir: false,
-                    emit_project_mir: false,
-                    emit_unverified_llvm_ir: false,
-                    emit_basic_llvm_ir: false,
-                    emit_llvm_ir: false,
-                    emit_asm: false,
-                },
-                zig_compiler: PathBuf::from("zig"),
-            }),
-            "target triple {} could not compile",
-            target_triple
-        );
+                optimisation_type: quill_target::OptimisationType::ReleaseSafe,
+                emit_hir: false,
+                emit_mir: false,
+                emit_project_mir: false,
+                emit_unverified_llvm_ir: false,
+                emit_basic_llvm_ir: false,
+                emit_llvm_ir: false,
+                emit_asm: false,
+            },
+            zig_compiler: PathBuf::from("zig"),
+        }) {
+            eprintln!("target triple {} could not compile", target_triple);
+            failed = true;
+        }
 
-        // Cache the executable file.
-        let exe_path = build_folder.join(if cfg!(target_os = "windows") {
+        // Cache the build artifacts.
+        let exe_name = if let quill_target::TargetArchitecture::Wasm32 = target_triple.arch {
+            "core.wasm"
+        } else if let TargetOS::Windows = target_triple.os {
             "core.exe"
         } else {
             "core"
-        });
-        let other_exe_path = exe_path.with_extension("other");
+        };
+        let exe_path = build_folder.join(exe_name);
+        let other_exe_path = other_build_folder.join(exe_name);
 
-        std::fs::rename(&exe_path, &other_exe_path).unwrap();
+        std::fs::rename(&build_folder, &other_build_folder).unwrap();
 
         // Invoke quillc a second time.
-        assert!(
-            invoke(QuillcInvocation {
-                build_info: BuildInfo {
-                    target_triple,
-                    code_folder: code_folder.clone(),
-                    build_folder: build_folder.clone(),
+        if !invoke(QuillcInvocation {
+            build_info: BuildInfo {
+                target_triple,
+                code_folder: code_folder.clone(),
+                build_folder: build_folder.clone(),
 
-                    optimisation_type: quill_target::OptimisationType::ReleaseSafe,
-                    emit_hir: false,
-                    emit_mir: false,
-                    emit_project_mir: false,
-                    emit_unverified_llvm_ir: false,
-                    emit_basic_llvm_ir: false,
-                    emit_llvm_ir: false,
-                    emit_asm: false,
-                },
-                zig_compiler: PathBuf::from("zig"),
-            }),
-            "target triple {} could not compile (for the second time)",
-            target_triple
-        );
+                optimisation_type: quill_target::OptimisationType::ReleaseSafe,
+                emit_hir: false,
+                emit_mir: false,
+                emit_project_mir: false,
+                emit_unverified_llvm_ir: false,
+                emit_basic_llvm_ir: false,
+                emit_llvm_ir: false,
+                emit_asm: false,
+            },
+            zig_compiler: PathBuf::from("zig"),
+        }) {
+            eprintln!(
+                "target triple {} could not compile (for the second time",
+                target_triple
+            );
+            failed = true;
+        }
 
         // Check if the files match exactly.
         let mut file1 = match File::open(exe_path) {
@@ -110,12 +120,33 @@ fn build_determinism() {
             Ok(f) => f,
             Err(e) => panic!("{}", e),
         };
-        assert!(
-            file_diff::diff_files(&mut file1, &mut file2),
-            "target triple {} failed",
-            target_triple
-        );
+        if !file_diff::diff_files(&mut file1, &mut file2) {
+            eprintln!("target triple {} failed", target_triple);
+            failed = true;
+        }
+
+        // Store the build folder for later inspection.
+        let stored_build_artifacts =
+            build_folder.with_file_name(format!("build_{}", target_triple.to_string()));
+        let _ = std::fs::remove_dir_all(&stored_build_artifacts);
+        std::fs::create_dir(&stored_build_artifacts).unwrap();
+        // eprintln!("from {:?} to {:?}", build_folder, stored_build_artifacts);
+        fs_extra::dir::move_dir(&build_folder, stored_build_artifacts, &Default::default())
+            .unwrap();
+
+        let other_stored_build_artifacts =
+            other_build_folder.with_file_name(format!("build_{}_other", target_triple.to_string()));
+        let _ = std::fs::remove_dir_all(&other_stored_build_artifacts);
+        std::fs::create_dir(&other_stored_build_artifacts).unwrap();
+        fs_extra::dir::move_dir(
+            &other_build_folder,
+            other_stored_build_artifacts,
+            &Default::default(),
+        )
+        .unwrap();
     }
+
+    assert!(!failed);
 }
 
 /// Harness for all automated tests.
