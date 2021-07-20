@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_common::{
     location::{Range, Ranged},
@@ -140,11 +140,11 @@ where
 }
 
 pub type ExpressionContents =
-    ExpressionContentsGeneric<Expression, Type, Vec<Type>, HashMap<String, Definition>>;
+    ExpressionContentsGeneric<Expression, Type, Vec<Type>, BTreeMap<String, Definition>>;
 pub type ExpressionContentsT = ExpressionContentsGeneric<
     ExpressionT,
     TypeVariable,
-    HashMap<String, TypeVariable>,
+    BTreeMap<String, TypeVariable>,
     DefinitionBodyP,
 >;
 

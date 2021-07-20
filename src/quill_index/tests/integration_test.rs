@@ -6,13 +6,13 @@ fn test_index() {
     use quill_lexer::lex;
     use quill_parser::parse;
     use quill_source_file::PackageFileSystem;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use quill_index::index_single_file;
 
     let fs = PackageFileSystem::new({
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(
             "test_project".to_string(),
             PathBuf::from("../../test_sources"),

@@ -72,7 +72,7 @@ impl Ranged for Range {
 
 /// A fragment of the canonical name for a source file.
 /// This does not include things like slashes to separate directories, double periods to denote going up a directory, or file extensions.
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceFileIdentifierSegment(pub String);
 
 impl Debug for SourceFileIdentifierSegment {
@@ -96,7 +96,7 @@ where
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ModuleIdentifier {
     pub segments: Vec<SourceFileIdentifierSegment>,
 }
@@ -140,14 +140,15 @@ impl From<ModuleIdentifier> for PathBuf {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceFileIdentifier {
     pub module: ModuleIdentifier,
     pub file: SourceFileIdentifierSegment,
     pub file_type: SourceFileType,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// This implements Ord to make Quill builds reproducible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum SourceFileType {
     Quill,
     Toml,

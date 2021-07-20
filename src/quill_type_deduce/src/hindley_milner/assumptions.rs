@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{btree_map::Entry, BTreeMap};
 
 use quill_parser::identifier::NameP;
 
@@ -8,11 +8,11 @@ use crate::type_resolve::TypeVariableId;
 /// Assumptions are applied only to the current list of monomorphic and polymorphic variables,
 /// i.e. exactly the list of variables introduced by lambda and let statements respectively.
 #[derive(Debug, Default)]
-pub(crate) struct Assumptions(pub HashMap<NameP, Vec<Assumption>>);
+pub(crate) struct Assumptions(pub BTreeMap<NameP, Vec<Assumption>>);
 
 impl Assumptions {
     pub(crate) fn new_with(var: NameP, assumption: Assumption) -> Self {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(var, vec![assumption]);
         Self(map)
     }

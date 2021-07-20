@@ -4,7 +4,7 @@ mod generate_constraints;
 mod solver;
 mod substitute;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_common::{
     diagnostic::DiagnosticResult,
@@ -31,13 +31,13 @@ use self::{
 pub(crate) struct ExprTypeCheck {
     expr: ExpressionT,
     /// When we create a new type variable, we should store its location of definition in this map.
-    type_variable_definition_ranges: HashMap<TypeVariableId, Range>,
+    type_variable_definition_ranges: BTreeMap<TypeVariableId, Range>,
     assumptions: Assumptions,
     constraints: Constraints,
     /// The list of variables defined in `let` statements in scope.
     /// When `generate_constraints` is called, typically the `let_variables` map is simply moved into this field here.
     /// However, if we were generating constraints for a let statement, the let variables list will have this new variable added to it.
-    let_variables: HashMap<String, AbstractionVariable>,
+    let_variables: BTreeMap<String, AbstractionVariable>,
     /// If this expression was a `let` statement, this will contain a list of all the new variables we defined in this statement,
     new_variables: Option<LetStatementNewVariables>,
 }
@@ -53,7 +53,7 @@ pub fn deduce_expr_type(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
     visible_names: &VisibleNames,
-    args: &HashMap<String, BoundVariable>,
+    args: &BTreeMap<String, BoundVariable>,
     expr: ExprPatP,
     expected_type: Type,
     definition_identifier_range: Range,
@@ -63,8 +63,8 @@ pub fn deduce_expr_type(
         project_index,
         visible_names,
         args,
-        HashMap::new(),
-        HashMap::new(),
+        BTreeMap::new(),
+        BTreeMap::new(),
         expr,
     )
     .deny()

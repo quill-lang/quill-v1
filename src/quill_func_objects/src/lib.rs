@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_common::name::QualifiedName;
 use quill_mir::{
@@ -10,7 +10,7 @@ use quill_mir::{
 pub fn convert_func_objects(project: &mut ProjectMIR) {
     // First, cache the arities of each function.
     // We need to know exactly how many arguments a function "really" has, and how many are coalesced into the result type of the function.
-    let mut arities = HashMap::new();
+    let mut arities = BTreeMap::new();
     for (fname, file) in &project.files {
         for (def_name, def) in &file.definitions {
             arities.insert(
@@ -31,7 +31,7 @@ pub fn convert_func_objects(project: &mut ProjectMIR) {
     }
 }
 
-fn convert_def(def: &mut DefinitionM, arities: &HashMap<QualifiedName, u64>) {
+fn convert_def(def: &mut DefinitionM, arities: &BTreeMap<QualifiedName, u64>) {
     if let DefinitionBodyM::PatternMatch(cfg) = &mut def.body {
         for block in cfg.basic_blocks.values_mut() {
             block.statements = block
@@ -46,7 +46,7 @@ fn convert_def(def: &mut DefinitionM, arities: &HashMap<QualifiedName, u64>) {
 
 /// Converts functional statements (InstanceSymbol, Apply) to imperative statements (ConstructFunctionObject, InvokeFunction, etc.)
 /// In this step, all function objects are considered to be unary. A later optimisation step will construct n-ary functions.
-fn convert_stmt(stmt: Statement, arities: &HashMap<QualifiedName, u64>) -> Vec<Statement> {
+fn convert_stmt(stmt: Statement, arities: &BTreeMap<QualifiedName, u64>) -> Vec<Statement> {
     match stmt.kind {
         StatementKind::InstanceSymbol {
             name,

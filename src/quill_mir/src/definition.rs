@@ -1,6 +1,6 @@
 //! Converts HIR function definitions into MIR.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use quill_common::location::{Range, Ranged, SourceFileIdentifier};
 use quill_index::{ProjectIndex, TypeParameter};
@@ -19,7 +19,7 @@ use crate::{
 pub(crate) struct DefinitionTranslationContext<'a> {
     next_local_variable_id: LocalVariableId,
     /// Retrieves the unique name of a named local variable.
-    local_name_map: HashMap<String, LocalVariableName>,
+    local_name_map: BTreeMap<String, LocalVariableName>,
 
     pub local_variable_names: BTreeMap<LocalVariableName, LocalVariableInfo>,
     pub control_flow_graph: ControlFlowGraph,
@@ -95,7 +95,7 @@ pub(crate) fn to_mir_def(
             let mut ctx = DefinitionTranslationContext {
                 next_local_variable_id: LocalVariableId(0),
                 local_variable_names,
-                local_name_map: HashMap::new(),
+                local_name_map: BTreeMap::new(),
                 control_flow_graph: ControlFlowGraph::new(),
                 type_variables: type_variables.clone(),
                 project_index,

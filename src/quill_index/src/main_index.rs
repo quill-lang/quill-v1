@@ -2,7 +2,7 @@
 //! storing type information. The module index is sufficient to determine the type
 //! of any expression.
 
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 
 use multimap::MultiMap;
 use quill_common::{
@@ -21,14 +21,14 @@ use crate::type_index::{ProjectTypesAspectsC, TypeDeclarationOrAspectC};
 /// Realistically this type should probably have the `I` suffix, but in my opinion it's pretty self-evident.
 #[derive(Debug)]
 pub struct FileIndex {
-    pub types: HashMap<String, TypeDeclarationI>,
-    pub definitions: HashMap<String, DefinitionI>,
+    pub types: BTreeMap<String, TypeDeclarationI>,
+    pub definitions: BTreeMap<String, DefinitionI>,
     /// Maps enum variant names (True, Left) to the enum that contains them (Bool, Either)
-    pub enum_variant_types: HashMap<String, String>,
-    pub aspects: HashMap<String, AspectI>,
+    pub enum_variant_types: BTreeMap<String, String>,
+    pub aspects: BTreeMap<String, AspectI>,
 }
 
-pub type ProjectIndex = HashMap<SourceFileIdentifier, FileIndex>;
+pub type ProjectIndex = BTreeMap<SourceFileIdentifier, FileIndex>;
 
 /// A type declaration, e.g. `data Bool = True | False`.
 #[derive(Debug)]
@@ -191,7 +191,7 @@ fn compute_visible_types_and_aspects<'a>(
     source_file: &'a SourceFileIdentifier,
     file_parsed: &'a FileP,
     project_types: &'a ProjectTypesAspectsC,
-) -> DiagnosticResult<HashMap<&'a str, ForeignItemDeclarationC<'a>>> {
+) -> DiagnosticResult<BTreeMap<&'a str, ForeignItemDeclarationC<'a>>> {
     let mut visible_types = MultiMap::new();
     let mut messages = Vec::new();
 
@@ -250,10 +250,10 @@ pub fn index(
         visible_types.unwrap()
     };
 
-    let mut types = HashMap::<String, TypeDeclarationI>::new();
-    let mut definitions = HashMap::<String, DefinitionI>::new();
-    let mut enum_variant_types = HashMap::<String, String>::new();
-    let mut aspects = HashMap::<String, AspectI>::new();
+    let mut types = BTreeMap::<String, TypeDeclarationI>::new();
+    let mut definitions = BTreeMap::<String, DefinitionI>::new();
+    let mut enum_variant_types = BTreeMap::<String, String>::new();
+    let mut aspects = BTreeMap::<String, AspectI>::new();
 
     for definition in &file_parsed.definitions {
         match definitions.entry(definition.decl.name.name.clone()) {
@@ -314,7 +314,7 @@ pub fn index(
                     .type_params
                     .iter()
                     .map(|ident| ident.name.name.clone())
-                    .collect::<HashSet<_>>();
+                    .collect::<BTreeSet<_>>();
 
                 let type_ctor = data
                     .type_ctor
@@ -371,7 +371,7 @@ pub fn index(
                     .type_params
                     .iter()
                     .map(|ident| ident.name.name.clone())
-                    .collect::<HashSet<_>>();
+                    .collect::<BTreeSet<_>>();
 
                 let variants = an_enum
                     .alternatives

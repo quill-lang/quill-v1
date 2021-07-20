@@ -1,6 +1,6 @@
 //! Creates MIR expressions from HIR expressions.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_common::{location::Ranged, name::QualifiedName};
 use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
@@ -847,7 +847,7 @@ fn generate_expr_copy(
 
 fn generate_expr_impl(
     ty: Type,
-    implementations: HashMap<String, Definition>,
+    implementations: BTreeMap<String, Definition>,
     ctx: &mut DefinitionTranslationContext,
     range: quill_common::location::Range,
     terminator: Terminator,
@@ -882,7 +882,7 @@ fn generate_expr_impl(
         ctx.additional_definitions.extend(inner_inner);
     }
     let mut statements = Vec::new();
-    let mut definitions = HashMap::new();
+    let mut definitions = BTreeMap::new();
     let variable = ctx.new_local_variable(LocalVariableInfo {
         range,
         ty,

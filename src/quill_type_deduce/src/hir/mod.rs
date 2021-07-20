@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::BTreeMap, fmt::Display};
 
 use self::definition::Definition;
 
@@ -11,7 +11,7 @@ pub mod pattern;
 /// just syntactic and type correctness.
 #[derive(Debug)]
 pub struct SourceFileHIR {
-    pub definitions: HashMap<String, Definition>,
+    pub definitions: BTreeMap<String, Definition>,
 }
 
 impl Display for SourceFileHIR {

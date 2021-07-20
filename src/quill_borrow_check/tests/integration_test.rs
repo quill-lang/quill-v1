@@ -12,11 +12,11 @@ fn test_borrowck() {
     use quill_parser::parse;
     use quill_source_file::PackageFileSystem;
     use quill_type_deduce::check;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     let fs = PackageFileSystem::new({
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(
             "test_project".to_string(),
             PathBuf::from("../../test_sources"),

@@ -1,7 +1,7 @@
 //! This crate contains functions to pretty-print error messages to the console window.
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     fmt::{Debug, Display},
     ops::Range,
 };
@@ -21,7 +21,7 @@ pub struct ErrorEmitter<'fs> {
 struct PackageFileSystemCache<'fs> {
     fs: &'fs PackageFileSystem,
     /// The string value is an error.
-    cache: HashMap<SourceFileIdentifier, Result<Source, String>>,
+    cache: BTreeMap<SourceFileIdentifier, Result<Source, String>>,
 }
 
 impl Cache<SourceFileIdentifier> for PackageFileSystemCache<'_> {
@@ -132,7 +132,7 @@ impl<'fs> ErrorEmitter<'fs> {
             .finish()
             .eprint(PackageFileSystemCache {
                 fs: self.fs,
-                cache: HashMap::new(),
+                cache: BTreeMap::new(),
             })
             .unwrap();
         for builder in other_builders {
@@ -140,7 +140,7 @@ impl<'fs> ErrorEmitter<'fs> {
                 .finish()
                 .eprint(PackageFileSystemCache {
                     fs: self.fs,
-                    cache: HashMap::new(),
+                    cache: BTreeMap::new(),
                 })
                 .unwrap();
         }

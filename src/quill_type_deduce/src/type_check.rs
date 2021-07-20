@@ -1,6 +1,6 @@
 //! Performs type deduction and type checking of expressions and patterns.
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{btree_map::Entry, BTreeMap};
 
 use multimap::MultiMap;
 use quill_common::{
@@ -58,19 +58,19 @@ pub(crate) struct TypeChecker<'a> {
 /// Works like the Display trait, but works better for printing type variable names.
 pub struct TypeVariablePrinter {
     /// Maps type variable IDs to the names we use to render them.
-    type_variable_names: HashMap<TypeVariableId, String>,
+    type_variable_names: BTreeMap<TypeVariableId, String>,
     /// When we see a new type variable that we've not named yet, what name should we give it?
     /// This monotonically increasing counter is used to work out what the name should be.
     type_variable_name: u32,
     /// A substitution mapping type variables to the substituted type variable.
     /// This map is tried before making a new name for a type variable.
-    substitution: HashMap<TypeVariableId, TypeVariable>,
+    substitution: BTreeMap<TypeVariableId, TypeVariable>,
 }
 
 impl TypeVariablePrinter {
-    pub fn new(substitution: HashMap<TypeVariableId, TypeVariable>) -> Self {
+    pub fn new(substitution: BTreeMap<TypeVariableId, TypeVariable>) -> Self {
         Self {
-            type_variable_names: HashMap::new(),
+            type_variable_names: BTreeMap::new(),
             type_variable_name: 0,
             substitution,
         }
@@ -182,10 +182,10 @@ pub struct ForeignDeclaration<T> {
 }
 
 pub struct VisibleNames<'a> {
-    pub types: HashMap<&'a str, ForeignDeclaration<&'a TypeDeclarationI>>,
-    pub enum_variants: HashMap<&'a str, ForeignDeclaration<&'a str>>,
-    pub definitions: HashMap<&'a str, ForeignDeclaration<&'a DefinitionI>>,
-    pub aspects: HashMap<&'a str, ForeignDeclaration<&'a AspectI>>,
+    pub types: BTreeMap<&'a str, ForeignDeclaration<&'a TypeDeclarationI>>,
+    pub enum_variants: BTreeMap<&'a str, ForeignDeclaration<&'a str>>,
+    pub definitions: BTreeMap<&'a str, ForeignDeclaration<&'a DefinitionI>>,
+    pub aspects: BTreeMap<&'a str, ForeignDeclaration<&'a AspectI>>,
 }
 
 /// Work out what names are visible inside a file.
@@ -340,7 +340,7 @@ impl<'a> TypeChecker<'a> {
             visible_names.unwrap()
         };
 
-        let mut definitions = HashMap::<String, Definition>::new();
+        let mut definitions = BTreeMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
             let symbol =
@@ -530,10 +530,10 @@ impl<'a> TypeChecker<'a> {
         pattern: &Pattern,
         expected_type: Type,
         borrow_condition: Option<BorrowCondition>,
-    ) -> DiagnosticResult<HashMap<String, BoundVariable>> {
+    ) -> DiagnosticResult<BTreeMap<String, BoundVariable>> {
         match pattern {
             Pattern::Named(identifier) => {
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     identifier.name.clone(),
                     BoundVariable {
@@ -550,7 +550,7 @@ impl<'a> TypeChecker<'a> {
                 );
                 DiagnosticResult::ok(map)
             }
-            Pattern::Constant { .. } => DiagnosticResult::ok(HashMap::new()),
+            Pattern::Constant { .. } => DiagnosticResult::ok(BTreeMap::new()),
             Pattern::TypeConstructor {
                 type_ctor,
                 fields: provided_fields,
@@ -575,7 +575,7 @@ impl<'a> TypeChecker<'a> {
                                     .fields
                                     .iter()
                                     .map(|(name, ty)| (name.name.clone(), ty.clone()))
-                                    .collect::<HashMap<String, Type>>();
+                                    .collect::<BTreeMap<String, Type>>();
                                 (&datai.type_params, fields)
                             }
                             TypeDeclarationTypeI::Enum(enumi) => {
@@ -591,7 +591,7 @@ impl<'a> TypeChecker<'a> {
                                     .fields
                                     .iter()
                                     .map(|(name, ty)| (name.name.clone(), ty.clone()))
-                                    .collect::<HashMap<String, Type>>();
+                                    .collect::<BTreeMap<String, Type>>();
                                 (&enumi.type_params, fields)
                             }
                         }
@@ -601,7 +601,7 @@ impl<'a> TypeChecker<'a> {
                     let provided_fields = provided_fields
                         .iter()
                         .map(|(name, _ty, pat)| (name.name.clone(), pat.clone()))
-                        .collect::<HashMap<String, Pattern>>();
+                        .collect::<BTreeMap<String, Pattern>>();
 
                     // Check that the names of the provided fields and the expected fields match.
                     let mut bound_vars = Vec::new();
@@ -672,7 +672,7 @@ impl<'a> TypeChecker<'a> {
                             .definitions
                             .iter()
                             .map(|def| (def.name.name.clone(), def.symbol_type.clone()))
-                            .collect::<HashMap<String, Type>>();
+                            .collect::<BTreeMap<String, Type>>();
                         (&decl.decl.type_variables, fields)
                     };
 
@@ -680,7 +680,7 @@ impl<'a> TypeChecker<'a> {
                     let provided_fields = provided_fields
                         .iter()
                         .map(|(name, _ty, pat)| (name.name.clone(), pat.clone()))
-                        .collect::<HashMap<String, Pattern>>();
+                        .collect::<BTreeMap<String, Pattern>>();
 
                     // Check that the names of the provided fields and the expected fields match.
                     let mut bound_vars = Vec::new();
@@ -737,7 +737,7 @@ impl<'a> TypeChecker<'a> {
                     _ => panic!("should have errored in resolve_type_pattern"),
                 }
             }
-            Pattern::Unknown(_) => DiagnosticResult::ok(HashMap::new()),
+            Pattern::Unknown(_) => DiagnosticResult::ok(BTreeMap::new()),
             Pattern::Function { .. } => unimplemented!(),
         }
     }
@@ -1199,13 +1199,13 @@ impl<'a> TypeChecker<'a> {
         visible_names: &VisibleNames,
     ) -> DiagnosticResult<ExpressionContents> {
         // Split apart each definition in the impl body.
-        let mut cases_by_func_name = HashMap::<String, Vec<DefinitionCaseP>>::new();
+        let mut cases_by_func_name = BTreeMap::<String, Vec<DefinitionCaseP>>::new();
         for case in cases {
             let func_name = get_func_name(&case.pattern);
             cases_by_func_name.entry(func_name).or_default().push(case);
         }
 
-        let mut implementations = HashMap::new();
+        let mut implementations = BTreeMap::new();
 
         for def in &aspect.definitions {
             let symbol_type =
@@ -1275,10 +1275,10 @@ fn get_func_name(pattern: &ExprPatP) -> String {
 /// Flattens a list of maps into a single map, adding error messages if variables were multiply defined.
 fn collect_bound_vars(
     source_file: &SourceFileIdentifier,
-    bound_variables: Vec<HashMap<String, BoundVariable>>,
-) -> DiagnosticResult<HashMap<String, BoundVariable>> {
+    bound_variables: Vec<BTreeMap<String, BoundVariable>>,
+) -> DiagnosticResult<BTreeMap<String, BoundVariable>> {
     let mut messages = Vec::new();
-    let mut map = HashMap::<String, BoundVariable>::new();
+    let mut map = BTreeMap::<String, BoundVariable>::new();
 
     for inner in bound_variables {
         for (k, v) in inner {

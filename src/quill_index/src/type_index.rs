@@ -2,7 +2,7 @@
 //! This allows the main index to guarantee that all types are known before indexing data structures which may contain these types.
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{btree_map::Entry, BTreeMap},
     fmt::Debug,
 };
 
@@ -14,10 +14,10 @@ use quill_common::{
 use quill_parser::{file::FileP, identifier::NameP};
 
 /// A set of all types and aspects declared in a single module, mapping type names to their declarations.
-pub type ModuleTypesAspectsC = HashMap<String, TypeDeclarationOrAspectC>;
+pub type ModuleTypesAspectsC = BTreeMap<String, TypeDeclarationOrAspectC>;
 
 /// All types and aspects known about in an entire project.
-pub type ProjectTypesAspectsC = HashMap<SourceFileIdentifier, ModuleTypesAspectsC>;
+pub type ProjectTypesAspectsC = BTreeMap<SourceFileIdentifier, ModuleTypesAspectsC>;
 
 #[derive(Debug)]
 pub struct TypeDeclarationOrAspectC {

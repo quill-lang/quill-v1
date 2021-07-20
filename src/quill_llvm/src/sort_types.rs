@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
 use quill_type::Type;
@@ -6,7 +6,7 @@ use quill_type_deduce::replace_type_variables;
 
 use crate::monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MonomorphisedItem {
     Type(MonomorphisedType),
     Aspect(MonomorphisedAspect),
@@ -30,12 +30,12 @@ pub(crate) struct IndirectedMonomorphisedType {
 /// so that data structures do not have infinite size. We detect cycles using Tarjan's strongly
 /// connected components algorithm.
 pub(crate) fn sort_types(
-    types: HashSet<MonomorphisedType>,
-    aspects: HashSet<MonomorphisedAspect>,
+    types: BTreeSet<MonomorphisedType>,
+    aspects: BTreeSet<MonomorphisedAspect>,
     index: &ProjectIndex,
 ) -> Vec<IndirectedMonomorphisedType> {
     // First, construct the directed graph.
-    let mut types_to_indices = HashMap::new();
+    let mut types_to_indices = BTreeMap::new();
     let mut vertices = Vec::new();
     for (i, ty) in types
         .into_iter()
@@ -49,7 +49,7 @@ pub(crate) fn sort_types(
 
     let mut graph = DirectedGraph {
         vertices,
-        edges: HashMap::new(),
+        edges: BTreeMap::new(),
     };
 
     for (vertex_index, vertex) in graph.vertices.iter().enumerate() {
@@ -180,7 +180,7 @@ fn fix_cycles(
 
     // Find a list of start edges `s`.
     // Make a cache of incoming edges for each vertex.
-    let mut incoming_edges = HashMap::<usize, Vec<usize>>::new();
+    let mut incoming_edges = BTreeMap::<usize, Vec<usize>>::new();
     for (&source, targets) in &components.edges {
         for &target in targets {
             incoming_edges.entry(target).or_default().push(source);
@@ -198,13 +198,13 @@ fn fix_cycles(
         .vertices
         .into_iter()
         .enumerate()
-        .collect::<HashMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
 
     let mut l = Vec::new();
 
     while let Some(node) = s.pop() {
         l.extend(components_by_index.remove(&node).unwrap());
-        // The `flatten` coalesces the HashSet and the Option.
+        // The `flatten` coalesces the BTreeSet and the Option.
         for target in components.edges.remove(&node).into_iter().flatten() {
             // Check if `target` has any incoming edges.
             let incoming_edges = incoming_edges.entry(target).or_default();
@@ -261,7 +261,7 @@ struct DirectedGraph<V> {
     /// This ensures we won't disturb existing edges.
     vertices: Vec<V>,
     /// Edges are pairs of vertices: the "from" and the "to".
-    edges: HashMap<usize, HashSet<usize>>,
+    edges: BTreeMap<usize, BTreeSet<usize>>,
 }
 
 impl<V> DirectedGraph<V> {
@@ -276,7 +276,7 @@ impl<V> DirectedGraph<V> {
             .enumerate()
             .map(|(i, set)| set.iter().map(move |elem| (*elem, i)))
             .flatten()
-            .collect::<HashMap<usize, usize>>();
+            .collect::<BTreeMap<usize, usize>>();
 
         // Now, take the list of strongly connected components and convert them into vertices on this new graph.
         let mut output = DirectedGraph {
@@ -284,10 +284,10 @@ impl<V> DirectedGraph<V> {
                 .into_iter()
                 .map(|vertex_indices| DirectedGraph {
                     vertices: vertex_indices.into_iter().collect(),
-                    edges: HashMap::new(),
+                    edges: BTreeMap::new(),
                 })
                 .collect(),
-            edges: HashMap::new(),
+            edges: BTreeMap::new(),
         };
 
         // Re-insert all the edges of the original graph.
@@ -330,7 +330,7 @@ impl<V> DirectedGraph<V> {
             .vertices
             .into_iter()
             .enumerate()
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         DirectedGraph {
             vertices: output
@@ -352,33 +352,33 @@ impl<V> DirectedGraph<V> {
 
 #[derive(Debug)]
 struct Tarjan<'a> {
-    graph_edges: &'a HashMap<usize, HashSet<usize>>,
+    graph_edges: &'a BTreeMap<usize, BTreeSet<usize>>,
 
     index: usize,
     stack: Vec<usize>,
 
     /// Stores the indices, lowest links, and whether indices are on the stack, by index.
-    indices: HashMap<usize, usize>,
-    low_links: HashMap<usize, usize>,
+    indices: BTreeMap<usize, usize>,
+    low_links: BTreeMap<usize, usize>,
     /// If on_stack contains a vertex index v, then v is on the stack.
-    on_stack: HashSet<usize>,
+    on_stack: BTreeSet<usize>,
 
     /// Strongly connected components are denoted by the set of vertices that they contain.
-    strongly_connected_components: Vec<HashSet<usize>>,
+    strongly_connected_components: Vec<BTreeSet<usize>>,
 }
 
 impl<'a> Tarjan<'a> {
     pub fn run_algorithm(
         num_vertices: usize,
-        graph_edges: &'a HashMap<usize, HashSet<usize>>,
-    ) -> Vec<HashSet<usize>> {
+        graph_edges: &'a BTreeMap<usize, BTreeSet<usize>>,
+    ) -> Vec<BTreeSet<usize>> {
         let mut tarjan = Tarjan {
             graph_edges,
             index: 0,
             stack: Vec::new(),
-            indices: HashMap::new(),
-            low_links: HashMap::new(),
-            on_stack: HashSet::new(),
+            indices: BTreeMap::new(),
+            low_links: BTreeMap::new(),
+            on_stack: BTreeSet::new(),
             strongly_connected_components: Vec::new(),
         };
 
@@ -415,7 +415,7 @@ impl<'a> Tarjan<'a> {
         if *self.low_links.get_mut(&vertex_index).unwrap()
             == *self.indices.get_mut(&vertex_index).unwrap()
         {
-            let mut strongly_connected_component = HashSet::new();
+            let mut strongly_connected_component = BTreeSet::new();
             loop {
                 let other_vertex = self.stack.pop().unwrap();
                 self.on_stack.remove(&other_vertex);

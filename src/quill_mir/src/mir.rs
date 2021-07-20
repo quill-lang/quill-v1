@@ -1,7 +1,7 @@
 //! Definitions for all of the MIR constructs.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::Display,
 };
 
@@ -200,9 +200,9 @@ impl ControlFlowGraph {
 
         // Cache some things about each block.
         // In particular, we need to know which other blocks a block can end up jumping to.
-        let mut target_blocks = HashMap::new();
+        let mut target_blocks = BTreeMap::new();
         for (&node, block) in &self.basic_blocks {
-            let mut block_target_blocks = HashSet::new();
+            let mut block_target_blocks = BTreeSet::new();
             // First, check possible places we'll jump to in the terminator.
             match &block.terminator.kind {
                 TerminatorKind::Goto(target) => {
@@ -226,7 +226,7 @@ impl ControlFlowGraph {
         }
 
         // Now that we have all this information, we can make a set of all the edges in this directed graph.
-        let mut edges = HashMap::new();
+        let mut edges = BTreeMap::new();
         for &node in self.basic_blocks.keys() {
             edges.insert(
                 node,
@@ -261,7 +261,7 @@ impl ControlFlowGraph {
             .into_iter()
             .enumerate()
             .map(|(new_id, old_id)| (old_id, BasicBlockId(new_id as u64)))
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         // First we'll move them around in the CFG then we'll update all references to these IDs inside terminators.
         for (old_id, block) in std::mem::take(&mut self.basic_blocks) {
@@ -398,7 +398,7 @@ pub enum StatementKind {
         ty: Type,
         /// If this type was an enum, which variant should we create?
         variant: Option<String>,
-        fields: HashMap<String, Rvalue>,
+        fields: BTreeMap<String, Rvalue>,
         target: LocalVariableName,
     },
     /// Creates an impl of an aspect from a set of definitions.
@@ -407,7 +407,7 @@ pub enum StatementKind {
     ConstructImpl {
         aspect: QualifiedName,
         type_variables: Vec<Type>,
-        definitions: HashMap<String, LocalVariableName>,
+        definitions: BTreeMap<String, LocalVariableName>,
         target: LocalVariableName,
     },
 }
@@ -649,7 +649,7 @@ pub enum TerminatorKind {
         enum_place: Place,
         /// Maps the names of enum discriminants to the basic block ID to jump to.
         /// This map must exhaustively cover every possible enum discriminant.
-        cases: HashMap<String, BasicBlockId>,
+        cases: BTreeMap<String, BasicBlockId>,
     },
     /// Works out which value a given local variable has.
     SwitchConstant {
@@ -658,7 +658,7 @@ pub enum TerminatorKind {
         /// Maps the names of constant values to the basic block ID to jump to.
         /// If the constant is a boolean, this must be exhaustive. Otherwise,
         /// there should be a default case to cover missed possibilities.
-        cases: HashMap<ConstantValue, BasicBlockId>,
+        cases: BTreeMap<ConstantValue, BasicBlockId>,
         default: BasicBlockId,
     },
     /// Used in intermediate steps, when we do not know the terminator of a block.

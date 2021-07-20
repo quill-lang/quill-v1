@@ -98,7 +98,8 @@ impl Display for IdentifierP {
 }
 
 /// A name for an item, which cannot be qualified.
-#[derive(Debug, Clone, Eq)]
+/// This implements Ord to make Quill builds reproducible.
+#[derive(Debug, Clone)]
 pub struct NameP {
     pub name: String,
     pub range: Range,
@@ -107,6 +108,20 @@ pub struct NameP {
 impl PartialEq for NameP {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
+    }
+}
+
+impl Eq for NameP {}
+
+impl PartialOrd for NameP {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.name.partial_cmp(&other.name)
+    }
+}
+
+impl Ord for NameP {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
     }
 }
 

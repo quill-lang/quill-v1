@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use lspower::lsp::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range,
@@ -8,7 +8,7 @@ use quill_common::diagnostic::{ErrorMessage, Severity};
 use crate::path::file_to_url;
 
 pub fn into_diagnostic(
-    project_roots: &HashMap<String, PathBuf>,
+    project_roots: &BTreeMap<String, PathBuf>,
     message: ErrorMessage,
 ) -> Diagnostic {
     let related_information = if message.help.is_empty() {

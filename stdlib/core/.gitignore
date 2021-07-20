@@ -1,1 +1,3 @@
-/build
+# The build determinism test creates several other build folders,
+# so they are ignored here.
+/build*

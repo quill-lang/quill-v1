@@ -1,6 +1,6 @@
 //! Creates the MIR code that performs a pattern matching operation.
 
-use std::{collections::HashMap, ops::Deref};
+use std::{collections::BTreeMap, ops::Deref};
 
 use multimap::MultiMap;
 use quill_common::{
@@ -535,7 +535,7 @@ pub(crate) fn perform_match_function(
                             ),
                         )
                     })
-                    .collect::<HashMap<_, _>>();
+                    .collect::<BTreeMap<_, _>>();
 
                 // Now, each case has been successfully pattern matched to its entirety.
                 // Finally, construct the switch statement to switch between the given cases.
@@ -585,7 +585,7 @@ pub(crate) fn perform_match_function(
                             ),
                         )
                     })
-                    .collect::<HashMap<_, _>>();
+                    .collect::<BTreeMap<_, _>>();
 
                 let default = {
                     if default.is_empty() {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, Severity},
@@ -155,8 +155,8 @@ pub fn replace_type_variables(
 
 pub struct InstantiationResult {
     pub result: TypeVariable,
-    pub ids: HashMap<String, TypeVariable>,
-    pub higher_kinded_ids: HashMap<String, HashMap<Vec<Type>, TypeVariable>>,
+    pub ids: BTreeMap<String, TypeVariable>,
+    pub higher_kinded_ids: BTreeMap<String, BTreeMap<Vec<Type>, TypeVariable>>,
 }
 
 /// You can instantiate a type into a type variable,
@@ -164,8 +164,8 @@ pub struct InstantiationResult {
 /// This function returns the type variable, along with the map of quantifier names to type variable IDs,
 /// and the map of higher-kinded quantifier names to the map converting lists of parameters to their assigned IDs.
 pub fn instantiate(ty: &Type) -> InstantiationResult {
-    let mut ids = HashMap::new();
-    let mut higher_kinded_ids = HashMap::new();
+    let mut ids = BTreeMap::new();
+    let mut higher_kinded_ids = BTreeMap::new();
     let result = instantiate_with(ty, &mut ids, &mut higher_kinded_ids);
     InstantiationResult {
         result,
@@ -179,8 +179,8 @@ pub fn instantiate(ty: &Type) -> InstantiationResult {
 /// The map of higher kinded IDs maps variable names to lists of parameters to type variables.
 pub fn instantiate_with(
     ty: &Type,
-    ids: &mut HashMap<String, TypeVariable>,
-    higher_kinded_ids: &mut HashMap<String, HashMap<Vec<Type>, TypeVariable>>,
+    ids: &mut BTreeMap<String, TypeVariable>,
+    higher_kinded_ids: &mut BTreeMap<String, BTreeMap<Vec<Type>, TypeVariable>>,
 ) -> TypeVariable {
     match ty {
         Type::Named { name, parameters } => TypeVariable::Named {
@@ -211,7 +211,7 @@ pub fn instantiate_with(
                 // The precise distribution of type variables is specified in the third parameter to this function.
                 higher_kinded_ids
                     .entry(variable.clone())
-                    .or_default()
+                    .or_insert_with(BTreeMap::new)
                     .entry(parameters.clone())
                     .or_insert_with(|| TypeVariable::Unknown {
                         id: TypeVariableId::default(),

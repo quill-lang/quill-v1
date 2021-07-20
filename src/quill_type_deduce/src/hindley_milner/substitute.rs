@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -18,7 +18,7 @@ use crate::{
 /// Apply the given type variable substitution to this expression.
 /// This should replace all unknown types with known types, if the type check succeeded.
 pub(crate) fn substitute(
-    substitution: &HashMap<TypeVariableId, TypeVariable>,
+    substitution: &BTreeMap<TypeVariableId, TypeVariable>,
     expr: ExpressionT,
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
@@ -65,7 +65,7 @@ pub(crate) fn substitute(
 
 /// `ty` is the type of `contents`.
 fn substitute_contents(
-    substitution: &HashMap<TypeVariableId, TypeVariable>,
+    substitution: &BTreeMap<TypeVariableId, TypeVariable>,
     contents: ExpressionContentsT,
     ty: &Type,
     source_file: &SourceFileIdentifier,
@@ -283,7 +283,7 @@ fn typeck_impl(
 }
 
 fn substitute_type(
-    substitution: &HashMap<TypeVariableId, TypeVariable>,
+    substitution: &BTreeMap<TypeVariableId, TypeVariable>,
     ty: TypeVariable,
     source_file: &SourceFileIdentifier,
     range: Range,

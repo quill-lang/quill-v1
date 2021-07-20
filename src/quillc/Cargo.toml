@@ -26,4 +26,5 @@ serde_json = "1.0"
 toml = "0.5"
 
 [dev-dependencies]
-ntest = "^0.7"
+file_diff = "1.0"
+fs_extra = "1.2"

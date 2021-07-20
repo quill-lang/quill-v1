@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use lspower::jsonrpc;
 use lspower::lsp::*;
@@ -27,7 +27,7 @@ pub(crate) struct Backend {
     root_file_systems: Arc<RwLock<RootFileSystems>>,
     /// Maps project roots to the files in which diagnostics were emitted.
     /// This allows us to clear the diagnostics before emitting more.
-    emitted_diagnostics_to: Arc<RwLock<HashMap<PathBuf, Vec<SourceFileIdentifier>>>>,
+    emitted_diagnostics_to: Arc<RwLock<BTreeMap<PathBuf, Vec<SourceFileIdentifier>>>>,
 }
 
 pub(crate) struct ProjectRoot {
@@ -40,7 +40,7 @@ impl Backend {
         Self {
             client,
             root_file_systems: Arc::new(RwLock::new(RootFileSystems::default())),
-            emitted_diagnostics_to: Arc::new(RwLock::new(HashMap::new())),
+            emitted_diagnostics_to: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
 
@@ -81,7 +81,7 @@ impl Backend {
                 if let Ok(file_str) = std::str::from_utf8(&file_bytes) {
                     if let Ok(file_toml) = toml::from_str::<ProjectInfo>(file_str) {
                         let fs = PackageFileSystem::new({
-                            let mut map = HashMap::new();
+                            let mut map = BTreeMap::new();
                             map.insert(file_toml.name.clone(), new_path.clone());
                             map
                         });
@@ -159,7 +159,7 @@ impl Backend {
 #[derive(Default)]
 struct RootFileSystems {
     /// Maps workspace roots to package file systems and the name of the package at that root.
-    pub file_systems: HashMap<PathBuf, (String, PackageFileSystem)>,
+    pub file_systems: BTreeMap<PathBuf, (String, PackageFileSystem)>,
 }
 
 #[lspower::async_trait]
@@ -316,7 +316,7 @@ impl LanguageServer for Backend {
                     );
                 }
                 DiagnosticResult::sequence_unfail(results)
-                    .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                    .map(|results| results.into_iter().collect::<BTreeMap<_, _>>())
                     .deny()
             };
 
@@ -324,7 +324,7 @@ impl LanguageServer for Backend {
                 DiagnosticResult::sequence_unfail(lexed.into_iter().map(|(file, lexed)| {
                     quill_parser::parse(lexed, &file).map(|parsed| (file, parsed))
                 }))
-                .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                .map(|results| results.into_iter().collect::<BTreeMap<_, _>>())
                 .deny()
             });
 
@@ -341,7 +341,7 @@ impl LanguageServer for Backend {
                                     .map(|mir| (file_ident, mir))
                             },
                         ))
-                        .map(|results| results.into_iter().collect::<HashMap<_, _>>())
+                        .map(|results| results.into_iter().collect::<BTreeMap<_, _>>())
                         .deny()
                         .map(|result| (result, index))
                     })

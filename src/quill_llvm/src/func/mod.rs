@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use inkwell::{debug_info::AsDIScope, values::FunctionValue, AddressSpace};
 use quill_mir::{
@@ -75,7 +75,7 @@ pub fn compile_function<'ctx>(
         // A direct function contains the real function body if there are no arguments left to curry.
         if func.curry_steps.is_empty() {
             // We need to now create the real function body.
-            let mut locals = HashMap::new();
+            let mut locals = BTreeMap::new();
             for arg in 0..def.arity {
                 if reprs
                     .repr(replace_type_variables(
@@ -184,7 +184,7 @@ pub fn compile_function<'ctx>(
         // An indirect function contains the real function body if there is only one step of currying left.
         if func.curry_steps.len() == 1 {
             // We need to create the real function body.
-            let mut locals = HashMap::new();
+            let mut locals = BTreeMap::new();
 
             // Store the arguments given in the function pointer.
             let fobj_repr = reprs.get_fobj(&func.function_object_descriptor()).unwrap();
