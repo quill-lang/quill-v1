@@ -55,6 +55,7 @@ fn build_determinism() {
         eprintln!("---\ntesting {}\n---", target_triple);
 
         // Invoke quillc.
+        // The release optimisation types should be fully deterministic, but debug builds are not necessarily.
         if !invoke(QuillcInvocation {
             build_info: BuildInfo {
                 target_triple,
@@ -156,11 +157,15 @@ fn build_determinism() {
             &build_folder.join("out.o"),
             &other_build_folder.join("out.o"),
         );
-        diff(
-            "exe",
-            &build_folder.join(exe_name),
-            &other_build_folder.join(exe_name),
-        );
+        // FIXME: If we're on Windows, we're allowed to have mismatched executables, since the link timestamp gets
+        // embedded in the exe. We can't change this setting currently in the Zig compiler.
+        if !matches!(target_triple.os, TargetOS::Windows) {
+            diff(
+                "exe",
+                &build_folder.join(exe_name),
+                &other_build_folder.join(exe_name),
+            );
+        }
 
         // Store the build folder for later inspection.
         let stored_build_artifacts =
