@@ -7,7 +7,10 @@
 //!
 //! To create a new test case, simply create a new quill project somewhere in the `tests` dir.
 
-use std::{fs::File, path::PathBuf};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use quill_target::{
     BuildInfo, TargetArchitecture, TargetEnvironment, TargetOS, TargetTriple, TargetVendor,
@@ -83,6 +86,8 @@ fn build_determinism() {
         };
         let exe_path = build_folder.join(exe_name);
         let other_exe_path = other_build_folder.join(exe_name);
+        let obj_path = build_folder.join("out.o");
+        let other_obj_path = other_build_folder.join("out.o");
 
         std::fs::rename(&build_folder, &other_build_folder).unwrap();
 
@@ -112,18 +117,23 @@ fn build_determinism() {
         }
 
         // Check if the files match exactly.
-        let mut file1 = match File::open(exe_path) {
-            Ok(f) => f,
-            Err(e) => panic!("{}", e),
+        let mut diff = |path1: &Path, path2: &Path, name: &str| {
+            let mut file1 = match File::open(path1) {
+                Ok(f) => f,
+                Err(e) => panic!("{}", e),
+            };
+            let mut file2 = match File::open(path2) {
+                Ok(f) => f,
+                Err(e) => panic!("{}", e),
+            };
+            if !file_diff::diff_files(&mut file1, &mut file2) {
+                eprintln!("target triple {} failed ({})", target_triple, name);
+                failed = true;
+            }
         };
-        let mut file2 = match File::open(other_exe_path) {
-            Ok(f) => f,
-            Err(e) => panic!("{}", e),
-        };
-        if !file_diff::diff_files(&mut file1, &mut file2) {
-            eprintln!("target triple {} failed", target_triple);
-            failed = true;
-        }
+
+        diff(&obj_path, &other_obj_path, "obj");
+        diff(&exe_path, &other_exe_path, "exe");
 
         // Store the build folder for later inspection.
         let stored_build_artifacts =
@@ -131,16 +141,11 @@ fn build_determinism() {
         let _ = std::fs::remove_dir_all(&stored_build_artifacts);
         std::fs::create_dir(&stored_build_artifacts).unwrap();
         // eprintln!("from {:?} to {:?}", build_folder, stored_build_artifacts);
-        fs_extra::dir::move_dir(&build_folder, stored_build_artifacts, &Default::default())
+        fs_extra::dir::move_dir(&build_folder, &stored_build_artifacts, &Default::default())
             .unwrap();
-
-        let other_stored_build_artifacts =
-            other_build_folder.with_file_name(format!("build_{}_other", target_triple.to_string()));
-        let _ = std::fs::remove_dir_all(&other_stored_build_artifacts);
-        std::fs::create_dir(&other_stored_build_artifacts).unwrap();
         fs_extra::dir::move_dir(
             &other_build_folder,
-            other_stored_build_artifacts,
+            stored_build_artifacts,
             &Default::default(),
         )
         .unwrap();
