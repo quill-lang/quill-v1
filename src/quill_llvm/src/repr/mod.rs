@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     convert::{TryFrom, TryInto},
 };
 
@@ -47,8 +47,8 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
     pub fn new(
         codegen: &'a CodeGenContext<'ctx>,
         index: &ProjectIndex,
-        mono_types: HashSet<MonomorphisedType>,
-        mono_aspects: HashSet<MonomorphisedAspect>,
+        mono_types: BTreeSet<MonomorphisedType>,
+        mono_aspects: BTreeSet<MonomorphisedAspect>,
     ) -> Self {
         let general_func_obj_ty = codegen.context.opaque_struct_type("fobj");
         general_func_obj_ty.set_body(

@@ -2,7 +2,7 @@
 //! Use this for the intermediate type index, not for the main index.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -35,7 +35,7 @@ impl Default for TypeVariableId {
 pub(crate) fn resolve_typep(
     source_file: &SourceFileIdentifier,
     typep: &TypeP,
-    type_params: &HashSet<String>,
+    type_params: &BTreeSet<String>,
     visible_types_and_aspects: &BTreeMap<&str, ForeignItemDeclarationC<'_>>,
 ) -> DiagnosticResult<Type> {
     match typep {

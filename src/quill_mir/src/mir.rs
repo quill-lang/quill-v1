@@ -1,7 +1,7 @@
 //! Definitions for all of the MIR constructs.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::Display,
 };
 
@@ -202,7 +202,7 @@ impl ControlFlowGraph {
         // In particular, we need to know which other blocks a block can end up jumping to.
         let mut target_blocks = BTreeMap::new();
         for (&node, block) in &self.basic_blocks {
-            let mut block_target_blocks = HashSet::new();
+            let mut block_target_blocks = BTreeSet::new();
             // First, check possible places we'll jump to in the terminator.
             match &block.terminator.kind {
                 TerminatorKind::Goto(target) => {

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display};
+use std::{collections::BTreeSet, fmt::Display};
 
 use inkwell::{
     types::{BasicTypeEnum, FunctionType},
@@ -23,11 +23,11 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Monomorphisation {
-    pub types: HashSet<MonomorphisedType>,
-    pub functions: HashSet<MonomorphisedFunction>,
+    pub types: BTreeSet<MonomorphisedType>,
+    pub functions: BTreeSet<MonomorphisedFunction>,
     /// Tracks which monomorphisations of aspects have been used.
     /// This does *not* track which impls have been used.
-    pub aspects: HashSet<MonomorphisedAspect>,
+    pub aspects: BTreeSet<MonomorphisedAspect>,
 }
 
 impl Monomorphisation {
@@ -36,9 +36,9 @@ impl Monomorphisation {
     /// are used.
     pub fn new(mir: &ProjectMIR) -> Self {
         let mut mono = Self {
-            types: HashSet::new(),
-            functions: HashSet::new(),
-            aspects: HashSet::new(),
+            types: BTreeSet::new(),
+            functions: BTreeSet::new(),
+            aspects: BTreeSet::new(),
         };
 
         mono.track_def(
@@ -248,7 +248,7 @@ impl Display for MonomorphisedType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MonomorphisedFunction {
     pub func: QualifiedName,
     pub mono: MonomorphisationParameters,

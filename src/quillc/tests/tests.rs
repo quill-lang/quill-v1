@@ -115,7 +115,10 @@ fn build_determinism() {
                 Err(e) => panic!("{}", e),
             };
             if !file_diff::diff_files(&mut file1, &mut file2) {
-                eprintln!("target triple {} failed ({})", target_triple, name);
+                eprintln!(
+                    "MISMATCH: target triple {} failed to build deterministically ({})",
+                    target_triple, name
+                );
                 failed = true;
             }
         };

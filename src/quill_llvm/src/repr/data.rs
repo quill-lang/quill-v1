@@ -1,6 +1,6 @@
 //! Utilities for representations of data types and enum types.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use inkwell::{
     debug_info::{AsDIScope, DIDerivedType, DIFile, DIFlagsConstants, DIType},
@@ -449,7 +449,7 @@ pub struct DataRepresentationBuilder<'a, 'ctx> {
     field_types: BTreeMap<String, Type>,
 
     /// If a field's name is in this set, it can be accessed only behind a heap pointer.
-    indirect_fields: HashSet<String>,
+    indirect_fields: BTreeSet<String>,
 }
 
 impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
@@ -459,7 +459,7 @@ impl<'a, 'ctx> DataRepresentationBuilder<'a, 'ctx> {
             llvm_field_types: Vec::new(),
             field_indices: BTreeMap::new(),
             field_types: BTreeMap::new(),
-            indirect_fields: HashSet::new(),
+            indirect_fields: BTreeSet::new(),
         }
     }
 

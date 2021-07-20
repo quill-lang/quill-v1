@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
 use quill_type::Type;
@@ -30,8 +30,8 @@ pub(crate) struct IndirectedMonomorphisedType {
 /// so that data structures do not have infinite size. We detect cycles using Tarjan's strongly
 /// connected components algorithm.
 pub(crate) fn sort_types(
-    types: HashSet<MonomorphisedType>,
-    aspects: HashSet<MonomorphisedAspect>,
+    types: BTreeSet<MonomorphisedType>,
+    aspects: BTreeSet<MonomorphisedAspect>,
     index: &ProjectIndex,
 ) -> Vec<IndirectedMonomorphisedType> {
     // First, construct the directed graph.
@@ -204,7 +204,7 @@ fn fix_cycles(
 
     while let Some(node) = s.pop() {
         l.extend(components_by_index.remove(&node).unwrap());
-        // The `flatten` coalesces the HashSet and the Option.
+        // The `flatten` coalesces the BTreeSet and the Option.
         for target in components.edges.remove(&node).into_iter().flatten() {
             // Check if `target` has any incoming edges.
             let incoming_edges = incoming_edges.entry(target).or_default();
@@ -261,7 +261,7 @@ struct DirectedGraph<V> {
     /// This ensures we won't disturb existing edges.
     vertices: Vec<V>,
     /// Edges are pairs of vertices: the "from" and the "to".
-    edges: BTreeMap<usize, HashSet<usize>>,
+    edges: BTreeMap<usize, BTreeSet<usize>>,
 }
 
 impl<V> DirectedGraph<V> {
@@ -352,7 +352,7 @@ impl<V> DirectedGraph<V> {
 
 #[derive(Debug)]
 struct Tarjan<'a> {
-    graph_edges: &'a BTreeMap<usize, HashSet<usize>>,
+    graph_edges: &'a BTreeMap<usize, BTreeSet<usize>>,
 
     index: usize,
     stack: Vec<usize>,
@@ -361,24 +361,24 @@ struct Tarjan<'a> {
     indices: BTreeMap<usize, usize>,
     low_links: BTreeMap<usize, usize>,
     /// If on_stack contains a vertex index v, then v is on the stack.
-    on_stack: HashSet<usize>,
+    on_stack: BTreeSet<usize>,
 
     /// Strongly connected components are denoted by the set of vertices that they contain.
-    strongly_connected_components: Vec<HashSet<usize>>,
+    strongly_connected_components: Vec<BTreeSet<usize>>,
 }
 
 impl<'a> Tarjan<'a> {
     pub fn run_algorithm(
         num_vertices: usize,
-        graph_edges: &'a BTreeMap<usize, HashSet<usize>>,
-    ) -> Vec<HashSet<usize>> {
+        graph_edges: &'a BTreeMap<usize, BTreeSet<usize>>,
+    ) -> Vec<BTreeSet<usize>> {
         let mut tarjan = Tarjan {
             graph_edges,
             index: 0,
             stack: Vec::new(),
             indices: BTreeMap::new(),
             low_links: BTreeMap::new(),
-            on_stack: HashSet::new(),
+            on_stack: BTreeSet::new(),
             strongly_connected_components: Vec::new(),
         };
 
@@ -415,7 +415,7 @@ impl<'a> Tarjan<'a> {
         if *self.low_links.get_mut(&vertex_index).unwrap()
             == *self.indices.get_mut(&vertex_index).unwrap()
         {
-            let mut strongly_connected_component = HashSet::new();
+            let mut strongly_connected_component = BTreeSet::new();
             loop {
                 let other_vertex = self.stack.pop().unwrap();
                 self.on_stack.remove(&other_vertex);

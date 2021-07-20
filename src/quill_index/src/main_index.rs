@@ -2,7 +2,7 @@
 //! storing type information. The module index is sufficient to determine the type
 //! of any expression.
 
-use std::collections::{btree_map::Entry, BTreeMap, HashSet};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 
 use multimap::MultiMap;
 use quill_common::{
@@ -314,7 +314,7 @@ pub fn index(
                     .type_params
                     .iter()
                     .map(|ident| ident.name.name.clone())
-                    .collect::<HashSet<_>>();
+                    .collect::<BTreeSet<_>>();
 
                 let type_ctor = data
                     .type_ctor
@@ -371,7 +371,7 @@ pub fn index(
                     .type_params
                     .iter()
                     .map(|ident| ident.name.name.clone())
-                    .collect::<HashSet<_>>();
+                    .collect::<BTreeSet<_>>();
 
                 let variants = an_enum
                     .alternatives
