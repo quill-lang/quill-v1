@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 use quill_common::name::QualifiedName;
 
 /// This implements Ord to make Quill builds reproducible.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Type {
     /// An explicitly named type possibly with type parameters, e.g. `Bool` or `Either[T, U]`.
     Named {
@@ -35,7 +35,7 @@ pub enum Type {
 
 /// Represents the loan conditions of a borrowed value.
 /// This implements Ord to make Quill builds reproducible.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BorrowCondition {
     pub lifetime: Lifetime,
 }
@@ -47,7 +47,7 @@ impl Display for BorrowCondition {
 }
 
 /// This implements Ord to make Quill builds reproducible.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Lifetime {
     pub name: String,
 }
@@ -60,7 +60,7 @@ impl Display for Lifetime {
 
 /// The list of all core types, that are trivially supported by any LLVM output platform.
 /// This implements Ord to make Quill builds reproducible.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PrimitiveType {
     /// The unit type. This does not represent any particular value,
     /// and is defined to take zero memory to represent.

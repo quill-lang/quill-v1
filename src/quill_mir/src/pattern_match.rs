@@ -2,7 +2,6 @@
 
 use std::{collections::BTreeMap, ops::Deref};
 
-use multimap::MultiMap;
 use quill_common::{
     location::{Range, Ranged},
     name::QualifiedName,
@@ -28,12 +27,12 @@ enum PatternMismatchReason {
         enum_parameters: Vec<Type>,
         /// Maps enum discriminant names to the indices of the patterns that are matched by this discriminant.
         /// If a case is valid for any discriminant, it is put in *every* case.
-        cases: MultiMap<String, usize>,
+        cases: BTreeMap<String, Vec<usize>>,
     },
     Constant {
         /// Maps constant values to the indices of the patterns that are matched by this discriminant.
         /// If a case is valid for any value, it is put in *every* case, and also the `default` list.
-        cases: MultiMap<ConstantValue, usize>,
+        cases: BTreeMap<ConstantValue, Vec<usize>>,
         default: Vec<usize>,
     },
 }
@@ -123,16 +122,19 @@ fn first_difference(
                 unreachable!()
             };
 
-            let mut cases = MultiMap::new();
+            let mut cases = BTreeMap::<String, Vec<_>>::new();
 
             for (i, pat) in patterns.iter().enumerate() {
                 if let Pattern::TypeConstructor { type_ctor, .. } = pat {
                     // This case applies to exactly one discriminant.
-                    cases.insert(type_ctor.variant.as_ref().unwrap().clone(), i);
+                    cases
+                        .entry(type_ctor.variant.as_ref().unwrap().clone())
+                        .or_default()
+                        .push(i);
                 } else {
                     // This case applies to all discriminants.
                     for variant in &all_variants {
-                        cases.insert(variant.clone(), i);
+                        cases.entry(variant.clone()).or_default().push(i);
                     }
                 }
             }
@@ -249,13 +251,13 @@ fn first_difference(
 
             if needs_switch {
                 // There was a mismatch. We need to switch on this value.
-                let mut cases = MultiMap::new();
+                let mut cases = BTreeMap::<ConstantValue, Vec<_>>::new();
                 let mut default = Vec::new();
 
                 for (i, pat) in patterns.iter().enumerate() {
                     if let Pattern::Constant { value, .. } = pat {
                         // This case applies to exactly one value.
-                        cases.insert(*value, i);
+                        cases.entry(*value).or_default().push(i);
                     } else {
                         // This case applies to all values.
                         default.push(i);
@@ -266,7 +268,7 @@ fn first_difference(
                 let keys = cases.keys().copied().collect::<Vec<_>>();
                 for item in &default {
                     for value in &keys {
-                        cases.insert(*value, *item);
+                        cases.entry(*value).or_default().push(*item);
                     }
                 }
 

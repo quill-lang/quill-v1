@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use lspower::jsonrpc;
 use lspower::lsp::*;
 use lspower::{Client, LanguageServer};
-use multimap::MultiMap;
 use quill_common::diagnostic::DiagnosticResult;
 use quill_common::name::QualifiedName;
 use quill_common::{
@@ -121,10 +120,16 @@ impl Backend {
         fs: &PackageFileSystem,
         messages: impl IntoIterator<Item = ErrorMessage>,
     ) {
-        let diagnostics_by_file = messages
-            .into_iter()
-            .map(|message| (message.diagnostic.source_file.clone(), message))
-            .collect::<MultiMap<_, _>>();
+        let diagnostics_by_file = {
+            let iter = messages
+                .into_iter()
+                .map(|message| (message.diagnostic.source_file.clone(), message));
+            let mut result = BTreeMap::<SourceFileIdentifier, Vec<ErrorMessage>>::new();
+            for (k, v) in iter {
+                result.entry(k).or_default().push(v);
+            }
+            result
+        };
 
         let mut emitted = self.emitted_diagnostics_to.write().await;
         let emitted = emitted.entry(project_root).or_default();

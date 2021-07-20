@@ -13,21 +13,21 @@ use quill_index::TypeParameter;
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct ArgumentIndex(pub u64);
 impl Display for ArgumentIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}arg", self.0)
     }
 }
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct LocalVariableId(pub u64);
 impl Display for LocalVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}local", self.0)
     }
 }
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct BasicBlockId(pub u64);
 
 impl Display for BasicBlockId {
@@ -106,7 +106,7 @@ impl Display for DefinitionBodyM {
 /// Other objects, such as symbols in global scope, must be instanced as local variables
 /// before being operated on. This allows the borrow checker and the code translator
 /// to better understand the control flow and data flow.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub enum LocalVariableName {
     /// An argument starts as being 'owned'.
     /// Parts of arguments, such as pattern-matched components, are explicitly

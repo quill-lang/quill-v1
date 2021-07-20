@@ -517,7 +517,7 @@ dependencies = [
 [[package]]
 name = "inkwell"
 version = "0.1.0"
-source = "git+https://github.com/TheDan64/inkwell?branch=master#aa4de1d78471a3d2f0fda1f56801177ddf80f3bf"
+source = "git+https://github.com/TheDan64/inkwell?branch=master#41857f909dad274b5c9fd004bc5b1f9f3e37e3b8"
 dependencies = [
  "either",
  "inkwell_internals",
@@ -531,7 +531,7 @@ dependencies = [
 [[package]]
 name = "inkwell_internals"
 version = "0.3.0"
-source = "git+https://github.com/TheDan64/inkwell?branch=master#aa4de1d78471a3d2f0fda1f56801177ddf80f3bf"
+source = "git+https://github.com/TheDan64/inkwell?branch=master#41857f909dad274b5c9fd004bc5b1f9f3e37e3b8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -698,15 +698,6 @@ checksum = "a92518e98c078586bc6c934028adcca4c92a53d6a958196de835170a01d84e4b"
 dependencies = [
  "adler",
  "autocfg",
-]
-
-[[package]]
-name = "multimap"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -952,7 +943,6 @@ name = "quill_index"
 version = "0.1.0"
 dependencies = [
  "either",
- "multimap",
  "quill_common",
  "quill_error",
  "quill_lexer",
@@ -1019,7 +1009,6 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "lspower",
- "multimap",
  "quill_borrow_check",
  "quill_common",
  "quill_index",
@@ -1040,7 +1029,6 @@ dependencies = [
 name = "quill_mir"
 version = "0.1.0"
 dependencies = [
- "multimap",
  "quill_common",
  "quill_error",
  "quill_index",
@@ -1088,7 +1076,6 @@ dependencies = [
 name = "quill_type_deduce"
 version = "0.1.0"
 dependencies = [
- "multimap",
  "quill_common",
  "quill_error",
  "quill_index",
@@ -1454,9 +1441,9 @@ dependencies = [
 
 [[package]]
 name = "tinyvec"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b5220f05bb7de7f3f53c7c065e1199b3172696fe2db9f9c4d8ad9b4ee74c342"
+checksum = "4ac2e1d4bd0f75279cfd5a076e0d578bbf02c22b7c39e766c437dd49b3ec43e0"
 dependencies = [
  "tinyvec_macros",
 ]

@@ -4,7 +4,6 @@
 
 use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 
-use multimap::MultiMap;
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{
@@ -192,7 +191,7 @@ fn compute_visible_types_and_aspects<'a>(
     file_parsed: &'a FileP,
     project_types: &'a ProjectTypesAspectsC,
 ) -> DiagnosticResult<BTreeMap<&'a str, ForeignItemDeclarationC<'a>>> {
-    let mut visible_types = MultiMap::new();
+    let mut visible_types = BTreeMap::<&str, Vec<ForeignItemDeclarationC>>::new();
     let mut messages = Vec::new();
 
     let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
@@ -202,13 +201,13 @@ fn compute_visible_types_and_aspects<'a>(
     messages.extend(more_messages);
     for file in used_files.unwrap() {
         for (ty, decl) in &project_types[&file.file] {
-            visible_types.insert(
-                ty.as_str(),
-                ForeignItemDeclarationC {
+            visible_types
+                .entry(ty.as_str())
+                .or_default()
+                .push(ForeignItemDeclarationC {
                     source_file: file.file.clone(),
                     decl,
-                },
-            );
+                });
         }
     }
 
