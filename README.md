@@ -78,4 +78,4 @@ Quill contains a lot of zero-cost abstractions, such as the effect system or the
 
 ### Reproducibility
 
-Builds in Quill are [reproducible](https://reproducible-builds.org/). We aim to increase the determinism of Quill builds as much as possible, but since we rely on non-deterministic technologies such as the Zig compiler, we can't guarantee binary determinism. However, MIR (an intermediate representation of Quill source code) determinism is guaranteed.
+Builds in Quill are [reproducible](https://reproducible-builds.org/) at the binary level for release builds on non-Windows platforms. MIR (an intermediate representation of Quill source code) determinism is guaranteed for all platforms and build types.
