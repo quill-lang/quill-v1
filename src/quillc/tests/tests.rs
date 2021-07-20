@@ -64,11 +64,11 @@ fn build_determinism() {
                 optimisation_type: quill_target::OptimisationType::ReleaseSafe,
                 emit_hir: false,
                 emit_mir: false,
-                emit_project_mir: false,
-                emit_unverified_llvm_ir: false,
-                emit_basic_llvm_ir: false,
-                emit_llvm_ir: false,
-                emit_asm: false,
+                emit_project_mir: true,
+                emit_unverified_llvm_ir: true,
+                emit_basic_llvm_ir: true,
+                emit_llvm_ir: true,
+                emit_asm: true,
             },
             zig_compiler: PathBuf::from("zig"),
         }) {
@@ -77,18 +77,6 @@ fn build_determinism() {
         }
 
         // Cache the build artifacts.
-        let exe_name = if let quill_target::TargetArchitecture::Wasm32 = target_triple.arch {
-            "core.wasm"
-        } else if let TargetOS::Windows = target_triple.os {
-            "core.exe"
-        } else {
-            "core"
-        };
-        let exe_path = build_folder.join(exe_name);
-        let other_exe_path = other_build_folder.join(exe_name);
-        let obj_path = build_folder.join("out.o");
-        let other_obj_path = other_build_folder.join("out.o");
-
         std::fs::rename(&build_folder, &other_build_folder).unwrap();
 
         // Invoke quillc a second time.
@@ -101,11 +89,11 @@ fn build_determinism() {
                 optimisation_type: quill_target::OptimisationType::ReleaseSafe,
                 emit_hir: false,
                 emit_mir: false,
-                emit_project_mir: false,
-                emit_unverified_llvm_ir: false,
-                emit_basic_llvm_ir: false,
-                emit_llvm_ir: false,
-                emit_asm: false,
+                emit_project_mir: true,
+                emit_unverified_llvm_ir: true,
+                emit_basic_llvm_ir: true,
+                emit_llvm_ir: true,
+                emit_asm: true,
             },
             zig_compiler: PathBuf::from("zig"),
         }) {
@@ -117,7 +105,7 @@ fn build_determinism() {
         }
 
         // Check if the files match exactly.
-        let mut diff = |path1: &Path, path2: &Path, name: &str| {
+        let mut diff = |name: &str, path1: &Path, path2: &Path| {
             let mut file1 = match File::open(path1) {
                 Ok(f) => f,
                 Err(e) => panic!("{}", e),
@@ -132,8 +120,44 @@ fn build_determinism() {
             }
         };
 
-        diff(&obj_path, &other_obj_path, "obj");
-        diff(&exe_path, &other_exe_path, "exe");
+        let exe_name = if let quill_target::TargetArchitecture::Wasm32 = target_triple.arch {
+            "core.wasm"
+        } else if let TargetOS::Windows = target_triple.os {
+            "core.exe"
+        } else {
+            "core"
+        };
+
+        diff(
+            "mir",
+            &build_folder.join("out.mir"),
+            &other_build_folder.join("out.mir"),
+        );
+        diff(
+            "basic.ll",
+            &build_folder.join("out.basic.ll"),
+            &other_build_folder.join("out.basic.ll"),
+        );
+        diff(
+            "ll",
+            &build_folder.join("out.ll"),
+            &other_build_folder.join("out.ll"),
+        );
+        diff(
+            "asm",
+            &build_folder.join("out.asm"),
+            &other_build_folder.join("out.asm"),
+        );
+        diff(
+            "obj",
+            &build_folder.join("out.o"),
+            &other_build_folder.join("out.o"),
+        );
+        diff(
+            "exe",
+            &build_folder.join(exe_name),
+            &other_build_folder.join(exe_name),
+        );
 
         // Store the build folder for later inspection.
         let stored_build_artifacts =
