@@ -2,7 +2,6 @@
 
 use std::collections::{btree_map::Entry, BTreeMap};
 
-use multimap::MultiMap;
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{Range, Ranged, SourceFileIdentifier},
@@ -196,10 +195,10 @@ fn compute_visible_names<'a>(
     project_index: &'a ProjectIndex,
 ) -> DiagnosticResult<VisibleNames<'a>> {
     let mut messages = Vec::new();
-    let mut visible_types = MultiMap::new();
-    let mut visible_enum_variants = MultiMap::new();
-    let mut visible_defs = MultiMap::new();
-    let mut visible_aspects = MultiMap::new();
+    let mut visible_types = BTreeMap::<&str, Vec<ForeignDeclaration<_>>>::new();
+    let mut visible_enum_variants = BTreeMap::<&str, Vec<ForeignDeclaration<_>>>::new();
+    let mut visible_defs = BTreeMap::<&str, Vec<ForeignDeclaration<_>>>::new();
+    let mut visible_aspects = BTreeMap::<&str, Vec<ForeignDeclaration<_>>>::new();
 
     let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
         project_index.contains_key(name)
@@ -212,40 +211,40 @@ fn compute_visible_names<'a>(
     for file in used_files.unwrap() {
         let file_index = &project_index[&file.file];
         for (ty, decl) in &file_index.types {
-            visible_types.insert(
-                ty.as_str(),
-                ForeignDeclaration {
+            visible_types
+                .entry(ty.as_str())
+                .or_default()
+                .push(ForeignDeclaration {
                     source_file: file.file.clone(),
                     decl,
-                },
-            );
+                });
         }
         for (variant, ty) in &file_index.enum_variant_types {
-            visible_enum_variants.insert(
-                variant.as_str(),
-                ForeignDeclaration {
+            visible_enum_variants
+                .entry(variant.as_str())
+                .or_default()
+                .push(ForeignDeclaration {
                     source_file: file.file.clone(),
                     decl: &file_index.types[ty],
-                },
-            );
+                });
         }
         for (name, def) in &file_index.definitions {
-            visible_defs.insert(
-                name.as_str(),
-                ForeignDeclaration {
+            visible_defs
+                .entry(name.as_str())
+                .or_default()
+                .push(ForeignDeclaration {
                     source_file: file.file.clone(),
                     decl: def,
-                },
-            );
+                });
         }
         for (name, def) in &file_index.aspects {
-            visible_aspects.insert(
-                name.as_str(),
-                ForeignDeclaration {
+            visible_aspects
+                .entry(name.as_str())
+                .or_default()
+                .push(ForeignDeclaration {
                     source_file: file.file.clone(),
                     decl: def,
-                },
-            );
+                });
         }
     }
 

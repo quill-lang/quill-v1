@@ -6,7 +6,7 @@ use quill_type_deduce::replace_type_variables;
 
 use crate::monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MonomorphisedItem {
     Type(MonomorphisedType),
     Aspect(MonomorphisedAspect),

@@ -1,5 +1,4 @@
 use std::fmt::{Debug, Display};
-use std::hash::Hash;
 
 use crate::location::{Range, SourceFileIdentifier, SourceFileType};
 
@@ -40,13 +39,6 @@ impl Ord for QualifiedName {
         self.source_file
             .cmp(&other.source_file)
             .then(self.name.cmp(&other.name))
-    }
-}
-
-impl Hash for QualifiedName {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.source_file.hash(state);
-        self.name.hash(state);
     }
 }
 

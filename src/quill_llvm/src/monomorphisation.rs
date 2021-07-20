@@ -182,7 +182,7 @@ impl Monomorphisation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisationParameters {
     type_parameters: Vec<Type>,
 }
@@ -228,7 +228,7 @@ fn anonymise_borrows(ty: Type) -> Type {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisedType {
     pub name: QualifiedName,
     pub mono: MonomorphisationParameters,
@@ -248,7 +248,7 @@ impl Display for MonomorphisedType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisedFunction {
     pub func: QualifiedName,
     pub mono: MonomorphisationParameters,
@@ -294,7 +294,7 @@ impl Display for MonomorphisedFunction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisedAspect {
     pub name: QualifiedName,
     pub mono: MonomorphisationParameters,
@@ -314,7 +314,7 @@ impl Display for MonomorphisedAspect {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FunctionObjectDescriptor {
     pub func: QualifiedName,
     pub mono: MonomorphisationParameters,

@@ -1,3 +1,6 @@
+//! Although not required for builds, some of the structures here implement Hash for
+//! ariadne's error reporting.
+
 use std::{
     fmt::{Debug, Display},
     path::PathBuf,

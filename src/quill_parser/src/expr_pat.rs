@@ -72,7 +72,7 @@ pub enum ExprPatP {
 }
 
 /// This implements Ord to make Quill builds reproducible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConstantValue {
     Unit,
     Bool(bool),

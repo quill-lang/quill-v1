@@ -1,4 +1,4 @@
-use std::{fmt::Display, hash::Hash};
+use std::fmt::Display;
 
 use quill_common::location::{Range, Ranged};
 
@@ -122,12 +122,6 @@ impl PartialOrd for NameP {
 impl Ord for NameP {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.name.cmp(&other.name)
-    }
-}
-
-impl Hash for NameP {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state)
     }
 }
 
