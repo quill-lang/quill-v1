@@ -248,6 +248,7 @@ fn substitute_contents(
                 visible_names,
             )
         }
+        ExpressionContentsT::Match { match_token } => todo!(),
     }
 }
 

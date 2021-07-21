@@ -51,6 +51,7 @@ pub enum TokenType {
     Impl,
     /// TODO convert the `copy` keyword into a function in a `Copy` trait
     Copy,
+    Match,
     CompilerIntrinsic,
 
     Name(String),
@@ -506,6 +507,7 @@ fn token_type_alphabetic(s: String) -> TokenType {
         "aspect" => TokenType::Aspect,
         "impl" => TokenType::Impl,
         "copy" => TokenType::Copy,
+        "match" => TokenType::Match,
         "compiler_intrinsic" => TokenType::CompilerIntrinsic,
         _ => TokenType::Name(s),
     }

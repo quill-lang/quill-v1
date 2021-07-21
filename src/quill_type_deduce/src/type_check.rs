@@ -1148,6 +1148,11 @@ impl<'a> TypeChecker<'a> {
                     )),
                 }
             }
+            ExprPatP::Match {
+                match_token,
+                expr,
+                cases,
+            } => todo!(),
         }
     }
 

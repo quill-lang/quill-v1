@@ -48,6 +48,7 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
+        ExpressionContents::Match { .. } => todo!(),
     }
 }
 
@@ -116,8 +117,10 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             .flatten()
             .collect()
             */
-            Vec::new()
+            todo!()
+            // Vec::new()
         }
+        ExpressionContents::Match { match_token } => todo!(),
     }
 }
 
@@ -234,6 +237,7 @@ pub(crate) fn generate_expr(
         ExpressionContents::Impl {
             implementations, ..
         } => generate_expr_impl(ty, implementations, ctx, range, terminator),
+        ExpressionContents::Match { match_token } => todo!(),
     }
 }
 

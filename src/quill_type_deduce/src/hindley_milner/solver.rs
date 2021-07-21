@@ -49,6 +49,7 @@ pub(crate) fn solve_type_constraints(
                 }
                 _ => mid_priority_constraints.push_back(constraint),
             },
+            Constraint::FieldAccess { .. } => mid_priority_constraints.push_back(constraint),
         }
     }
     // To solve the constraints, we will pop entries off the front of the queue, process them, and if needed push them to the back of the queue.
@@ -144,6 +145,7 @@ fn solve_type_constraint_queue(
                     }
                 }
             }
+            Constraint::FieldAccess { ty, field, reason } => todo!(),
         }
     }
 
@@ -379,7 +381,9 @@ fn apply_substitution_to_constraints(
     for (ty, constraint) in constraint_queue {
         apply_substitution(mgu, ty);
         match constraint {
-            Constraint::Equality { ty: other, .. } => apply_substitution(mgu, other),
+            Constraint::Equality { ty: other, .. } | Constraint::FieldAccess { ty: other, .. } => {
+                apply_substitution(mgu, other)
+            }
         }
     }
 }
