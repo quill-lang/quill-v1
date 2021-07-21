@@ -149,7 +149,7 @@ pub(crate) fn generate_constraints(
                 }
                 // If None, we couldn't find a symbol in scope.
                 None => {
-                    // Now, check to see if this is an immediate variable like `unit`, which always produces a value.
+                    // Now, check to see if this is a constant like `unit`, which always produces a value.
 
                     DiagnosticResult::fail(ErrorMessage::new(
                         format!("variable `{}` not recognised", identifier),
@@ -159,7 +159,7 @@ pub(crate) fn generate_constraints(
                 }
             }
         }
-        ExprPatP::Immediate {
+        ExprPatP::Constant {
             range,
             value: ConstantValue::Unit,
         } => DiagnosticResult::ok(ExprTypeCheck {
@@ -176,7 +176,7 @@ pub(crate) fn generate_constraints(
             let_variables,
             new_variables: None,
         }),
-        ExprPatP::Immediate {
+        ExprPatP::Constant {
             range,
             value: ConstantValue::Bool(value),
         } => DiagnosticResult::ok(ExprTypeCheck {
@@ -193,7 +193,7 @@ pub(crate) fn generate_constraints(
             let_variables,
             new_variables: None,
         }),
-        ExprPatP::Immediate {
+        ExprPatP::Constant {
             range,
             value: ConstantValue::Int(value),
         } => DiagnosticResult::ok(ExprTypeCheck {
@@ -1000,11 +1000,13 @@ pub(crate) fn generate_constraints(
                 let mut assumptions = expr.assumptions;
                 let mut constraints = expr.constraints;
                 let mut type_variable_definition_ranges = expr.type_variable_definition_ranges;
+                let mut body = Vec::new();
                 for (case_pattern, case_typeck) in cases {
                     assumptions = assumptions.union(case_typeck.assumptions);
                     constraints = constraints.union(case_typeck.constraints);
                     type_variable_definition_ranges
                         .extend(case_typeck.type_variable_definition_ranges);
+                    body.push((case_pattern, case_typeck.expr));
                 }
 
                 ExprTypeCheck {
@@ -1012,8 +1014,8 @@ pub(crate) fn generate_constraints(
                         type_variable: TypeVariable::Unknown { id: type_variable },
                         contents: ExpressionContentsT::Match {
                             match_token,
-                            // TODO: actually add the cases to this match expression
-                            // cases: body,
+                            expr: Box::new(expr.expr),
+                            cases: body,
                         },
                     },
                     type_variable_definition_ranges,
@@ -1094,7 +1096,7 @@ fn generate_pattern_variables(
                     },
                 }
             }
-            ExprPatP::Immediate { .. } => PatternMatchConstraints {
+            ExprPatP::Constant { .. } => PatternMatchConstraints {
                 // Immediate patterns do not create any constraints,
                 // since they do not define new variables.
                 variables: Vec::new(),

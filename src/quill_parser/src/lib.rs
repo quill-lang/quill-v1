@@ -872,7 +872,7 @@ impl<'input> Parser<'input> {
             })
         } else {
             self.parse_identifier_maybe().map(|identifier| identifier.bind(|identifier| {
-                let immediate = if identifier.segments.len() == 1 {
+                let constant = if identifier.segments.len() == 1 {
                     if identifier.segments[0].name == "unit" {
                         // This is a unit literal.
                         Some(ConstantValue::Unit)
@@ -901,8 +901,8 @@ impl<'input> Parser<'input> {
                     None
                 };
 
-                if let Some(value) = immediate {
-                    DiagnosticResult::ok(ExprPatP::Immediate { range: identifier.range(), value })
+                if let Some(value) = constant {
+                    DiagnosticResult::ok(ExprPatP::Constant { range: identifier.range(), value })
                 } else {
                     // If this is followed by a brace bracket, we are trying to construct an instance of a data type.
                     if let Some(tree) = self.parse_tree(BracketType::Brace) {

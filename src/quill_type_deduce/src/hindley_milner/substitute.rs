@@ -6,11 +6,18 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::ProjectIndex;
-use quill_parser::definition::DefinitionBodyP;
+use quill_parser::{
+    definition::DefinitionBodyP,
+    expr_pat::{ConstantValue, ExprPatP},
+    identifier::NameP,
+};
 use quill_type::Type;
 
 use crate::{
-    hir::expr::{Expression, ExpressionContents, ExpressionContentsT, ExpressionT, TypeVariable},
+    hir::{
+        expr::{Expression, ExpressionContents, ExpressionContentsT, ExpressionT, TypeVariable},
+        pattern::Pattern,
+    },
     type_check::{TypeChecker, TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
@@ -248,7 +255,134 @@ fn substitute_contents(
                 visible_names,
             )
         }
-        ExpressionContentsT::Match { match_token } => todo!(),
+        ExpressionContentsT::Match {
+            match_token,
+            expr,
+            cases,
+        } => substitute(
+            substitution,
+            *expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .bind(|expr| {
+            cases
+                .into_iter()
+                .map(|(pattern, replacement)| {
+                    substitute(
+                        substitution,
+                        replacement,
+                        source_file,
+                        project_index,
+                        visible_names,
+                    )
+                    .bind(|replacement| {
+                        substitute_pattern(
+                            substitution,
+                            &pattern,
+                            &expr.ty,
+                            source_file,
+                            project_index,
+                            visible_names,
+                        )
+                        .map(|pattern| (pattern, replacement))
+                    })
+                })
+                .collect::<DiagnosticResult<Vec<_>>>()
+                .map(|cases| ExpressionContents::Match {
+                    match_token,
+                    expr: Box::new(expr),
+                    cases,
+                })
+        }),
+    }
+}
+
+/// Verify that the pattern is of the given type, and then return it.
+fn substitute_pattern(
+    substitution: &BTreeMap<TypeVariableId, TypeVariable>,
+    pat: &ExprPatP,
+    ty: &Type,
+    source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
+) -> DiagnosticResult<Pattern> {
+    match pat {
+        ExprPatP::Variable(name) => DiagnosticResult::ok(Pattern::Named(name.segments[0].clone())),
+        ExprPatP::Constant { range, value } => {
+            // Check it's the right type.
+            match value {
+                ConstantValue::Unit => {
+                    if !matches!(ty, Type::Primitive(quill_type::PrimitiveType::Unit)) {
+                        return DiagnosticResult::fail(ErrorMessage::new(
+                            format!("expected a pattern for type `{}`, but found `Unit`", ty),
+                            Severity::Error,
+                            Diagnostic::at(source_file, range),
+                        ));
+                    }
+                }
+                ConstantValue::Bool(_) => {
+                    if !matches!(ty, Type::Primitive(quill_type::PrimitiveType::Bool)) {
+                        return DiagnosticResult::fail(ErrorMessage::new(
+                            format!("expected a pattern for type `{}`, but found `Bool`", ty),
+                            Severity::Error,
+                            Diagnostic::at(source_file, range),
+                        ));
+                    }
+                }
+                ConstantValue::Int(_) => {
+                    if !matches!(ty, Type::Primitive(quill_type::PrimitiveType::Int)) {
+                        return DiagnosticResult::fail(ErrorMessage::new(
+                            format!("expected a pattern for type `{}`, but found `Int`", ty),
+                            Severity::Error,
+                            Diagnostic::at(source_file, range),
+                        ));
+                    }
+                }
+            }
+            DiagnosticResult::ok(Pattern::Constant {
+                range: *range,
+                value: *value,
+            })
+        }
+        ExprPatP::Apply(_, _) => todo!(),
+        ExprPatP::Lambda {
+            lambda_token,
+            params,
+            expr,
+        } => todo!(),
+        ExprPatP::Let {
+            let_token,
+            name,
+            expr,
+        } => todo!(),
+        ExprPatP::Block {
+            open_bracket,
+            close_bracket,
+            statements,
+        } => todo!(),
+        ExprPatP::Borrow { borrow_token, expr } => todo!(),
+        ExprPatP::Copy { copy_token, expr } => todo!(),
+        ExprPatP::ConstructData {
+            data_constructor,
+            open_brace,
+            close_brace,
+            fields,
+        } => todo!(),
+        ExprPatP::Impl { impl_token, body } => todo!(),
+        ExprPatP::ImplPattern {
+            impl_token,
+            open_brace,
+            close_brace,
+            fields,
+        } => todo!(),
+        ExprPatP::Match {
+            match_token,
+            expr,
+            cases,
+        } => todo!(),
+        ExprPatP::Unknown(_) => todo!(),
     }
 }
 

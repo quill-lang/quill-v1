@@ -120,7 +120,11 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             todo!()
             // Vec::new()
         }
-        ExpressionContents::Match { match_token } => todo!(),
+        ExpressionContents::Match {
+            match_token,
+            expr,
+            cases,
+        } => todo!(),
     }
 }
 
@@ -237,7 +241,11 @@ pub(crate) fn generate_expr(
         ExpressionContents::Impl {
             implementations, ..
         } => generate_expr_impl(ty, implementations, ctx, range, terminator),
-        ExpressionContents::Match { match_token } => todo!(),
+        ExpressionContents::Match {
+            match_token,
+            expr,
+            cases,
+        } => todo!(),
     }
 }
 

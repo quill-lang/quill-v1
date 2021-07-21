@@ -227,7 +227,7 @@ fn first_difference(
     } else {
         // No patterns are probing inside this variable.
         // Now, check if any pattern is a primitive constant.
-        let immediate_value = patterns.iter().find_map(|pat| {
+        let constant_value = patterns.iter().find_map(|pat| {
             if let Pattern::Constant { value, .. } = pat {
                 if !matches!(value, ConstantValue::Unit) {
                     Some(*value)
@@ -239,11 +239,11 @@ fn first_difference(
             }
         });
 
-        if let Some(immediate_value) = immediate_value {
+        if let Some(constant_value) = constant_value {
             // We may need to switch on this value.
             let needs_switch = patterns.iter().any(|pat| {
                 if let Pattern::Constant { value, .. } = pat {
-                    *value != immediate_value
+                    *value != constant_value
                 } else {
                     true
                 }
@@ -282,7 +282,7 @@ fn first_difference(
                 None
             }
         } else {
-            // The patterns did not reference an immediate value.
+            // The patterns did not reference a constant value.
             // Now, check if any pattern is a borrow of some variable.
             let borrowed = patterns.iter().find_map(|pat| {
                 if let Pattern::Borrow { borrow_token, .. } = pat {

@@ -842,7 +842,7 @@ impl<'a> TypeChecker<'a> {
                     ))
                 }
             }
-            ExprPatP::Immediate { range, value } => match expected_type {
+            ExprPatP::Constant { range, value } => match expected_type {
                 Type::Borrow { ty, .. } => DiagnosticResult::fail(ErrorMessage::new(
                     format!(
                         "expected a borrow of a value of type {}, not `{}`",
@@ -1148,11 +1148,11 @@ impl<'a> TypeChecker<'a> {
                     )),
                 }
             }
-            ExprPatP::Match {
-                match_token,
-                expr,
-                cases,
-            } => todo!(),
+            ExprPatP::Match { match_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("match expressions are not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &match_token),
+            )),
         }
     }
 
