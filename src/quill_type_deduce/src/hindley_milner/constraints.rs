@@ -1,4 +1,5 @@
 use quill_common::{location::Range, name::QualifiedName};
+use quill_parser::identifier::NameP;
 
 use crate::hir::expr::TypeVariable;
 
@@ -24,6 +25,12 @@ pub(crate) enum Constraint {
     Equality {
         ty: TypeVariable,
         reason: ConstraintEqualityReason,
+    },
+    /// The given type is exactly equal to a field of this type.
+    FieldAccess {
+        ty: TypeVariable,
+        field: NameP,
+        reason: ConstraintFieldAccessReason,
     },
 }
 
@@ -85,4 +92,13 @@ pub(crate) enum ConstraintEqualityReason {
     Borrow { expr: Range, borrow_token: Range },
     /// A variable was copied.
     Copy { expr: Range, copy_token: Range },
+    /// This was a variable defined in a pattern match case,
+    /// so it must have the same type as the input to the match expression.
+    MatchVariable { input_expr: Range },
+}
+
+/// This constraint was created because we accessed a field using a match expression.
+#[derive(Debug)]
+pub(crate) struct ConstraintFieldAccessReason {
+    pub input_expr: Range,
 }

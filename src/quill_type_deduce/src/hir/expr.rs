@@ -84,9 +84,16 @@ pub enum ExpressionContentsGeneric<E, T, V, I> {
     Copy { copy_token: Range, expr: Box<E> },
     /// An implementation of an aspect.
     Impl {
-        /// Maps names of definitions to their implementations.
         impl_token: Range,
+        /// Maps names of definitions to their implementations.
         implementations: I,
+    },
+    /// A match expression, specifically something of the form `match expr { pat -> result, pat -> result, ... }`
+    Match {
+        match_token: Range,
+        // expr: Box<ExprPatP>,
+        // /// A list of patterns and their replacements.
+        // cases: Vec<(ExprPatP, ExprPatP)>,
     },
 }
 
@@ -135,6 +142,7 @@ where
                 copy_token, expr, ..
             } => copy_token.union(expr.range()),
             ExpressionContentsGeneric::Impl { impl_token, .. } => *impl_token,
+            ExpressionContentsGeneric::Match { match_token, .. } => *match_token,
         }
     }
 }

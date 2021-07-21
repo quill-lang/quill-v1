@@ -66,6 +66,13 @@ pub enum ExprPatP {
         close_brace: Range,
         fields: ConstructDataFields,
     },
+    /// A match expression, specifically something of the form `match expr { pat -> result, pat -> result, ... }`
+    Match {
+        match_token: Range,
+        expr: Box<ExprPatP>,
+        /// A list of patterns and their replacements.
+        cases: Vec<(ExprPatP, ExprPatP)>,
+    },
     /// An underscore `_` representing an unknown.
     /// This is valid only in patterns, not normal expressions.
     Unknown(Range),
@@ -129,6 +136,7 @@ impl Ranged for ExprPatP {
                 close_brace,
                 ..
             } => impl_token.range().union(close_brace.range()),
+            ExprPatP::Match { match_token, .. } => *match_token,
         }
     }
 }
