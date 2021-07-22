@@ -305,6 +305,13 @@ impl SemanticTokenGenerator {
                     );
                 }
             }
+            ExprPatP::Match { expr, cases, .. } => {
+                self.gen_expr(*expr, conditions.clone());
+                for (pat, replacement) in cases {
+                    self.gen_expr(pat, conditions.clone());
+                    self.gen_expr(replacement, conditions.clone());
+                }
+            }
         }
     }
 }
@@ -352,6 +359,7 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             }
             result
         }
+        ExprPatP::Match { .. } => unreachable!(),
     }
 }
 
