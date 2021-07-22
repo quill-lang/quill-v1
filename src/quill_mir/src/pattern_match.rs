@@ -794,7 +794,7 @@ pub(crate) fn bind_pattern_variables(
             };
             let drop_stmt = Statement {
                 range,
-                kind: StatementKind::DropIfAlive {
+                kind: StatementKind::DropFreeIfAlive {
                     variable: LocalVariableName::Local(local),
                 },
             };

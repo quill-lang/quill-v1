@@ -188,7 +188,7 @@ fn check_ownership_walk(
                 );
                 make_owned(statuses, stmt.range, *target);
             }
-            StatementKind::DropIfAlive { variable } => {
+            StatementKind::DropFreeIfAlive { variable } => {
                 let drop_stmts = make_dropped(statuses, stmt.range, *variable);
                 let len = drop_stmts.len();
                 block.statements.splice((i - 1)..i, drop_stmts);

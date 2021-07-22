@@ -232,19 +232,19 @@ fn create_cfg(
             for temp in func.locals_to_drop {
                 return_block.statements.push(Statement {
                     range,
-                    kind: StatementKind::DropIfAlive { variable: temp },
+                    kind: StatementKind::DropFreeIfAlive { variable: temp },
                 })
             }
             for temp in bound_variables {
                 return_block.statements.push(Statement {
                     range,
-                    kind: StatementKind::DropIfAlive { variable: temp },
+                    kind: StatementKind::DropFreeIfAlive { variable: temp },
                 })
             }
             for i in 0..arg_types.len() {
                 return_block.statements.push(Statement {
                     range,
-                    kind: StatementKind::DropIfAlive {
+                    kind: StatementKind::DropFreeIfAlive {
                         variable: LocalVariableName::Argument(ArgumentIndex(i as u64)),
                     },
                 })

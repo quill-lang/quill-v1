@@ -105,7 +105,7 @@ fn convert_stmt(stmt: Statement, arities: &BTreeMap<QualifiedName, u64>) -> Vec<
                 },
             }]
         }
-        StatementKind::DropIfAlive { .. } => {
+        StatementKind::DropFreeIfAlive { .. } => {
             unreachable!("the borrow checker should have deleted these statements already")
         }
         kind => vec![Statement {

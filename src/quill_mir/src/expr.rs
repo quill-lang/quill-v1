@@ -591,7 +591,7 @@ fn generate_expr_block(
             .rev()
             .map(|local| Statement {
                 range,
-                kind: StatementKind::DropIfAlive {
+                kind: StatementKind::DropFreeIfAlive {
                     variable: ctx.get_name_of_local(local),
                 },
             })
@@ -622,7 +622,7 @@ fn generate_expr_block(
             .statements
             .extend(chain.locals_to_drop.into_iter().map(|local| Statement {
                 range,
-                kind: StatementKind::DropIfAlive { variable: local },
+                kind: StatementKind::DropFreeIfAlive { variable: local },
             }));
 
         ExprGeneratedM {
@@ -669,7 +669,7 @@ fn generate_expr_block(
             .statements
             .extend(chain.locals_to_drop.into_iter().map(|local| Statement {
                 range,
-                kind: StatementKind::DropIfAlive { variable: local },
+                kind: StatementKind::DropFreeIfAlive { variable: local },
             }));
 
         ExprGeneratedM {
@@ -968,6 +968,7 @@ fn generate_expr_match(
         name: None,
     });
     // Create a dummy basic block which all of the other blocks will redirect to after finishing.
+    // This final block will drop the contents of the source expression.
     let final_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: Vec::new(),
         terminator,
@@ -978,7 +979,8 @@ fn generate_expr_match(
     let replacements = replacements
         .into_iter()
         .map(|replacement| {
-            // Generate a basic block to move the value of the generated expression into `result`.
+            // Generate a dummy basic block to act as a signal to move the value of the generated expression
+            // into `result` conditionally using a Phi node.
             let terminator_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
                 statements: Vec::new(),
                 terminator: Terminator {
@@ -994,19 +996,26 @@ fn generate_expr_match(
                     kind: TerminatorKind::Goto(terminator_block),
                 },
             );
-            ctx.control_flow_graph
-                .basic_blocks
-                .get_mut(&terminator_block)
-                .unwrap()
-                .statements
-                .push(Statement {
-                    range: expr.range(),
-                    kind: StatementKind::Assign {
-                        target: LocalVariableName::Local(result),
-                        source: Rvalue::Move(Place::new(expr_result.variable)),
-                    },
-                });
-            expr_result.block
+            // ctx.control_flow_graph
+            //     .basic_blocks
+            //     .get_mut(&terminator_block)
+            //     .unwrap()
+            //     .statements
+            //     .push(Statement {
+            //         range: expr.range(),
+            //         kind: StatementKind::Assign {
+            //             target: LocalVariableName::Local(result),
+            //             source: Rvalue::Move(Place::new(expr_result.variable)),
+            //         },
+            //     });
+
+            // Return: (
+            // the block to call in order to execute the expression;
+            // the terminator block that we jump from in order to reach the final block;
+            // the expression containing the result of this case
+            // )
+            // TODO: what to do with `locals_to_drop`?
+            (expr_result.block, terminator_block, expr_result.variable)
         })
         .collect::<Vec<_>>();
 
@@ -1032,11 +1041,19 @@ fn generate_expr_match(
             kind: TerminatorKind::Goto(dummy),
         },
     );
-    let cases = patterns
+    let (cases, phi_cases) = patterns
         .into_iter()
         .map(|pat| vec![pat])
         .zip(replacements)
-        .collect();
+        .map(
+            |(pat, (replacement_block, replacement_final_block, replacement_variable))| {
+                (
+                    (pat, replacement_block),
+                    (replacement_final_block, replacement_variable),
+                )
+            },
+        )
+        .unzip();
     let block = perform_match_function(
         ctx.project_index,
         ctx,
@@ -1045,6 +1062,7 @@ fn generate_expr_match(
         &[source.variable],
         cases,
     );
+
     // Update the dummy to point to the pattern match operation.
     ctx.control_flow_graph
         .basic_blocks
@@ -1052,6 +1070,30 @@ fn generate_expr_match(
         .unwrap()
         .terminator
         .kind = TerminatorKind::Goto(block);
+
+    // Update the final block to:
+    // - assign the result variable based on which pattern match block we came from, and
+    // - drop the source expression after we've pattern-matched it.
+    let final_statements = &mut ctx
+        .control_flow_graph
+        .basic_blocks
+        .get_mut(&final_block)
+        .unwrap()
+        .statements;
+    final_statements.push(Statement {
+        range: source_range,
+        kind: StatementKind::AssignPhi {
+            target: LocalVariableName::Local(result),
+            phi_cases,
+        },
+    });
+    final_statements.push(Statement {
+        range: source_range,
+        kind: StatementKind::DropFreeIfAlive {
+            variable: source.variable,
+        },
+    });
+
     ExprGeneratedM {
         block: source.block,
         variable: LocalVariableName::Local(result),
