@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, convert::TryFrom};
 
 use inkwell::{
-    basic_block::BasicBlock, debug_info::DIScope, types::BasicTypeEnum, values::CallableValue,
+    basic_block::BasicBlock,
+    debug_info::DIScope,
+    types::{AnyType, BasicType, BasicTypeEnum},
+    values::CallableValue,
     AddressSpace,
 };
 
@@ -15,7 +18,7 @@ use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
 use crate::{
-    codegen::BodyCreationContext,
+    codegen::{BodyCreationContext, CodeGenContext},
     func::{
         lifetime::{lifetime_end, lifetime_end_if_moved, lifetime_start},
         monomorphise::monomorphise,
@@ -24,6 +27,7 @@ use crate::{
     monomorphisation::{
         MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
     },
+    repr::Representations,
 };
 
 pub fn create_real_func_body<'ctx>(
@@ -101,7 +105,10 @@ fn create_real_func_body_cfg<'ctx>(
                     ctx.locals.insert(*target, target_value);
                     lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
                     // Now, load the value behind source and store it into target.
-                    let source_value = ctx.codegen.builder.build_load(
+                    let ptr = anonymise_pointer(
+                        ctx.codegen,
+                        ctx.reprs,
+                        &target_ty,
                         get_pointer_to_rvalue(
                             ctx.codegen,
                             ctx.index,
@@ -111,8 +118,9 @@ fn create_real_func_body_cfg<'ctx>(
                             source,
                         )
                         .unwrap(),
-                        "source",
                     );
+                    let source_value = ctx.codegen.builder.build_load(ptr, "source");
+                    // eprintln!("storing {:?} into {:?}", source_value, target_value);
                     ctx.codegen.builder.build_store(target_value, source_value);
                     lifetime_end_if_moved(&ctx, local_variable_names, source);
                 }
@@ -122,14 +130,7 @@ fn create_real_func_body_cfg<'ctx>(
 
                     // Insert a phi node to determine which block we came from.
                     let phi = ctx.codegen.builder.build_phi(
-                        match target_repr.llvm_type {
-                            BasicTypeEnum::ArrayType(a) => a.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::FloatType(f) => f.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::IntType(i) => i.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::PointerType(p) => p.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::StructType(s) => s.ptr_type(AddressSpace::Generic),
-                            BasicTypeEnum::VectorType(v) => v.ptr_type(AddressSpace::Generic),
-                        },
+                        target_repr.llvm_type.ptr_type(AddressSpace::Generic),
                         "phi_result",
                     );
                     for (id, name) in phi_cases {
@@ -713,4 +714,34 @@ fn create_real_func_body_cfg<'ctx>(
     }
 
     blocks[&cfg.entry_point]
+}
+
+/// Converts an LLVM pointer value's type into the type with the least information.
+/// Specifically, if the pointer is a function pointer, anonymise it into a pointer to a `fobj*`.
+fn anonymise_pointer<'ctx>(
+    ctx: &CodeGenContext<'ctx>,
+    reprs: &Representations<'_, 'ctx>,
+    target_ty: &Type,
+    ptr: inkwell::values::PointerValue<'ctx>,
+) -> inkwell::values::PointerValue<'ctx> {
+    if let Type::Function(_, _) = target_ty {
+        if ptr.get_type().get_element_type()
+            != reprs.general_func_obj_ty.llvm_type.as_any_type_enum()
+        {
+            ctx.builder
+                .build_bitcast(
+                    ptr,
+                    reprs
+                        .general_func_obj_ty
+                        .llvm_type
+                        .ptr_type(AddressSpace::Generic),
+                    "anonymised",
+                )
+                .into_pointer_value()
+        } else {
+            ptr
+        }
+    } else {
+        ptr
+    }
 }
