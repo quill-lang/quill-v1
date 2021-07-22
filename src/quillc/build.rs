@@ -11,11 +11,11 @@ pub fn main() {
     let f = std::fs::File::create(&destination).unwrap();
 
     // Scan for every test.
-    scan_dir(
-        &mut BufWriter::new(f),
-        &PathBuf::from("tests"),
-        &PathBuf::new(),
-    );
+    let f = &mut BufWriter::new(f);
+    writeln!(f, "use rusty_fork::rusty_fork_test;").unwrap();
+    writeln!(f, "rusty_fork_test! {{").unwrap();
+    scan_dir(f, &PathBuf::from("tests"), &PathBuf::new());
+    writeln!(f, "}}").unwrap();
 }
 
 fn scan_dir(f: &mut impl Write, root: &Path, suffix: &Path) {
@@ -31,9 +31,11 @@ fn scan_dir(f: &mut impl Write, root: &Path, suffix: &Path) {
                 let directory = this_suffix.to_string_lossy().replace('\\', "/");
                 let name = directory.replace("/", "_");
                 // Ignore the WASM test by default.
+                // rusty-fork is used to make sure that LLVM's `abort` calls don't crash the whole test harness.
                 write!(
                     f,
                     r#"
+
                     #[test]
                     fn {name}() {{
                         run_test("{directory}", TargetTriple::default_triple());
