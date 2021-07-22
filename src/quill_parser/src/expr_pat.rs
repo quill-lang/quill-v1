@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// Represents either an expression or a pattern.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprPatP {
     /// A named variable e.g. `x` or `+`.
     Variable(IdentifierP),
@@ -96,7 +96,7 @@ impl Display for ConstantValue {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstructDataFields {
     /// Fields that have been assigned values, e.g. `foo = 1`.
     pub fields: Vec<(NameP, ExprPatP)>,

@@ -821,7 +821,7 @@ impl<'a> TypeChecker<'a> {
     /// Converts a pattern representing a value or type constructor into a pattern object.
     /// We know ahead of time what type this value should be, but we have no guarantee that the given
     /// pattern really matches this type. If a type mismatch is found, an error is emitted.
-    fn resolve_type_pattern(
+    pub(crate) fn resolve_type_pattern(
         &self,
         visible_names: &VisibleNames,
         expression: ExprPatP,
