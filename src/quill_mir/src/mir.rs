@@ -334,6 +334,8 @@ pub enum StatementKind {
         target: LocalVariableName,
         /// A list of source blocks and the variable that we should move
         /// into `target` if this is where we came from.
+        /// In the case that we came from a different block, the given variable will
+        /// not have been initialised.
         phi_cases: Vec<(BasicBlockId, LocalVariableName)>,
     },
     /// Creates a local instance of a definition such as a function (or in some cases, a constant).

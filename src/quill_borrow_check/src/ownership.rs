@@ -162,6 +162,17 @@ fn check_ownership_walk(
                 make_rvalue_used(source_file, messages, statuses, stmt.range, source.clone());
                 make_owned(statuses, stmt.range, *target);
             }
+            StatementKind::AssignPhi { target, phi_cases } => {
+                for (_, case) in phi_cases {
+                    // We don't need to worry about move checking much, since the only way a user can ever
+                    // generate a phi node is by using a match expression, which automatically moves
+                    // the result of each branch into the phi node without borrowing or anything.
+                    // So, for the sake of borrowck, just pretend that the variable's been moved out.
+                    *statuses.locals.get_mut(case).unwrap() =
+                        OwnershipStatus::Moved { moved: stmt.range };
+                }
+                make_owned(statuses, stmt.range, *target);
+            }
             StatementKind::InstanceSymbol { target, .. } => {
                 // The target is now owned.
                 make_owned(statuses, stmt.range, *target);
