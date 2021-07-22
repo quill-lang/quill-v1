@@ -1012,14 +1012,48 @@ fn generate_expr_match(
 
     // Now that each case has been generated, perform the actual pattern match operation.
     // We treat this as a single-argument function for purposes of pattern matching.
+
+    // Generate the source expression we are pattern matching on.
+    // First, create a dummy block that will jump to the pattern match operation.
+    let dummy = ctx.control_flow_graph.new_basic_block(BasicBlock {
+        statements: Vec::new(),
+        terminator: Terminator {
+            range: expr.range(),
+            kind: TerminatorKind::Invalid,
+        },
+    });
+    let source_range = expr.range();
+    let source_ty = expr.ty.clone();
+    let source = generate_expr(
+        ctx,
+        *expr,
+        Terminator {
+            range: source_range,
+            kind: TerminatorKind::Goto(dummy),
+        },
+    );
     let cases = patterns
         .into_iter()
         .map(|pat| vec![pat])
         .zip(replacements)
         .collect();
-    let block = perform_match_function(ctx.project_index, ctx, range, vec![expr.ty.clone()], cases);
+    let block = perform_match_function(
+        ctx.project_index,
+        ctx,
+        range,
+        vec![source_ty],
+        &[source.variable],
+        cases,
+    );
+    // Update the dummy to point to the pattern match operation.
+    ctx.control_flow_graph
+        .basic_blocks
+        .get_mut(&dummy)
+        .unwrap()
+        .terminator
+        .kind = TerminatorKind::Goto(block);
     ExprGeneratedM {
-        block,
+        block: source.block,
         variable: LocalVariableName::Local(result),
         locals_to_drop: Vec::new(),
     }

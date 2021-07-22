@@ -8,5 +8,8 @@ def invert: Bool -> Bool {
 }
 
 def main: Unit {
-    main = putchar 65
+    main = match (invert true) (
+        false -> putchar 65
+        true -> putchar 66
+    )
 }

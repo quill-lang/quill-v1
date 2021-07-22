@@ -500,7 +500,10 @@ fn make_used(
         OwnershipStatus::NotInitialised { .. } => panic!("variable {} uninitialised", variable),
         OwnershipStatus::Owned { .. } => {}
         OwnershipStatus::Moved { moved } => messages.push(ErrorMessage::new_with(
-            "this variable has already been moved out, so it cannot be used here".to_string(),
+            format!(
+                "this variable ({}) has already been moved out, so it cannot be used here",
+                variable
+            ),
             Severity::Error,
             Diagnostic::at(source_file, &range),
             HelpMessage {

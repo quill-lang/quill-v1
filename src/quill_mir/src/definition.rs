@@ -271,5 +271,10 @@ fn create_cfg(
         .collect::<Vec<_>>();
 
     // Then perform the pattern matching operation on each parameter to the function, in reverse order.
-    perform_match_function(project_index, ctx, range, arg_types, cases)
+    let args = arg_types
+        .iter()
+        .enumerate()
+        .map(|(i, _)| LocalVariableName::Argument(ArgumentIndex(i as u64)))
+        .collect::<Vec<_>>();
+    perform_match_function(project_index, ctx, range, arg_types, &args, cases)
 }

@@ -326,9 +326,12 @@ fn first_difference(
 
 /// Given a list of patterns for a function, in which place do they first (pairwise) differ, and how?
 /// If they do not differ, return None. Any `Place` returned will be relative to an argument.
+/// The list of args provided is the list of variables we are pattern matching on; if this is a function,
+/// then args will be [_0arg, _1arg, ...].
 fn first_difference_function(
     project_index: &ProjectIndex,
     arg_types: Vec<Type>,
+    args: &[LocalVariableName],
     patterns: &[Vec<Pattern>],
 ) -> Option<PatternMismatch> {
     for i in 0..arg_types.len() {
@@ -338,7 +341,7 @@ fn first_difference_function(
             .collect::<Vec<_>>();
         if let Some(diff) = first_difference(
             project_index,
-            Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
+            Place::new(args[i]),
             arg_types[i].clone(),
             &arg_patterns,
         ) {
@@ -356,12 +359,13 @@ fn reference_place_function(
     place: Place,
     replacement: Pattern,
     mut arg_patterns: Vec<Pattern>,
+    args: &[LocalVariableName],
 ) -> Vec<Pattern> {
-    let i = if let LocalVariableName::Argument(ArgumentIndex(i)) = place.local {
-        i as usize
-    } else {
-        unreachable!();
-    };
+    let (i, _arg) = args
+        .iter()
+        .enumerate()
+        .find(|(_i, arg)| place.local == **arg)
+        .unwrap();
 
     arg_patterns[i] = reference_place(place.projection, replacement, arg_patterns[i].clone());
     arg_patterns
@@ -446,12 +450,14 @@ pub(crate) fn perform_match_function(
     ctx: &mut DefinitionTranslationContext,
     range: Range,
     arg_types: Vec<Type>,
+    args: &[LocalVariableName],
     cases: Vec<(Vec<Pattern>, BasicBlockId)>,
 ) -> BasicBlockId {
     // Recursively find the first difference between patterns, until each case has its own branch.
     // println!("Cases: {:#?}", cases);
     let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
-    if let Some(diff) = first_difference_function(project_index, arg_types.clone(), &patterns) {
+    if let Some(diff) = first_difference_function(project_index, arg_types.clone(), args, &patterns)
+    {
         // println!("Diff: {:#?}", diff);
         // There was a difference that lets us distinguish some of the patterns into different branches.
         let diff_reason = diff.reason;
@@ -521,6 +527,7 @@ pub(crate) fn perform_match_function(
                                         diff_place.clone(),
                                         replacement,
                                         patterns[id].clone(),
+                                        args,
                                     ),
                                     blocks[id],
                                 )
@@ -533,6 +540,7 @@ pub(crate) fn perform_match_function(
                                 ctx,
                                 range,
                                 arg_types.clone(),
+                                args,
                                 new_cases,
                             ),
                         )
@@ -571,6 +579,7 @@ pub(crate) fn perform_match_function(
                                         diff_place.clone(),
                                         replacement,
                                         patterns[id].clone(),
+                                        args,
                                     ),
                                     blocks[id],
                                 )
@@ -583,6 +592,7 @@ pub(crate) fn perform_match_function(
                                 ctx,
                                 range,
                                 arg_types.clone(),
+                                args,
                                 new_cases,
                             ),
                         )
@@ -598,7 +608,14 @@ pub(crate) fn perform_match_function(
                             .into_iter()
                             .map(|id| (patterns[id].clone(), blocks[id]))
                             .collect();
-                        perform_match_function(project_index, ctx, range, arg_types, new_cases)
+                        perform_match_function(
+                            project_index,
+                            ctx,
+                            range,
+                            arg_types,
+                            args,
+                            new_cases,
+                        )
                     }
                 };
 
