@@ -14,6 +14,7 @@ use quill_type_deduce::hir::{
 use crate::{
     definition::{to_mir_def, DefinitionTranslationContext},
     mir::*,
+    pattern_match::perform_match_function,
 };
 
 /// Sets up the context for dealing with this expression.
@@ -48,7 +49,12 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
-        ExpressionContents::Match { .. } => todo!(),
+        ExpressionContents::Match { expr, cases, .. } => {
+            initialise_expr(ctx, &*expr);
+            for (_, expr) in cases {
+                initialise_expr(ctx, expr);
+            }
+        }
     }
 }
 
@@ -241,11 +247,9 @@ pub(crate) fn generate_expr(
         ExpressionContents::Impl {
             implementations, ..
         } => generate_expr_impl(ty, implementations, ctx, range, terminator),
-        ExpressionContents::Match {
-            match_token,
-            expr,
-            cases,
-        } => todo!(),
+        ExpressionContents::Match { expr, cases, .. } => {
+            generate_expr_match(ctx, range, terminator, ty, expr, cases)
+        }
     }
 }
 
@@ -944,6 +948,79 @@ fn generate_expr_impl(
     ExprGeneratedM {
         block,
         variable: LocalVariableName::Local(variable),
+        locals_to_drop: Vec::new(),
+    }
+}
+
+fn generate_expr_match(
+    ctx: &mut DefinitionTranslationContext,
+    range: quill_common::location::Range,
+    terminator: Terminator,
+    ty: Type,
+    expr: Box<Expression>,
+    cases: Vec<(Pattern, Expression)>,
+) -> ExprGeneratedM {
+    // Generate the block for the result of this expression.
+    // The result of the match expression is assigned to `result`.
+    let result = ctx.new_local_variable(LocalVariableInfo {
+        range: expr.range(),
+        ty,
+        name: None,
+    });
+    // Create a dummy basic block which all of the other blocks will redirect to after finishing.
+    let final_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+        statements: Vec::new(),
+        terminator,
+    });
+
+    // Generate each case.
+    let (patterns, replacements): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
+    let replacements = replacements
+        .into_iter()
+        .map(|replacement| {
+            // Generate a basic block to move the value of the generated expression into `result`.
+            let terminator_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: Vec::new(),
+                terminator: Terminator {
+                    range: expr.range(),
+                    kind: TerminatorKind::Goto(final_block),
+                },
+            });
+            let expr_result = generate_expr(
+                ctx,
+                replacement,
+                Terminator {
+                    range: expr.range(),
+                    kind: TerminatorKind::Goto(terminator_block),
+                },
+            );
+            ctx.control_flow_graph
+                .basic_blocks
+                .get_mut(&terminator_block)
+                .unwrap()
+                .statements
+                .push(Statement {
+                    range: expr.range(),
+                    kind: StatementKind::Assign {
+                        target: LocalVariableName::Local(result),
+                        source: Rvalue::Move(Place::new(expr_result.variable)),
+                    },
+                });
+            expr_result.block
+        })
+        .collect::<Vec<_>>();
+
+    // Now that each case has been generated, perform the actual pattern match operation.
+    // We treat this as a single-argument function for purposes of pattern matching.
+    let cases = patterns
+        .into_iter()
+        .map(|pat| vec![pat])
+        .zip(replacements)
+        .collect();
+    let block = perform_match_function(ctx.project_index, ctx, range, vec![expr.ty.clone()], cases);
+    ExprGeneratedM {
+        block,
+        variable: LocalVariableName::Local(result),
         locals_to_drop: Vec::new(),
     }
 }

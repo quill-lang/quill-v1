@@ -902,6 +902,7 @@ pub(crate) fn generate_constraints(
             expr,
             cases,
         } => {
+            let replacement_type = TypeVariableId::default();
             // Generate constraints for the expression.
             generate_constraints(
                 source_file,
@@ -981,8 +982,20 @@ pub(crate) fn generate_constraints(
                                 replacement.map(|mut replacement| {
                                     replacement.assumptions =
                                         replacement.assumptions.union(assumptions);
-                                    replacement.constraints =
-                                        replacement.constraints.union(constraints);
+                                    replacement.constraints = replacement
+                                        .constraints
+                                        .union(constraints)
+                                        .union(Constraints::new_with(
+                                            replacement.expr.type_variable.clone(),
+                                            Constraint::Equality {
+                                                ty: TypeVariable::Unknown {
+                                                    id: replacement_type,
+                                                },
+                                                reason: ConstraintEqualityReason::MatchResult {
+                                                    match_token,
+                                                },
+                                            },
+                                        ));
                                     replacement
                                         .type_variable_definition_ranges
                                         .extend(type_variable_definition_ranges);
@@ -996,7 +1009,6 @@ pub(crate) fn generate_constraints(
             })
             .map(|(expr, cases)| {
                 // Collate each match case into a single expression.
-                let type_variable = TypeVariableId::default();
                 let mut assumptions = expr.assumptions;
                 let mut constraints = expr.constraints;
                 let mut type_variable_definition_ranges = expr.type_variable_definition_ranges;
@@ -1011,7 +1023,9 @@ pub(crate) fn generate_constraints(
 
                 ExprTypeCheck {
                     expr: ExpressionT {
-                        type_variable: TypeVariable::Unknown { id: type_variable },
+                        type_variable: TypeVariable::Unknown {
+                            id: replacement_type,
+                        },
                         contents: ExpressionContentsT::Match {
                             match_token,
                             expr: Box::new(expr.expr),

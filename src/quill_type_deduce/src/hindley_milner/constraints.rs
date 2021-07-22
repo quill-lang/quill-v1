@@ -95,6 +95,9 @@ pub(crate) enum ConstraintEqualityReason {
     /// This was a variable defined in a pattern match case,
     /// so it must have the same type as the input to the match expression.
     MatchVariable { input_expr: Range },
+    /// This was the result of a match expression,
+    /// so the type must be the same as the other entries in the match expression.
+    MatchResult { match_token: Range },
 }
 
 /// This constraint was created because we accessed a field using a match expression.
