@@ -67,6 +67,7 @@ pub fn monomorphise<'ctx>(
             for stmt in std::mem::take(&mut block.statements) {
                 let should_keep = match &stmt.kind {
                     StatementKind::Assign { target, .. }
+                    | StatementKind::AssignPhi { target, .. }
                     | StatementKind::InstanceSymbol { target, .. }
                     | StatementKind::Apply { target, .. }
                     | StatementKind::ConstructFunctionObject { target, .. }
