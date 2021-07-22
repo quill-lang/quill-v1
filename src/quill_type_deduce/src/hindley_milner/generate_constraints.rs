@@ -14,11 +14,8 @@ use quill_type::PrimitiveType;
 
 use crate::{
     hindley_milner::{constraints::ConstraintFieldAccessReason, LetStatementNewVariables},
-    hir::{
-        expr::{
-            AbstractionVariable, BoundVariable, ExpressionContentsT, ExpressionT, TypeVariable,
-        },
-        pattern::Pattern,
+    hir::expr::{
+        AbstractionVariable, BoundVariable, ExpressionContentsT, ExpressionT, TypeVariable,
     },
     index_resolve::{
         as_variable, instantiate, instantiate_with, resolve_definition, resolve_type_constructor,
