@@ -136,6 +136,8 @@ fn create_real_func_body_cfg<'ctx>(
                     for (id, name) in phi_cases {
                         // FIXME: if a MIR block is converted into 2 or more LLVM blocks,
                         // blocks[id] might give the wrong block.
+                        // eprintln!("locals: {:#?}", ctx.locals);
+                        // eprintln!("getting {}", name);
                         phi.add_incoming(&[(&ctx.locals[name], blocks[id])]);
                     }
 

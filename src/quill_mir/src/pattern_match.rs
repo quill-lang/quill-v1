@@ -446,7 +446,6 @@ fn reference_place(
 /// these 'case' blocks when the pattern is matched. The return value is a basic block
 /// which will perform this match operation, then jump to the case blocks.
 pub(crate) fn perform_match_function(
-    project_index: &ProjectIndex,
     ctx: &mut DefinitionTranslationContext,
     range: Range,
     arg_types: Vec<Type>,
@@ -456,7 +455,8 @@ pub(crate) fn perform_match_function(
     // Recursively find the first difference between patterns, until each case has its own branch.
     // println!("Cases: {:#?}", cases);
     let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
-    if let Some(diff) = first_difference_function(project_index, arg_types.clone(), args, &patterns)
+    if let Some(diff) =
+        first_difference_function(ctx.project_index, arg_types.clone(), args, &patterns)
     {
         // println!("Diff: {:#?}", diff);
         // There was a difference that lets us distinguish some of the patterns into different branches.
@@ -477,9 +477,10 @@ pub(crate) fn perform_match_function(
                         let new_cases = cases
                             .into_iter()
                             .map(|id| {
-                                let enum_fields = if let TypeDeclarationTypeI::Enum(enumi) =
-                                    &project_index[&enum_name.source_file].types[&enum_name.name]
-                                        .decl_type
+                                let enum_fields = if let TypeDeclarationTypeI::Enum(enumi) = &ctx
+                                    .project_index[&enum_name.source_file]
+                                    .types[&enum_name.name]
+                                    .decl_type
                                 {
                                     enumi
                                         .variants
@@ -535,14 +536,7 @@ pub(crate) fn perform_match_function(
                             .collect();
                         (
                             name,
-                            perform_match_function(
-                                project_index,
-                                ctx,
-                                range,
-                                arg_types.clone(),
-                                args,
-                                new_cases,
-                            ),
+                            perform_match_function(ctx, range, arg_types.clone(), args, new_cases),
                         )
                     })
                     .collect::<BTreeMap<_, _>>();
@@ -587,14 +581,7 @@ pub(crate) fn perform_match_function(
                             .collect();
                         (
                             value,
-                            perform_match_function(
-                                project_index,
-                                ctx,
-                                range,
-                                arg_types.clone(),
-                                args,
-                                new_cases,
-                            ),
+                            perform_match_function(ctx, range, arg_types.clone(), args, new_cases),
                         )
                     })
                     .collect::<BTreeMap<_, _>>();
@@ -608,14 +595,7 @@ pub(crate) fn perform_match_function(
                             .into_iter()
                             .map(|id| (patterns[id].clone(), blocks[id]))
                             .collect();
-                        perform_match_function(
-                            project_index,
-                            ctx,
-                            range,
-                            arg_types,
-                            args,
-                            new_cases,
-                        )
+                        perform_match_function(ctx, range, arg_types, args, new_cases)
                     }
                 };
 
@@ -656,7 +636,6 @@ pub(crate) struct BoundPatternVariables {
 /// will be assigned a borrow condition, and their types will gain a layer of indirection.
 pub(crate) fn bind_pattern_variables(
     ctx: &mut DefinitionTranslationContext,
-    index: &ProjectIndex,
     value: Place,
     pat: &Pattern,
     ty: Type,
@@ -702,7 +681,6 @@ pub(crate) fn bind_pattern_variables(
                 .map(|(field_name, ty, pat)| {
                     bind_pattern_variables(
                         ctx,
-                        index,
                         value
                             .clone()
                             .then(if let Some(variant) = type_ctor.variant.clone() {
@@ -742,7 +720,6 @@ pub(crate) fn bind_pattern_variables(
                 .map(|(field_name, ty, pat)| {
                     bind_pattern_variables(
                         ctx,
-                        index,
                         value.clone().then(PlaceSegment::ImplField {
                             field: field_name.name.clone(),
                         }),
@@ -772,7 +749,7 @@ pub(crate) fn bind_pattern_variables(
         Pattern::Borrow { borrowed, .. } => {
             if let Type::Borrow { ty, borrow } = ty {
                 // TODO: what happens with nested borrows?
-                bind_pattern_variables(ctx, index, value, &*borrowed, *ty, borrow)
+                bind_pattern_variables(ctx, value, &*borrowed, *ty, borrow)
             } else {
                 unreachable!()
             }
