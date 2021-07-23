@@ -18,6 +18,7 @@ use crate::{
 };
 
 /// Sets up the context for dealing with this expression.
+/// This sets up slots for all local variables that are defined in this expression.
 pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
     match &expr.contents {
         ExpressionContents::Argument(_) => {}
@@ -50,11 +51,46 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
         ExpressionContents::Match { expr, cases, .. } => {
+            let ty = &expr.ty;
             initialise_expr(ctx, &*expr);
-            for (_, expr) in cases {
+            for (pat, expr) in cases {
+                initialise_pattern(ctx, pat, ty);
                 initialise_expr(ctx, expr);
             }
         }
+    }
+}
+
+/// If this pattern defined any new local variables, initialise them.
+fn initialise_pattern(ctx: &mut DefinitionTranslationContext, pat: &Pattern, ty: &Type) {
+    match pat {
+        Pattern::Named(name) => {
+            ctx.new_local_variable(LocalVariableInfo {
+                range: name.range,
+                ty: ty.clone(),
+                name: Some(name.name.clone()),
+            });
+        }
+        Pattern::Constant { .. } => {}
+        Pattern::TypeConstructor { fields, .. } => {
+            for (_field_name, field_ty, field_pat) in fields {
+                initialise_pattern(ctx, field_pat, field_ty);
+            }
+        }
+        Pattern::Impl { fields, .. } => {
+            for (_field_name, field_ty, field_pat) in fields {
+                initialise_pattern(ctx, field_pat, field_ty);
+            }
+        }
+        Pattern::Function { .. } => unreachable!(),
+        Pattern::Borrow { borrowed, .. } => {
+            if let Type::Borrow { ty, .. } = &ty {
+                initialise_pattern(ctx, &*borrowed, &*ty);
+            } else {
+                unreachable!()
+            }
+        }
+        Pattern::Unknown(_) => {}
     }
 }
 
