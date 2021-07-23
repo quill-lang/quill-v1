@@ -928,8 +928,8 @@ pub(crate) fn generate_constraints(
                         .bind(|new_variables| {
                             let mut messages = Vec::new();
                             let mut let_variables = let_variables.clone();
-                            for (k, v) in new_variables.variables {
-                                match let_variables.entry(k) {
+                            for (k, v) in &new_variables.variables {
+                                match let_variables.entry(k.name.clone()) {
                                     Entry::Occupied(occupied) => {
                                         messages.push(ErrorMessage::new_with(
                                             format!(
@@ -939,7 +939,7 @@ pub(crate) fn generate_constraints(
                                             Severity::Error,
                                             Diagnostic::at(
                                                 source_file,
-                                                &new_variables.type_variable_definition_ranges[&v],
+                                                &new_variables.type_variable_definition_ranges[v],
                                             ),
                                             HelpMessage {
                                                 message: String::from("previously defined here"),
@@ -954,16 +954,17 @@ pub(crate) fn generate_constraints(
                                     Entry::Vacant(vacant) => {
                                         vacant.insert(AbstractionVariable {
                                             range: new_variables.type_variable_definition_ranges
-                                                [&v],
-                                            var_type: v,
+                                                [v],
+                                            var_type: *v,
                                         });
                                     }
                                 }
                             }
 
                             // Propagate the messages into a diagnostic result.
+                            let variables = new_variables.variables;
                             let assumptions = new_variables.assumptions;
-                            let constraints = new_variables.constraints;
+                            let mut constraints = new_variables.constraints;
                             let type_variable_definition_ranges =
                                 new_variables.type_variable_definition_ranges;
                             DiagnosticResult::ok_with_many((), messages).bind(|_| {
@@ -977,6 +978,38 @@ pub(crate) fn generate_constraints(
                                     replacement,
                                 );
                                 replacement.map(|mut replacement| {
+                                    for (variable_name, variable_type_var_id) in
+                                        &variables
+                                    {
+                                        // Let's remove and store the assumptions about the variables that we created in the pattern match body.
+                                        let match_assumptions = replacement
+                                            .assumptions
+                                            .0
+                                            .remove(variable_name)
+                                            .unwrap_or_else(Vec::new);
+
+                                        for assumption in match_assumptions {
+                                            constraints.0.push((
+                                                TypeVariable::Unknown { id: assumption.0 },
+                                                Constraint::Equality {
+                                                    ty: TypeVariable::Unknown {
+                                                        id: *variable_type_var_id,
+                                                    },
+                                                    reason: ConstraintEqualityReason::InstancePatternVariable {
+                                                        match_token,
+                                                        expr: replacement.expr.range(),
+                                                        variable_name: variable_name
+                                                            .name
+                                                            .to_string(),
+                                                        variable_type: TypeVariable::Unknown {
+                                                            id: *variable_type_var_id,
+                                                        },
+                                                    },
+                                                },
+                                            ));
+                                        }
+                                    }
+
                                     replacement.assumptions =
                                         replacement.assumptions.union(assumptions);
                                     replacement.constraints = replacement
@@ -996,6 +1029,7 @@ pub(crate) fn generate_constraints(
                                     replacement
                                         .type_variable_definition_ranges
                                         .extend(type_variable_definition_ranges);
+
                                     (pattern, replacement)
                                 })
                             })
@@ -1078,18 +1112,18 @@ fn generate_pattern_variables(
     pattern: &ExprPatP,
     expr_ty: TypeVariable,
     pattern_range: Range,
-) -> DiagnosticResult<PatternMatchConstraints<BTreeMap<String, TypeVariableId>>> {
+) -> DiagnosticResult<PatternMatchConstraints<BTreeMap<NameP, TypeVariableId>>> {
     fn generate_pattern_variables_inner(
         pattern: &ExprPatP,
         expr_ty: TypeVariable,
         pattern_range: Range,
-    ) -> PatternMatchConstraints<Vec<(String, TypeVariableId)>> {
+    ) -> PatternMatchConstraints<Vec<(NameP, TypeVariableId)>> {
         match pattern {
             ExprPatP::Variable(var) => {
                 let id = TypeVariableId::default();
                 PatternMatchConstraints {
                     // Since this is a pattern, the variable must only have one path segment.
-                    variables: vec![(var.segments[0].name.clone(), id)],
+                    variables: vec![(var.segments[0].clone(), id)],
                     assumptions: Assumptions::default(),
                     constraints: Constraints::new_with(
                         TypeVariable::Unknown { id },
@@ -1134,11 +1168,24 @@ fn generate_pattern_variables(
                     type_variable_definition_ranges: BTreeMap::new(),
                 };
 
-                for (field_name, field_pat) in &fields.fields {
+                let all_fields = fields
+                    .fields
+                    .iter()
+                    .map(|(name, pat)| (name, pat.clone()))
+                    .chain(fields.auto_fields.iter().map(|name| {
+                        (
+                            name,
+                            ExprPatP::Variable(IdentifierP {
+                                segments: vec![name.clone()],
+                            }),
+                        )
+                    }));
+
+                for (field_name, field_pat) in all_fields {
                     // Create a new type variable for this field.
                     let field_ty = TypeVariableId::default();
                     let inner = generate_pattern_variables_inner(
-                        field_pat,
+                        &field_pat,
                         TypeVariable::Unknown { id: field_ty },
                         pattern_range,
                     );
@@ -1155,6 +1202,7 @@ fn generate_pattern_variables(
                         TypeVariable::Unknown { id: field_ty },
                         Constraint::FieldAccess {
                             ty: expr_ty.clone(),
+                            data_type: data_constructor.clone(),
                             field: field_name.clone(),
                             reason: ConstraintFieldAccessReason {
                                 input_expr: pattern_range,
@@ -1175,7 +1223,7 @@ fn generate_pattern_variables(
     // De-duplicate the list of local variables, emitting an error if a local variable name was duplicated.
     let vars = generate_pattern_variables_inner(pattern, expr_ty, pattern_range);
     let mut messages = Vec::new();
-    let mut map = BTreeMap::<String, TypeVariableId>::new();
+    let mut map = BTreeMap::<NameP, TypeVariableId>::new();
 
     for (k, v) in vars.variables {
         match map.entry(k) {

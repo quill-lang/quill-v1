@@ -6,11 +6,7 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::ProjectIndex;
-use quill_parser::{
-    definition::DefinitionBodyP,
-    expr_pat::{ConstantValue, ExprPatP},
-    identifier::NameP,
-};
+use quill_parser::{definition::DefinitionBodyP, expr_pat::ExprPatP};
 use quill_type::Type;
 
 use crate::{

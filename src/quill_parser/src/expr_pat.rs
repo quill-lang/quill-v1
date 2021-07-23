@@ -47,7 +47,7 @@ pub enum ExprPatP {
         copy_token: Range,
         expr: Box<ExprPatP>,
     },
-    /// The name of a data type, followed by brace brackets containing the data structure's fields.
+    /// The name of a data type or enum variant, followed by brace brackets containing the data structure's fields.
     ConstructData {
         data_constructor: IdentifierP,
         open_brace: Range,

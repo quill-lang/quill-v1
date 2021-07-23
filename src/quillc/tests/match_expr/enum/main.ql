@@ -1,17 +1,17 @@
 def putchar: Int -> Unit { compiler_intrinsic }
 
-enum Bool2 = True {} | False {}
+enum Option[T] = Some { value: T } | None {}
 
-def invert: Bool2 -> Bool2 {
-    invert b = match b (
-        True {} -> False {}
-        False {} -> True {}
+def unwrap_or[T]: Option[T] -> T -> T {
+    unwrap_or opt other = match opt (
+        Some { value } -> value
+        None {} -> other
     )
 }
 
 def main: Unit {
-    main = match (invert True {}) (
-        False {} -> putchar 65
-        True {} -> putchar 66
+    main = (
+        putchar (unwrap_or Some { value = 65 } 66)
+        putchar (unwrap_or None {} 66)
     )
 }

@@ -1,5 +1,5 @@
 use quill_common::{location::Range, name::QualifiedName};
-use quill_parser::identifier::NameP;
+use quill_parser::identifier::{IdentifierP, NameP};
 
 use crate::hir::expr::TypeVariable;
 
@@ -29,6 +29,8 @@ pub(crate) enum Constraint {
     /// The given type is exactly equal to a field of this type.
     FieldAccess {
         ty: TypeVariable,
+        /// The type of the container variable, as written in Quill.
+        data_type: IdentifierP,
         field: NameP,
         reason: ConstraintFieldAccessReason,
     },
@@ -48,7 +50,9 @@ pub(crate) enum ConstraintEqualityReason {
     /// This constraint was generated as a result of generating a lambda abstraction's type.
     /// These constraints should probably be solved first if possible, since they're likely
     /// to have really bad error messages.
-    LambdaType { lambda: Range },
+    LambdaType {
+        lambda: Range,
+    },
     /// This constraint was generated as a result of a lambda's parameter being used
     /// in the lambda expression body.
     LambdaParameter {
@@ -58,7 +62,10 @@ pub(crate) enum ConstraintEqualityReason {
     },
     /// This constraint was generated as a result of specifying that a let expression's
     /// type must be equal to the right hand expression's type.
-    LetType { let_token: Range, expression: Range },
+    LetType {
+        let_token: Range,
+        expression: Range,
+    },
     /// The expression was defined to be a specific type.
     ByDefinition {
         /// The expression we're type checking.
@@ -88,16 +95,38 @@ pub(crate) enum ConstraintEqualityReason {
         /// The token `let` that we're using the variable from.
         let_token: Range,
     },
+    /// This expression is an instance of the variable bound in a pattern match expression.
+    InstancePatternVariable {
+        /// The name of the variable.
+        variable_name: String,
+        /// The variable's type.
+        variable_type: TypeVariable,
+        /// The expression we're type checking.
+        expr: Range,
+        /// The token `match` that we're using the variable from.
+        match_token: Range,
+    },
     /// A variable was borrowed.
-    Borrow { expr: Range, borrow_token: Range },
+    Borrow {
+        expr: Range,
+        borrow_token: Range,
+    },
     /// A variable was copied.
-    Copy { expr: Range, copy_token: Range },
+    Copy {
+        expr: Range,
+        copy_token: Range,
+    },
     /// This was a variable defined in a pattern match case,
     /// so it must have the same type as the input to the match expression.
-    MatchVariable { input_expr: Range },
+    MatchVariable {
+        input_expr: Range,
+    },
     /// This was the result of a match expression,
     /// so the type must be the same as the other entries in the match expression.
-    MatchResult { match_token: Range },
+    MatchResult {
+        match_token: Range,
+    },
+    FieldAccess(ConstraintFieldAccessReason),
 }
 
 /// This constraint was created because we accessed a field using a match expression.

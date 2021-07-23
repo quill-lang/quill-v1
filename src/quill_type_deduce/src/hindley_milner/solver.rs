@@ -4,10 +4,11 @@ use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{Range, SourceFileIdentifier},
 };
-use quill_index::ProjectIndex;
+use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 
 use crate::{
     hir::expr::{Expression, ExpressionT, TypeVariable},
+    index_resolve::instantiate_with,
     type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
@@ -145,7 +146,93 @@ fn solve_type_constraint_queue(
                     }
                 }
             }
-            Constraint::FieldAccess { ty, field, reason } => todo!(),
+            Constraint::FieldAccess {
+                mut ty,
+                data_type,
+                field,
+                reason,
+            } => {
+                // Check if we know the type of the variable whose field we are accessing.
+                apply_substitution(&substitution, &mut ty);
+                match ty {
+                    TypeVariable::Named { name, parameters } => {
+                        // We know what type we're accessing.
+                        // Look up the fields in the project index.
+                        match &project_index[&name.source_file].types[&name.name].decl_type {
+                            TypeDeclarationTypeI::Data(datai) => todo!(),
+                            TypeDeclarationTypeI::Enum(enumi) => {
+                                // First, check that the name given in code matches the deduced type.
+                                // TODO: once we have more flexibility in names for data types (#121),
+                                // this assert will need to be removed and replaced.
+                                assert!(data_type.segments.len() == 1);
+                                let variant_name = &data_type.segments[0];
+                                if let Some(variant) = enumi
+                                    .variants
+                                    .iter()
+                                    .find(|variant| variant.name == *variant_name)
+                                {
+                                    if let Some((_field_name, field_ty)) = variant
+                                        .type_ctor
+                                        .fields
+                                        .iter()
+                                        .find(|(field_name, _field_ty)| *field_name == field)
+                                    {
+                                        let field_ty = instantiate_with(
+                                            field_ty,
+                                            &mut enumi
+                                                .type_params
+                                                .iter()
+                                                .map(|param| param.name.clone())
+                                                .zip(parameters)
+                                                .collect::<BTreeMap<String, TypeVariable>>(),
+                                            &mut BTreeMap::new(),
+                                        );
+                                        constraint_queue.push_front((
+                                            type_variable,
+                                            Constraint::Equality {
+                                                ty: field_ty,
+                                                reason: ConstraintEqualityReason::FieldAccess(
+                                                    reason,
+                                                ),
+                                            },
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TypeVariable::Unknown { id } => {
+                        // FIXME: This might enter an infinite loop if we can't deduce the type
+                        // of the variable whose field we are accessing.
+                        constraint_queue.push_back((
+                            type_variable,
+                            Constraint::FieldAccess {
+                                ty: TypeVariable::Unknown { id },
+                                data_type,
+                                field,
+                                reason,
+                            },
+                        ));
+                    }
+                    ty => {
+                        // This was not the right type; we need a data or enum type in order to access fields.
+                        return DiagnosticResult::fail(ErrorMessage::new_with(
+                            format!(
+                                "type {} cannot be destructured to get its fields",
+                                TypeVariablePrinter::new(substitution).print(ty)
+                            ),
+                            Severity::Error,
+                            Diagnostic::at(source_file, &field.range),
+                            HelpMessage {
+                                message: "caused from the match expression on this variable"
+                                    .to_string(),
+                                help_type: HelpType::Note,
+                                diagnostic: Diagnostic::at(source_file, &reason.input_expr),
+                            },
+                        ));
+                    }
+                }
+            }
         }
     }
 
