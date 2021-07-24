@@ -1222,7 +1222,7 @@ fn generate_pattern_variables(
                         TypeVariable::Unknown { id: field_ty },
                         Constraint::FieldAccess {
                             ty: expr_ty.clone(),
-                            data_type: data_constructor.clone(),
+                            data_type: Some(data_constructor.clone()),
                             field: field_name.clone(),
                             reason: ConstraintFieldAccessReason {
                                 input_expr: pattern_range,
@@ -1233,8 +1233,60 @@ fn generate_pattern_variables(
 
                 result
             }
-            ExprPatP::Impl { impl_token, body } => todo!(),
-            ExprPatP::ImplPattern { .. } => unreachable!(),
+            ExprPatP::Impl { .. } => unreachable!(),
+            ExprPatP::ImplPattern { fields, .. } => {
+                let mut result = PatternMatchConstraints {
+                    variables: Vec::new(),
+                    assumptions: Assumptions::default(),
+                    constraints: Constraints::default(),
+                    type_variable_definition_ranges: BTreeMap::new(),
+                };
+
+                let all_fields = fields
+                    .fields
+                    .iter()
+                    .map(|(name, pat)| (name, pat.clone()))
+                    .chain(fields.auto_fields.iter().map(|name| {
+                        (
+                            name,
+                            ExprPatP::Variable(IdentifierP {
+                                segments: vec![name.clone()],
+                            }),
+                        )
+                    }));
+
+                for (field_name, field_pat) in all_fields {
+                    // Create a new type variable for this field.
+                    let field_ty = TypeVariableId::default();
+                    let inner = generate_pattern_variables_inner(
+                        &field_pat,
+                        TypeVariable::Unknown { id: field_ty },
+                        pattern_range,
+                    );
+                    result.variables.extend(inner.variables);
+                    result.assumptions = result.assumptions.union(inner.assumptions);
+                    result.constraints = result.constraints.union(inner.constraints);
+                    result
+                        .type_variable_definition_ranges
+                        .extend(inner.type_variable_definition_ranges);
+
+                    // Add a constraint that the field's type is the correct data type,
+                    // if we know the container's data type.
+                    result.constraints = result.constraints.union(Constraints::new_with(
+                        TypeVariable::Unknown { id: field_ty },
+                        Constraint::FieldAccess {
+                            ty: expr_ty.clone(),
+                            data_type: None,
+                            field: field_name.clone(),
+                            reason: ConstraintFieldAccessReason {
+                                input_expr: pattern_range,
+                            },
+                        },
+                    ));
+                }
+
+                result
+            }
             ExprPatP::Match { .. } => unreachable!(),
             ExprPatP::Unknown(_) => PatternMatchConstraints {
                 variables: Vec::new(),

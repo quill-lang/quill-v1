@@ -26,11 +26,13 @@ pub(crate) enum Constraint {
         ty: TypeVariable,
         reason: ConstraintEqualityReason,
     },
-    /// The given type is exactly equal to a field of this type.
+    /// The given type is exactly equal to a field of this data/enum/impl type.
+    // TODO: maybe add a flag to tell if the field access was supposed to be a data/enum/impl type?
     FieldAccess {
         ty: TypeVariable,
-        /// The type of the container variable, as written in Quill.
-        data_type: IdentifierP,
+        /// The type of the container variable, as written in Quill,
+        /// if we know the container type.
+        data_type: Option<IdentifierP>,
         field: NameP,
         reason: ConstraintFieldAccessReason,
     },

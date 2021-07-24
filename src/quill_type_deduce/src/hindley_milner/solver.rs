@@ -160,7 +160,6 @@ fn solve_type_constraint_queue(
                         // Look up the fields in the project index.
                         match &project_index[&name.source_file].types[&name.name].decl_type {
                             TypeDeclarationTypeI::Data(datai) => {
-                                assert!(data_type.segments.len() == 1);
                                 if let Some((_field_name, field_ty)) = datai
                                     .type_ctor
                                     .fields
@@ -190,8 +189,11 @@ fn solve_type_constraint_queue(
                                 // First, check that the name given in code matches the deduced type.
                                 // TODO: once we have more flexibility in names for data types (#121),
                                 // this assert will need to be removed and replaced.
-                                assert!(data_type.segments.len() == 1);
-                                let variant_name = &data_type.segments[0];
+                                assert!(
+                                    data_type.is_some()
+                                        && data_type.as_ref().unwrap().segments.len() == 1
+                                );
+                                let variant_name = &data_type.as_ref().unwrap().segments[0];
                                 if let Some(variant) = enumi
                                     .variants
                                     .iter()
@@ -225,6 +227,29 @@ fn solve_type_constraint_queue(
                                     }
                                 }
                             }
+                        }
+                    }
+                    TypeVariable::Impl { name, parameters } => {
+                        let aspecti = &project_index[&name.source_file].aspects[&name.name];
+                        if let Some(def) = aspecti.definitions.iter().find(|def| def.name == field)
+                        {
+                            let field_ty = instantiate_with(
+                                &def.symbol_type,
+                                &mut aspecti
+                                    .type_variables
+                                    .iter()
+                                    .map(|param| param.name.clone())
+                                    .zip(parameters)
+                                    .collect::<BTreeMap<String, TypeVariable>>(),
+                                &mut BTreeMap::new(),
+                            );
+                            constraint_queue.push_front((
+                                type_variable,
+                                Constraint::Equality {
+                                    ty: field_ty,
+                                    reason: ConstraintEqualityReason::FieldAccess(reason),
+                                },
+                            ));
                         }
                     }
                     TypeVariable::Unknown { id } => {
