@@ -223,7 +223,7 @@ impl<'input> Parser<'input> {
                 .map(|fields| TypeConstructorP { fields })
         } else {
             DiagnosticResult::fail(ErrorMessage::new(
-                "expected brace brackets".to_string(),
+                "expected brace bracket block".to_string(),
                 Severity::Error,
                 Diagnostic::at(self.source_file, &self.tokens.range()),
             ))
@@ -661,6 +661,9 @@ impl<'input> Parser<'input> {
                 copy_token: tk.range,
                 expr: Box::new(expr),
             })
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Match)) {
+            // This is a match expression.
+            self.parse_expr_match(tk.range)
         } else {
             // Default to a variable or application expression, since this will show a decent error message.
             self.parse_expr_app(in_pattern)
@@ -739,6 +742,63 @@ impl<'input> Parser<'input> {
         })
     }
 
+    /// Parses a match expression.
+    /// `expr_match ::= expr_term '(' match_body ')'`
+    fn parse_expr_match(&mut self, match_token: Range) -> DiagnosticResult<ExprPatP> {
+        if let Some(expr) = self.parse_expr_term(false) {
+            expr.bind(|expr| {
+                if let Some(tree) = self.parse_tree(BracketType::Parentheses) {
+                    self.parse_in_tree(tree, |parser| parser.parse_expr_match_body())
+                        .map(|cases| ExprPatP::Match {
+                            match_token,
+                            expr: Box::new(expr),
+                            cases,
+                        })
+                } else {
+                    DiagnosticResult::fail(ErrorMessage::new(
+                        "expected parenthesised block".to_string(),
+                        Severity::Error,
+                        Diagnostic::at(self.source_file, &self.tokens.range()),
+                    ))
+                }
+            })
+        } else {
+            DiagnosticResult::fail(ErrorMessage::new(
+                "expected expression".to_string(),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &Range::from(match_token.end)),
+            ))
+        }
+    }
+
+    /// Parses a match expression.
+    /// `expr_match_body ::= pat -> result (','? expr_match_body)?`
+    fn parse_expr_match_body(&mut self) -> DiagnosticResult<Vec<(ExprPatP, ExprPatP)>> {
+        self.parse_expr(true).bind(|pat| {
+            self.parse_token(|ty| matches!(ty, TokenType::Arrow), "expected arrow symbol")
+                .bind(|_| {
+                    self.parse_expr(false).bind(|result| {
+                        // We have parsed one case of the match expression.
+                        if self
+                            .parse_token_maybe(|ty| matches!(ty, TokenType::EndOfLine { .. }))
+                            .is_some()
+                        {
+                            if self.tokens.peek().is_some() {
+                                self.parse_expr_match_body().map(|mut other_cases| {
+                                    other_cases.insert(0, (pat, result));
+                                    other_cases
+                                })
+                            } else {
+                                DiagnosticResult::ok(vec![(pat, result)])
+                            }
+                        } else {
+                            DiagnosticResult::ok(vec![(pat, result)])
+                        }
+                    })
+                })
+        })
+    }
+
     /// Parses an impl expression (which is guaranteed not to be in a pattern).
     fn parse_expr_impl(&mut self, impl_token: Range) -> DiagnosticResult<ExprPatP> {
         self.parse_def_body()
@@ -812,7 +872,7 @@ impl<'input> Parser<'input> {
             })
         } else {
             self.parse_identifier_maybe().map(|identifier| identifier.bind(|identifier| {
-                let immediate = if identifier.segments.len() == 1 {
+                let constant = if identifier.segments.len() == 1 {
                     if identifier.segments[0].name == "unit" {
                         // This is a unit literal.
                         Some(ConstantValue::Unit)
@@ -841,8 +901,8 @@ impl<'input> Parser<'input> {
                     None
                 };
 
-                if let Some(value) = immediate {
-                    DiagnosticResult::ok(ExprPatP::Immediate { range: identifier.range(), value })
+                if let Some(value) = constant {
+                    DiagnosticResult::ok(ExprPatP::Constant { range: identifier.range(), value })
                 } else {
                     // If this is followed by a brace bracket, we are trying to construct an instance of a data type.
                     if let Some(tree) = self.parse_tree(BracketType::Brace) {

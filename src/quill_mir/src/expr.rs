@@ -14,9 +14,11 @@ use quill_type_deduce::hir::{
 use crate::{
     definition::{to_mir_def, DefinitionTranslationContext},
     mir::*,
+    pattern_match::{bind_pattern_variables, perform_match_function},
 };
 
 /// Sets up the context for dealing with this expression.
+/// This sets up slots for all local variables that are defined in this expression.
 pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
     match &expr.contents {
         ExpressionContents::Argument(_) => {}
@@ -48,6 +50,12 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
+        ExpressionContents::Match { expr, cases, .. } => {
+            initialise_expr(ctx, &*expr);
+            for (_pat, expr) in cases {
+                initialise_expr(ctx, expr);
+            }
+        }
     }
 }
 
@@ -56,10 +64,6 @@ pub(crate) struct ExprGeneratedM {
     pub block: BasicBlockId,
     /// The target that will have the expression's result stored into it.
     pub variable: LocalVariableName,
-    /// Some expressions require temporary variables to be kept alive until the end of a statement.
-    /// By adding values to this list, the given local variables will be dropped after the surrounding statement (or expression) ends.
-    /// In particular, the drop occurs at the next semicolon, or if there is not one, the end of the definition as a whole.
-    pub locals_to_drop: Vec<LocalVariableName>,
 }
 
 /// Creates a list of all local or argument variables used inside this expression.
@@ -116,8 +120,10 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             .flatten()
             .collect()
             */
-            Vec::new()
+            todo!()
+            // Vec::new()
         }
+        ExpressionContents::Match { .. } => todo!(),
     }
 }
 
@@ -141,10 +147,6 @@ struct ChainGeneratedM {
     block: BasicBlockId,
     /// The targets that will have the chain's results stored into them.
     variables: Vec<LocalVariableName>,
-    /// Some expressions require temporary variables to be kept alive until the end of a statement.
-    /// By adding values to this list, the given local variables will be dropped after the surrounding statement (or expression) ends.
-    /// In particular, the drop occurs at the next semicolon, or if there is not one, the end of the definition as a whole.
-    locals_to_drop: Vec<LocalVariableName>,
 }
 
 /// Generates a chain of expressions, with the given terminator.
@@ -159,7 +161,6 @@ fn generate_chain_with_terminator(
 
     let mut first_block = None;
     let mut locals = Vec::new();
-    let mut locals_to_drop = Vec::new();
 
     for expr in exprs.into_iter().rev() {
         let gen = generate_expr(ctx, expr, terminator);
@@ -169,7 +170,6 @@ fn generate_chain_with_terminator(
             kind: TerminatorKind::Goto(gen.block),
         };
         first_block = Some(gen.block);
-        locals_to_drop.extend(gen.locals_to_drop);
     }
 
     let first_block = first_block.unwrap_or_else(|| {
@@ -182,7 +182,6 @@ fn generate_chain_with_terminator(
     ChainGeneratedM {
         block: first_block,
         variables: locals,
-        locals_to_drop,
     }
 }
 
@@ -234,6 +233,9 @@ pub(crate) fn generate_expr(
         ExpressionContents::Impl {
             implementations, ..
         } => generate_expr_impl(ty, implementations, ctx, range, terminator),
+        ExpressionContents::Match { expr, cases, .. } => {
+            generate_expr_match(ctx, range, terminator, ty, expr, cases)
+        }
     }
 }
 
@@ -247,11 +249,7 @@ fn generate_expr_argument(
         terminator,
     });
     let variable = ctx.get_name_of_local(&arg.name);
-    ExprGeneratedM {
-        block,
-        variable,
-        locals_to_drop: Vec::new(),
-    }
+    ExprGeneratedM { block, variable }
 }
 
 fn generate_expr_local(
@@ -264,11 +262,7 @@ fn generate_expr_local(
         terminator,
     });
     let variable = ctx.get_name_of_local(&local.name);
-    ExprGeneratedM {
-        block,
-        variable,
-        locals_to_drop: Vec::new(),
-    }
+    ExprGeneratedM { block, variable }
 }
 
 fn generate_expr_symbol(
@@ -298,7 +292,6 @@ fn generate_expr_symbol(
     ExprGeneratedM {
         block,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: Vec::new(),
     }
 }
 
@@ -358,11 +351,6 @@ fn generate_expr_apply(
     ExprGeneratedM {
         block: left.block,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: left
-            .locals_to_drop
-            .into_iter()
-            .chain(right.locals_to_drop)
-            .collect(),
     }
 }
 
@@ -494,7 +482,6 @@ fn generate_expr_lambda(
     ExprGeneratedM {
         block,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: Vec::new(),
     }
 }
 
@@ -515,7 +502,7 @@ fn generate_expr_let(
         statements: Vec::new(),
         terminator,
     });
-    let mut rvalue = generate_expr(
+    let rvalue = generate_expr(
         ctx,
         *right_expr,
         Terminator {
@@ -543,13 +530,9 @@ fn generate_expr_let(
             source: Rvalue::Constant(ConstantValue::Unit),
         },
     });
-    rvalue.locals_to_drop.push(variable);
     ExprGeneratedM {
         block: rvalue.block,
         variable: LocalVariableName::Local(ret),
-        locals_to_drop: rvalue.locals_to_drop,
-        // The result of the let statement is the unit value, which is a temporary
-        // even though the actual value in the let statement is not temporary.
     }
 }
 
@@ -559,27 +542,8 @@ fn generate_expr_block(
     range: quill_common::location::Range,
     terminator: Terminator,
 ) -> ExprGeneratedM {
-    let locals_to_drop = statements
-        .iter()
-        .filter_map(|expr| {
-            if let ExpressionContents::Let { name, .. } = &expr.contents {
-                Some(name.name.clone())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
     let drop_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
-        statements: locals_to_drop
-            .iter()
-            .rev()
-            .map(|local| Statement {
-                range,
-                kind: StatementKind::DropIfAlive {
-                    variable: ctx.get_name_of_local(local),
-                },
-            })
-            .collect(),
+        statements: Vec::new(),
         terminator,
     });
     let drop_terminator = Terminator {
@@ -589,7 +553,7 @@ fn generate_expr_block(
     if let Some(final_expression) = statements.pop() {
         let final_expr = generate_expr(ctx, final_expression, drop_terminator);
 
-        let mut chain = generate_chain_with_terminator(
+        let chain = generate_chain_with_terminator(
             ctx,
             statements,
             Terminator {
@@ -597,22 +561,10 @@ fn generate_expr_block(
                 kind: TerminatorKind::Goto(final_expr.block),
             },
         );
-        chain.locals_to_drop.extend(chain.variables);
-        chain.locals_to_drop.extend(final_expr.locals_to_drop);
-        ctx.control_flow_graph
-            .basic_blocks
-            .get_mut(&drop_block)
-            .unwrap()
-            .statements
-            .extend(chain.locals_to_drop.into_iter().map(|local| Statement {
-                range,
-                kind: StatementKind::DropIfAlive { variable: local },
-            }));
 
         ExprGeneratedM {
             block: chain.block,
             variable: final_expr.variable,
-            locals_to_drop: Vec::new(),
         }
     } else {
         // We need to make a new unit variable since there was no final expression.
@@ -637,7 +589,7 @@ fn generate_expr_block(
             terminator: drop_terminator,
         });
 
-        let mut chain = generate_chain_with_terminator(
+        let chain = generate_chain_with_terminator(
             ctx,
             statements,
             Terminator {
@@ -645,21 +597,10 @@ fn generate_expr_block(
                 kind: TerminatorKind::Goto(initialise_variable),
             },
         );
-        chain.locals_to_drop.extend(chain.variables);
-        ctx.control_flow_graph
-            .basic_blocks
-            .get_mut(&drop_block)
-            .unwrap()
-            .statements
-            .extend(chain.locals_to_drop.into_iter().map(|local| Statement {
-                range,
-                kind: StatementKind::DropIfAlive { variable: local },
-            }));
 
         ExprGeneratedM {
             block: chain.block,
             variable: LocalVariableName::Local(variable),
-            locals_to_drop: Vec::new(),
         }
     }
 }
@@ -713,7 +654,6 @@ fn generate_expr_construct(
     ExprGeneratedM {
         block: chain.block,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: chain.locals_to_drop,
     }
 }
 
@@ -743,7 +683,6 @@ fn generate_expr_constant(
     ExprGeneratedM {
         block: initialise_variable,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: Vec::new(),
     }
 }
 
@@ -767,7 +706,7 @@ fn generate_expr_borrow(
         statements: Vec::new(),
         terminator,
     });
-    let mut inner = generate_expr(
+    let inner = generate_expr(
         ctx,
         *expr,
         Terminator {
@@ -787,13 +726,9 @@ fn generate_expr_borrow(
                 source: Rvalue::Borrow(inner.variable),
             },
         });
-    inner
-        .locals_to_drop
-        .push(LocalVariableName::Local(variable));
     ExprGeneratedM {
         block: inner.block,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: inner.locals_to_drop,
     }
 }
 
@@ -841,7 +776,6 @@ fn generate_expr_copy(
     ExprGeneratedM {
         block: inner.block,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: inner.locals_to_drop,
     }
 }
 
@@ -932,6 +866,174 @@ fn generate_expr_impl(
     ExprGeneratedM {
         block,
         variable: LocalVariableName::Local(variable),
-        locals_to_drop: Vec::new(),
+    }
+}
+
+fn generate_expr_match(
+    ctx: &mut DefinitionTranslationContext,
+    range: quill_common::location::Range,
+    terminator: Terminator,
+    ty: Type,
+    expr: Box<Expression>,
+    cases: Vec<(Pattern, Expression)>,
+) -> ExprGeneratedM {
+    // Generate the source expression we are pattern matching on.
+    // First, create a dummy block that will jump to the pattern match operation.
+    let dummy = ctx.control_flow_graph.new_basic_block(BasicBlock {
+        statements: Vec::new(),
+        terminator: Terminator {
+            range: expr.range(),
+            kind: TerminatorKind::Invalid,
+        },
+    });
+    let source_range = expr.range();
+    let source_ty = expr.ty.clone();
+    let source = generate_expr(
+        ctx,
+        *expr,
+        Terminator {
+            range: source_range,
+            kind: TerminatorKind::Goto(dummy),
+        },
+    );
+
+    // Generate the block for the result of this expression.
+    // The result of the match expression is assigned to `result`.
+    let result = ctx.new_local_variable(LocalVariableInfo {
+        range: source_range,
+        ty,
+        name: None,
+    });
+    // Create a dummy basic block which all of the other blocks will redirect to after finishing.
+    // This final block will drop the contents of the source expression.
+    let final_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+        statements: Vec::new(),
+        terminator,
+    });
+
+    // Generate each case.
+    let (patterns, replacements): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
+    let replacements = replacements
+        .into_iter()
+        .zip(patterns.iter())
+        .map(|(replacement, pattern)| {
+            // Generate a dummy basic block to act as a signal to move the value of the generated expression
+            // into `result` conditionally using a Phi node.
+            let terminator_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: Vec::new(),
+                terminator: Terminator {
+                    range: source_range,
+                    kind: TerminatorKind::Goto(final_block),
+                },
+            });
+
+            // Bind all of the variables we created in the pattern.
+            let bound_variables = bind_pattern_variables(
+                ctx,
+                Place::new(source.variable),
+                pattern,
+                source_ty.clone(),
+                None,
+            );
+
+            // Compute the replacement expression.
+            let expr_result = generate_expr(
+                ctx,
+                replacement,
+                Terminator {
+                    range: source_range,
+                    kind: TerminatorKind::Goto(terminator_block),
+                },
+            );
+
+            // Create a block which will bind all the locals then jump to the replacement block.
+            let bind_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
+                statements: bound_variables.statements,
+                terminator: Terminator {
+                    range: source_range,
+                    kind: TerminatorKind::Goto(expr_result.block),
+                },
+            });
+
+            // Like in a function pattern match, we need to move the result into a special
+            // "protected" slot, then drop all the living bound variables, before returning
+            // from the match.
+            let protected_slot = ctx.new_local_variable(LocalVariableInfo {
+                range: source_range,
+                ty: ctx.local_variable_names[&expr_result.variable].ty.clone(),
+                name: None,
+            });
+            let terminator_statements = &mut ctx
+                .control_flow_graph
+                .basic_blocks
+                .get_mut(&terminator_block)
+                .unwrap()
+                .statements;
+            terminator_statements.push(Statement {
+                range: source_range,
+                kind: StatementKind::Assign {
+                    target: LocalVariableName::Local(protected_slot),
+                    source: Rvalue::Move(Place::new(expr_result.variable)),
+                },
+            });
+
+            // Return: (
+            //     the block to call in order to execute the expression,
+            //     the terminator block that we jump from in order to reach the final block,
+            //     the expression containing the result of this case
+            // )
+            (
+                bind_block,
+                terminator_block,
+                LocalVariableName::Local(protected_slot),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // Now that each case has been generated, perform the actual pattern match operation.
+    // We treat this as a single-argument function for purposes of pattern matching.
+    let (cases, phi_cases) = patterns
+        .into_iter()
+        .map(|pat| vec![pat])
+        .zip(replacements)
+        .map(
+            |(pat, (replacement_block, replacement_final_block, replacement_variable))| {
+                (
+                    (pat, replacement_block),
+                    (replacement_final_block, replacement_variable),
+                )
+            },
+        )
+        .unzip();
+    let block = perform_match_function(ctx, range, vec![source_ty], &[source.variable], cases);
+
+    // Update the dummy to point to the pattern match operation.
+    ctx.control_flow_graph
+        .basic_blocks
+        .get_mut(&dummy)
+        .unwrap()
+        .terminator
+        .kind = TerminatorKind::Goto(block);
+
+    // Update the final block to:
+    // - assign the result variable based on which pattern match block we came from, and
+    // - drop the source expression after we've pattern-matched it.
+    let final_statements = &mut ctx
+        .control_flow_graph
+        .basic_blocks
+        .get_mut(&final_block)
+        .unwrap()
+        .statements;
+    final_statements.push(Statement {
+        range: source_range,
+        kind: StatementKind::AssignPhi {
+            target: LocalVariableName::Local(result),
+            phi_cases,
+        },
+    });
+
+    ExprGeneratedM {
+        block: source.block,
+        variable: LocalVariableName::Local(result),
     }
 }

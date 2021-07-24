@@ -32,7 +32,7 @@
                 {
                     "comment": "basic keywords",
                     "name": "keyword.other.quill",
-                    "match": "\\b(use|let|impl)\\b"
+                    "match": "\\b(use|let|impl|match)\\b"
                 },
                 {
                     "comment": "operators",

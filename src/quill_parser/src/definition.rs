@@ -18,7 +18,7 @@ pub struct DefinitionDeclP {
     pub definition_type: TypeP,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DefinitionBodyP {
     /// The body is defined as a series of cases to be pattern matched against.
     PatternMatch(Vec<DefinitionCaseP>),
@@ -49,7 +49,7 @@ pub struct TypeParameterP {
 }
 
 /// Represents a case in a definition where we can replace the left hand side of a pattern with the right hand side.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DefinitionCaseP {
     pub pattern: ExprPatP,
     pub replacement: ExprPatP,

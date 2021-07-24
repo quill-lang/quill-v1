@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, convert::TryFrom};
 
 use inkwell::{
-    basic_block::BasicBlock, debug_info::DIScope, types::BasicTypeEnum, values::CallableValue,
+    basic_block::BasicBlock,
+    debug_info::DIScope,
+    types::{AnyType, BasicType, BasicTypeEnum},
+    values::CallableValue,
     AddressSpace,
 };
 
@@ -15,7 +18,7 @@ use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
 use crate::{
-    codegen::BodyCreationContext,
+    codegen::{BodyCreationContext, CodeGenContext},
     func::{
         lifetime::{lifetime_end, lifetime_end_if_moved, lifetime_start},
         monomorphise::monomorphise,
@@ -24,6 +27,7 @@ use crate::{
     monomorphisation::{
         MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
     },
+    repr::Representations,
 };
 
 pub fn create_real_func_body<'ctx>(
@@ -100,28 +104,61 @@ fn create_real_func_body_cfg<'ctx>(
                         .build_alloca(target_repr.llvm_type, &target.to_string());
                     ctx.locals.insert(*target, target_value);
                     lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
-                    ctx.codegen
-                        .builder
-                        .build_memcpy(
-                            target_value,
-                            target_repr.abi_alignment(),
-                            get_pointer_to_rvalue(
-                                ctx.codegen,
-                                ctx.index,
-                                ctx.reprs,
-                                &ctx.locals,
-                                local_variable_names,
-                                source,
-                            )
-                            .unwrap(),
-                            target_repr.abi_alignment(),
-                            ctx.codegen
-                                .context
-                                .ptr_sized_int_type(ctx.codegen.target_data(), None)
-                                .const_int(target_repr.store_size(ctx.codegen) as u64, false),
+                    // Now, load the value behind source and store it into target.
+                    let ptr = anonymise_pointer(
+                        ctx.codegen,
+                        ctx.reprs,
+                        &target_ty,
+                        get_pointer_to_rvalue(
+                            ctx.codegen,
+                            ctx.index,
+                            ctx.reprs,
+                            &ctx.locals,
+                            local_variable_names,
+                            source,
                         )
-                        .unwrap();
+                        .unwrap(),
+                    );
+                    let source_value = ctx.codegen.builder.build_load(ptr, "source");
+                    // eprintln!("storing {:?} into {:?}", source_value, target_value);
+                    ctx.codegen.builder.build_store(target_value, source_value);
                     lifetime_end_if_moved(&ctx, local_variable_names, source);
+                }
+                StatementKind::AssignPhi { target, phi_cases } => {
+                    let target_ty = local_variable_names[target].ty.clone();
+                    let target_repr = ctx.reprs.repr(target_ty.clone()).unwrap();
+
+                    // Insert a phi node to determine which block we came from.
+                    let phi = ctx.codegen.builder.build_phi(
+                        target_repr.llvm_type.ptr_type(AddressSpace::Generic),
+                        "phi_result",
+                    );
+                    for (id, name) in phi_cases {
+                        // FIXME: if a MIR block is converted into 2 or more LLVM blocks,
+                        // blocks[id] might give the wrong block.
+                        // eprintln!("locals: {:#?}", ctx.locals);
+                        // eprintln!("getting {}", name);
+                        phi.add_incoming(&[(&ctx.locals[name], blocks[id])]);
+                    }
+
+                    // Create a new local variable in LLVM for this assignment target.
+                    let target_value = ctx
+                        .codegen
+                        .builder
+                        .build_alloca(target_repr.llvm_type, &target.to_string());
+                    ctx.locals.insert(*target, target_value);
+                    lifetime_start(&ctx, local_variable_names, target, scope, stmt.range);
+                    // Now, load the value behind source and store it into target.
+                    let source_value = ctx
+                        .codegen
+                        .builder
+                        .build_load(phi.as_basic_value().into_pointer_value(), "source");
+                    ctx.codegen.builder.build_store(target_value, source_value);
+
+                    // We can't easily add lifetime_end operations to the other phi cases, since
+                    // the values we want to end the lifetime of are not defined,
+                    // since by definition we didn't take that path through the control flow.
+                    // LLVM would complain that the source for the lifetime end instruction would not dominate all uses.
                 }
                 StatementKind::InvokeFunction {
                     name,
@@ -457,7 +494,7 @@ fn create_real_func_body_cfg<'ctx>(
                             .unwrap();
                         for (field_name, field_rvalue) in fields {
                             if data_repr.has_field(field_name) {
-                                data_repr.store(
+                                data_repr.store_ptr(
                                     ctx.codegen,
                                     ctx.reprs,
                                     target_value,
@@ -631,7 +668,7 @@ fn create_real_func_body_cfg<'ctx>(
                     // Treat this as a move, as far as access to the variable is concerned.
                     // Really, we're copying the value, but we can't use the [Rvalue::Copy] variant
                     // because that expects the argument to be behind a borrow.
-                    &Rvalue::Move(place.clone()),
+                    &Rvalue::Move(place.clone().then(PlaceSegment::Constant)),
                 )
                 .unwrap();
                 let value = ctx
@@ -679,4 +716,34 @@ fn create_real_func_body_cfg<'ctx>(
     }
 
     blocks[&cfg.entry_point]
+}
+
+/// Converts an LLVM pointer value's type into the type with the least information.
+/// Specifically, if the pointer is a function pointer, anonymise it into a pointer to a `fobj*`.
+fn anonymise_pointer<'ctx>(
+    ctx: &CodeGenContext<'ctx>,
+    reprs: &Representations<'_, 'ctx>,
+    target_ty: &Type,
+    ptr: inkwell::values::PointerValue<'ctx>,
+) -> inkwell::values::PointerValue<'ctx> {
+    if let Type::Function(_, _) = target_ty {
+        if ptr.get_type().get_element_type()
+            != reprs.general_func_obj_ty.llvm_type.as_any_type_enum()
+        {
+            ctx.builder
+                .build_bitcast(
+                    ptr,
+                    reprs
+                        .general_func_obj_ty
+                        .llvm_type
+                        .ptr_type(AddressSpace::Generic),
+                    "anonymised",
+                )
+                .into_pointer_value()
+        } else {
+            ptr
+        }
+    } else {
+        ptr
+    }
 }

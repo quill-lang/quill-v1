@@ -6,11 +6,14 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::ProjectIndex;
-use quill_parser::definition::DefinitionBodyP;
+use quill_parser::{definition::DefinitionBodyP, expr_pat::ExprPatP};
 use quill_type::Type;
 
 use crate::{
-    hir::expr::{Expression, ExpressionContents, ExpressionContentsT, ExpressionT, TypeVariable},
+    hir::{
+        expr::{Expression, ExpressionContents, ExpressionContentsT, ExpressionT, TypeVariable},
+        pattern::Pattern,
+    },
     type_check::{TypeChecker, TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
 };
@@ -248,7 +251,64 @@ fn substitute_contents(
                 visible_names,
             )
         }
+        ExpressionContentsT::Match {
+            match_token,
+            expr,
+            cases,
+        } => substitute(
+            substitution,
+            *expr,
+            source_file,
+            project_index,
+            visible_names,
+        )
+        .bind(|expr| {
+            cases
+                .into_iter()
+                .map(|(pattern, replacement)| {
+                    substitute(
+                        substitution,
+                        replacement,
+                        source_file,
+                        project_index,
+                        visible_names,
+                    )
+                    .bind(|replacement| {
+                        resolve_pattern(
+                            &pattern,
+                            &expr.ty,
+                            source_file,
+                            project_index,
+                            visible_names,
+                        )
+                        .map(|pattern| (pattern, replacement))
+                    })
+                })
+                .collect::<DiagnosticResult<Vec<_>>>()
+                .map(|cases| ExpressionContents::Match {
+                    match_token,
+                    expr: Box::new(expr),
+                    cases,
+                })
+        }),
     }
+}
+
+/// Verify that the pattern is of the given type, and then return it.
+fn resolve_pattern(
+    pat: &ExprPatP,
+    ty: &Type,
+    source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
+) -> DiagnosticResult<Pattern> {
+    // Create a dummy type checker to use its functions.
+    let typeck = TypeChecker {
+        source_file,
+        project_index,
+        messages: Vec::new(),
+    };
+    typeck.resolve_type_pattern(visible_names, pat.clone(), ty.clone())
 }
 
 fn typeck_impl(

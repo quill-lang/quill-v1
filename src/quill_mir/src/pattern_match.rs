@@ -227,7 +227,7 @@ fn first_difference(
     } else {
         // No patterns are probing inside this variable.
         // Now, check if any pattern is a primitive constant.
-        let immediate_value = patterns.iter().find_map(|pat| {
+        let constant_value = patterns.iter().find_map(|pat| {
             if let Pattern::Constant { value, .. } = pat {
                 if !matches!(value, ConstantValue::Unit) {
                     Some(*value)
@@ -239,11 +239,11 @@ fn first_difference(
             }
         });
 
-        if let Some(immediate_value) = immediate_value {
+        if let Some(constant_value) = constant_value {
             // We may need to switch on this value.
             let needs_switch = patterns.iter().any(|pat| {
                 if let Pattern::Constant { value, .. } = pat {
-                    *value != immediate_value
+                    *value != constant_value
                 } else {
                     true
                 }
@@ -282,7 +282,7 @@ fn first_difference(
                 None
             }
         } else {
-            // The patterns did not reference an immediate value.
+            // The patterns did not reference a constant value.
             // Now, check if any pattern is a borrow of some variable.
             let borrowed = patterns.iter().find_map(|pat| {
                 if let Pattern::Borrow { borrow_token, .. } = pat {
@@ -326,9 +326,12 @@ fn first_difference(
 
 /// Given a list of patterns for a function, in which place do they first (pairwise) differ, and how?
 /// If they do not differ, return None. Any `Place` returned will be relative to an argument.
+/// The list of args provided is the list of variables we are pattern matching on; if this is a function,
+/// then args will be [_0arg, _1arg, ...].
 fn first_difference_function(
     project_index: &ProjectIndex,
     arg_types: Vec<Type>,
+    args: &[LocalVariableName],
     patterns: &[Vec<Pattern>],
 ) -> Option<PatternMismatch> {
     for i in 0..arg_types.len() {
@@ -338,7 +341,7 @@ fn first_difference_function(
             .collect::<Vec<_>>();
         if let Some(diff) = first_difference(
             project_index,
-            Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
+            Place::new(args[i]),
             arg_types[i].clone(),
             &arg_patterns,
         ) {
@@ -356,12 +359,13 @@ fn reference_place_function(
     place: Place,
     replacement: Pattern,
     mut arg_patterns: Vec<Pattern>,
+    args: &[LocalVariableName],
 ) -> Vec<Pattern> {
-    let i = if let LocalVariableName::Argument(ArgumentIndex(i)) = place.local {
-        i as usize
-    } else {
-        unreachable!();
-    };
+    let (i, _arg) = args
+        .iter()
+        .enumerate()
+        .find(|(_i, arg)| place.local == **arg)
+        .unwrap();
 
     arg_patterns[i] = reference_place(place.projection, replacement, arg_patterns[i].clone());
     arg_patterns
@@ -431,7 +435,25 @@ fn reference_place(
                 }
             }
             PlaceSegment::EnumDiscriminant => Pattern::Unknown(pattern.range()),
-            PlaceSegment::ImplField { .. } => Pattern::Unknown(pattern.range()),
+            PlaceSegment::Constant => Pattern::Unknown(pattern.range()),
+            PlaceSegment::ImplField { field } => {
+                if let Pattern::Impl {
+                    impl_token,
+                    mut fields,
+                } = pattern
+                {
+                    for (field_name, _field_type, field_pat) in &mut fields {
+                        if field_name.name == field {
+                            *field_pat =
+                                reference_place(place_segments, replacement, field_pat.clone());
+                            break;
+                        }
+                    }
+                    Pattern::Impl { impl_token, fields }
+                } else {
+                    pattern
+                }
+            }
         }
     }
 }
@@ -442,16 +464,18 @@ fn reference_place(
 /// these 'case' blocks when the pattern is matched. The return value is a basic block
 /// which will perform this match operation, then jump to the case blocks.
 pub(crate) fn perform_match_function(
-    project_index: &ProjectIndex,
     ctx: &mut DefinitionTranslationContext,
     range: Range,
     arg_types: Vec<Type>,
+    args: &[LocalVariableName],
     cases: Vec<(Vec<Pattern>, BasicBlockId)>,
 ) -> BasicBlockId {
     // Recursively find the first difference between patterns, until each case has its own branch.
     // println!("Cases: {:#?}", cases);
     let (patterns, blocks): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
-    if let Some(diff) = first_difference_function(project_index, arg_types.clone(), &patterns) {
+    if let Some(diff) =
+        first_difference_function(ctx.project_index, arg_types.clone(), args, &patterns)
+    {
         // println!("Diff: {:#?}", diff);
         // There was a difference that lets us distinguish some of the patterns into different branches.
         let diff_reason = diff.reason;
@@ -471,9 +495,10 @@ pub(crate) fn perform_match_function(
                         let new_cases = cases
                             .into_iter()
                             .map(|id| {
-                                let enum_fields = if let TypeDeclarationTypeI::Enum(enumi) =
-                                    &project_index[&enum_name.source_file].types[&enum_name.name]
-                                        .decl_type
+                                let enum_fields = if let TypeDeclarationTypeI::Enum(enumi) = &ctx
+                                    .project_index[&enum_name.source_file]
+                                    .types[&enum_name.name]
+                                    .decl_type
                                 {
                                     enumi
                                         .variants
@@ -521,6 +546,7 @@ pub(crate) fn perform_match_function(
                                         diff_place.clone(),
                                         replacement,
                                         patterns[id].clone(),
+                                        args,
                                     ),
                                     blocks[id],
                                 )
@@ -528,13 +554,7 @@ pub(crate) fn perform_match_function(
                             .collect();
                         (
                             name,
-                            perform_match_function(
-                                project_index,
-                                ctx,
-                                range,
-                                arg_types.clone(),
-                                new_cases,
-                            ),
+                            perform_match_function(ctx, range, arg_types.clone(), args, new_cases),
                         )
                     })
                     .collect::<BTreeMap<_, _>>();
@@ -571,6 +591,7 @@ pub(crate) fn perform_match_function(
                                         diff_place.clone(),
                                         replacement,
                                         patterns[id].clone(),
+                                        args,
                                     ),
                                     blocks[id],
                                 )
@@ -578,13 +599,7 @@ pub(crate) fn perform_match_function(
                             .collect();
                         (
                             value,
-                            perform_match_function(
-                                project_index,
-                                ctx,
-                                range,
-                                arg_types.clone(),
-                                new_cases,
-                            ),
+                            perform_match_function(ctx, range, arg_types.clone(), args, new_cases),
                         )
                     })
                     .collect::<BTreeMap<_, _>>();
@@ -598,7 +613,7 @@ pub(crate) fn perform_match_function(
                             .into_iter()
                             .map(|id| (patterns[id].clone(), blocks[id]))
                             .collect();
-                        perform_match_function(project_index, ctx, range, arg_types, new_cases)
+                        perform_match_function(ctx, range, arg_types, args, new_cases)
                     }
                 };
 
@@ -639,7 +654,6 @@ pub(crate) struct BoundPatternVariables {
 /// will be assigned a borrow condition, and their types will gain a layer of indirection.
 pub(crate) fn bind_pattern_variables(
     ctx: &mut DefinitionTranslationContext,
-    index: &ProjectIndex,
     value: Place,
     pat: &Pattern,
     ty: Type,
@@ -685,7 +699,6 @@ pub(crate) fn bind_pattern_variables(
                 .map(|(field_name, ty, pat)| {
                     bind_pattern_variables(
                         ctx,
-                        index,
                         value
                             .clone()
                             .then(if let Some(variant) = type_ctor.variant.clone() {
@@ -725,7 +738,6 @@ pub(crate) fn bind_pattern_variables(
                 .map(|(field_name, ty, pat)| {
                     bind_pattern_variables(
                         ctx,
-                        index,
                         value.clone().then(PlaceSegment::ImplField {
                             field: field_name.name.clone(),
                         }),
@@ -755,13 +767,14 @@ pub(crate) fn bind_pattern_variables(
         Pattern::Borrow { borrowed, .. } => {
             if let Type::Borrow { ty, borrow } = ty {
                 // TODO: what happens with nested borrows?
-                bind_pattern_variables(ctx, index, value, &*borrowed, *ty, borrow)
+                bind_pattern_variables(ctx, value, &*borrowed, *ty, borrow)
             } else {
                 unreachable!()
             }
         }
         Pattern::Unknown(range) => {
-            // Drop this variable.
+            // Drop this variable, by moving it into a new variable which will never be used.
+            // The drop checker will automatically insert a drop instruction for this new variable.
             let range = *range;
             let local = ctx.new_local_variable(LocalVariableInfo {
                 range,
@@ -775,14 +788,8 @@ pub(crate) fn bind_pattern_variables(
                     source: Rvalue::Move(value),
                 },
             };
-            let drop_stmt = Statement {
-                range,
-                kind: StatementKind::DropIfAlive {
-                    variable: LocalVariableName::Local(local),
-                },
-            };
             BoundPatternVariables {
-                statements: vec![move_stmt, drop_stmt],
+                statements: vec![move_stmt],
                 bound_variables: Vec::new(),
             }
         }

@@ -107,8 +107,7 @@ pub(crate) fn to_mir_def(
 
             // This function will create the rest of the control flow graph
             // for sub-expressions.
-            ctx.control_flow_graph.entry_point =
-                create_cfg(project_index, &mut ctx, cases, def.arg_types, range);
+            ctx.control_flow_graph.entry_point = create_cfg(&mut ctx, cases, def.arg_types, range);
             ctx.control_flow_graph.reorder();
 
             let def = DefinitionM {
@@ -141,7 +140,6 @@ pub(crate) fn to_mir_def(
 /// Creates a control flow graph for a function definition.
 /// Returns the basic block representing the function's entry point.
 fn create_cfg(
-    project_index: &ProjectIndex,
     ctx: &mut DefinitionTranslationContext,
     cases: Vec<DefinitionCase>,
     arg_types: Vec<Type>,
@@ -160,7 +158,6 @@ fn create_cfg(
                 .map(|(i, (arg_pattern, arg_type))| {
                     bind_pattern_variables(
                         ctx,
-                        project_index,
                         Place::new(LocalVariableName::Argument(ArgumentIndex(i as u64))),
                         arg_pattern,
                         arg_type.clone(),
@@ -226,29 +223,6 @@ fn create_cfg(
                 },
             });
 
-            // Further, we need to drop the function's arguments (if they're still alive) in this return block.
-            // Variables bound using patterns may not have been dropped at this point.
-            // We drop these before dropping arguments.
-            for temp in func.locals_to_drop {
-                return_block.statements.push(Statement {
-                    range,
-                    kind: StatementKind::DropIfAlive { variable: temp },
-                })
-            }
-            for temp in bound_variables {
-                return_block.statements.push(Statement {
-                    range,
-                    kind: StatementKind::DropIfAlive { variable: temp },
-                })
-            }
-            for i in 0..arg_types.len() {
-                return_block.statements.push(Statement {
-                    range,
-                    kind: StatementKind::DropIfAlive {
-                        variable: LocalVariableName::Argument(ArgumentIndex(i as u64)),
-                    },
-                })
-            }
             // Now, replace the terminator with a custom terminator that returns the real protected return value from the function.
             return_block.terminator = Terminator {
                 range,
@@ -271,5 +245,10 @@ fn create_cfg(
         .collect::<Vec<_>>();
 
     // Then perform the pattern matching operation on each parameter to the function, in reverse order.
-    perform_match_function(project_index, ctx, range, arg_types, cases)
+    let args = arg_types
+        .iter()
+        .enumerate()
+        .map(|(i, _)| LocalVariableName::Argument(ArgumentIndex(i as u64)))
+        .collect::<Vec<_>>();
+    perform_match_function(ctx, range, arg_types, &args, cases)
 }

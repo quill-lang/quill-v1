@@ -13,7 +13,7 @@ use quill_parser::{
 use quill_type::PrimitiveType;
 
 use crate::{
-    hindley_milner::LetStatementNewVariables,
+    hindley_milner::{constraints::ConstraintFieldAccessReason, LetStatementNewVariables},
     hir::expr::{
         AbstractionVariable, BoundVariable, ExpressionContentsT, ExpressionT, TypeVariable,
     },
@@ -146,7 +146,7 @@ pub(crate) fn generate_constraints(
                 }
                 // If None, we couldn't find a symbol in scope.
                 None => {
-                    // Now, check to see if this is an immediate variable like `unit`, which always produces a value.
+                    // Now, check to see if this is a constant like `unit`, which always produces a value.
 
                     DiagnosticResult::fail(ErrorMessage::new(
                         format!("variable `{}` not recognised", identifier),
@@ -156,7 +156,7 @@ pub(crate) fn generate_constraints(
                 }
             }
         }
-        ExprPatP::Immediate {
+        ExprPatP::Constant {
             range,
             value: ConstantValue::Unit,
         } => DiagnosticResult::ok(ExprTypeCheck {
@@ -173,7 +173,7 @@ pub(crate) fn generate_constraints(
             let_variables,
             new_variables: None,
         }),
-        ExprPatP::Immediate {
+        ExprPatP::Constant {
             range,
             value: ConstantValue::Bool(value),
         } => DiagnosticResult::ok(ExprTypeCheck {
@@ -190,7 +190,7 @@ pub(crate) fn generate_constraints(
             let_variables,
             new_variables: None,
         }),
-        ExprPatP::Immediate {
+        ExprPatP::Constant {
             range,
             value: ConstantValue::Int(value),
         } => DiagnosticResult::ok(ExprTypeCheck {
@@ -894,6 +894,183 @@ pub(crate) fn generate_constraints(
             })
         }
         ExprPatP::ImplPattern { .. } => unreachable!(),
+        ExprPatP::Match {
+            match_token,
+            expr,
+            cases,
+        } => {
+            let replacement_type = TypeVariableId::default();
+            // Generate constraints for the expression.
+            generate_constraints(
+                source_file,
+                project_index,
+                visible_names,
+                args,
+                lambda_variables.clone(),
+                let_variables.clone(),
+                *expr,
+            )
+            .bind(|expr| {
+                // Generate constraints for each pattern replacement.
+                // The cases may define some new local variables, which are considered to be `let`
+                // expressions which are defined inside the case block.
+                let cases = cases
+                    .into_iter()
+                    .map(|(pattern, replacement)| {
+                        // Generate the list of local variables defined by the pattern,
+                        // and add them to the list of "let" variables.
+                        generate_pattern_variables(
+                            source_file,
+                            &pattern,
+                            expr.expr.type_variable.clone(),
+                            expr.expr.range(),
+                        )
+                        .bind(|new_variables| {
+                            let mut messages = Vec::new();
+                            let mut let_variables = let_variables.clone();
+                            for (k, v) in &new_variables.variables {
+                                match let_variables.entry(k.name.clone()) {
+                                    Entry::Occupied(occupied) => {
+                                        messages.push(ErrorMessage::new_with(
+                                            format!(
+                                                "variable `{}` was already defined",
+                                                occupied.key()
+                                            ),
+                                            Severity::Error,
+                                            Diagnostic::at(
+                                                source_file,
+                                                &new_variables.type_variable_definition_ranges[v],
+                                            ),
+                                            HelpMessage {
+                                                message: String::from("previously defined here"),
+                                                help_type: HelpType::Note,
+                                                diagnostic: Diagnostic::at(
+                                                    source_file,
+                                                    &occupied.get().range,
+                                                ),
+                                            },
+                                        ));
+                                    }
+                                    Entry::Vacant(vacant) => {
+                                        vacant.insert(AbstractionVariable {
+                                            range: new_variables.type_variable_definition_ranges
+                                                [v],
+                                            var_type: *v,
+                                        });
+                                    }
+                                }
+                            }
+
+                            // Propagate the messages into a diagnostic result.
+                            let variables = new_variables.variables;
+                            let assumptions = new_variables.assumptions;
+                            let mut constraints = new_variables.constraints;
+                            let type_variable_definition_ranges =
+                                new_variables.type_variable_definition_ranges;
+                            DiagnosticResult::ok_with_many((), messages).bind(|_| {
+                                let replacement = generate_constraints(
+                                    source_file,
+                                    project_index,
+                                    visible_names,
+                                    args,
+                                    lambda_variables.clone(),
+                                    let_variables,
+                                    replacement,
+                                );
+                                replacement.map(|mut replacement| {
+                                    for (variable_name, variable_type_var_id) in
+                                        &variables
+                                    {
+                                        // Let's remove and store the assumptions about the variables that we created in the pattern match body.
+                                        let match_assumptions = replacement
+                                            .assumptions
+                                            .0
+                                            .remove(variable_name)
+                                            .unwrap_or_else(Vec::new);
+
+                                        for assumption in match_assumptions {
+                                            constraints.0.push((
+                                                TypeVariable::Unknown { id: assumption.0 },
+                                                Constraint::Equality {
+                                                    ty: TypeVariable::Unknown {
+                                                        id: *variable_type_var_id,
+                                                    },
+                                                    reason: ConstraintEqualityReason::InstancePatternVariable {
+                                                        match_token,
+                                                        expr: replacement.expr.range(),
+                                                        variable_name: variable_name
+                                                            .name
+                                                            .to_string(),
+                                                        variable_type: TypeVariable::Unknown {
+                                                            id: *variable_type_var_id,
+                                                        },
+                                                    },
+                                                },
+                                            ));
+                                        }
+                                    }
+
+                                    replacement.assumptions =
+                                        replacement.assumptions.union(assumptions);
+                                    replacement.constraints = replacement
+                                        .constraints
+                                        .union(constraints)
+                                        .union(Constraints::new_with(
+                                            replacement.expr.type_variable.clone(),
+                                            Constraint::Equality {
+                                                ty: TypeVariable::Unknown {
+                                                    id: replacement_type,
+                                                },
+                                                reason: ConstraintEqualityReason::MatchResult {
+                                                    match_token,
+                                                },
+                                            },
+                                        ));
+                                    replacement
+                                        .type_variable_definition_ranges
+                                        .extend(type_variable_definition_ranges);
+
+                                    (pattern, replacement)
+                                })
+                            })
+                        })
+                    })
+                    .collect::<DiagnosticResult<Vec<_>>>();
+                cases.map(|cases| (expr, cases))
+            })
+            .map(|(expr, cases)| {
+                // Collate each match case into a single expression.
+                let mut assumptions = expr.assumptions;
+                let mut constraints = expr.constraints;
+                let mut type_variable_definition_ranges = expr.type_variable_definition_ranges;
+                let mut body = Vec::new();
+                for (case_pattern, case_typeck) in cases {
+                    assumptions = assumptions.union(case_typeck.assumptions);
+                    constraints = constraints.union(case_typeck.constraints);
+                    type_variable_definition_ranges
+                        .extend(case_typeck.type_variable_definition_ranges);
+                    body.push((case_pattern, case_typeck.expr));
+                }
+
+                ExprTypeCheck {
+                    expr: ExpressionT {
+                        type_variable: TypeVariable::Unknown {
+                            id: replacement_type,
+                        },
+                        contents: ExpressionContentsT::Match {
+                            match_token,
+                            expr: Box::new(expr.expr),
+                            cases: body,
+                        },
+                    },
+                    type_variable_definition_ranges,
+                    assumptions,
+                    constraints,
+                    let_variables: BTreeMap::new(),
+                    new_variables: None,
+                }
+            })
+        }
     }
 }
 
@@ -913,4 +1090,247 @@ fn already_defined(
             diagnostic: Diagnostic::at(source_file, &previous_range),
         },
     )
+}
+
+struct PatternMatchConstraints<Vars> {
+    /// A map from newly created variables in the pattern to the variable types.
+    variables: Vars,
+    assumptions: Assumptions,
+    constraints: Constraints,
+    type_variable_definition_ranges: BTreeMap<TypeVariableId, Range>,
+}
+
+/// Given a pattern for an expression, add variables for each named variable
+/// in the pattern, and add constraints to make sure these new variables have the right types.
+/// `expr_ty` is the type of the expression we're pattern matching on.
+///
+/// This does not verify that all pattern match expressions actually have matching types,
+/// but it does verify that any variables bound inside such an expression have correct types.
+/// This should be verified later.
+fn generate_pattern_variables(
+    source_file: &SourceFileIdentifier,
+    pattern: &ExprPatP,
+    expr_ty: TypeVariable,
+    pattern_range: Range,
+) -> DiagnosticResult<PatternMatchConstraints<BTreeMap<NameP, TypeVariableId>>> {
+    fn generate_pattern_variables_inner(
+        pattern: &ExprPatP,
+        expr_ty: TypeVariable,
+        pattern_range: Range,
+    ) -> PatternMatchConstraints<Vec<(NameP, TypeVariableId)>> {
+        match pattern {
+            ExprPatP::Variable(var) => {
+                let id = TypeVariableId::default();
+                PatternMatchConstraints {
+                    // Since this is a pattern, the variable must only have one path segment.
+                    variables: vec![(var.segments[0].clone(), id)],
+                    assumptions: Assumptions::default(),
+                    constraints: Constraints::new_with(
+                        TypeVariable::Unknown { id },
+                        Constraint::Equality {
+                            ty: expr_ty,
+                            reason: ConstraintEqualityReason::MatchVariable {
+                                input_expr: pattern_range,
+                            },
+                        },
+                    ),
+                    type_variable_definition_ranges: {
+                        let mut map = BTreeMap::new();
+                        map.insert(id, pattern.range());
+                        map
+                    },
+                }
+            }
+            ExprPatP::Constant { .. } => PatternMatchConstraints {
+                // Immediate patterns do not create any constraints,
+                // since they do not define new variables.
+                variables: Vec::new(),
+                assumptions: Assumptions::default(),
+                constraints: Constraints::default(),
+                type_variable_definition_ranges: BTreeMap::new(),
+            },
+            ExprPatP::Apply(_, _) => unreachable!(),
+            ExprPatP::Lambda { .. } => unreachable!(),
+            ExprPatP::Let { .. } => unreachable!(),
+            ExprPatP::Block { .. } => unreachable!(),
+            ExprPatP::Borrow { borrow_token, expr } => {
+                // Create a new type variable for this borrowed value.
+                let borrowed_ty = TypeVariableId::default();
+                let mut result = generate_pattern_variables_inner(
+                    &*expr,
+                    TypeVariable::Unknown { id: borrowed_ty },
+                    expr.range(),
+                );
+                result.constraints = result.constraints.union(Constraints::new_with(
+                    TypeVariable::Unknown { id: borrowed_ty },
+                    Constraint::Equality {
+                        ty: TypeVariable::Borrow {
+                            ty: Box::new(expr_ty),
+                        },
+                        reason: ConstraintEqualityReason::Borrow {
+                            expr: pattern.range(),
+                            borrow_token: *borrow_token,
+                        },
+                    },
+                ));
+                result
+            }
+            ExprPatP::Copy { .. } => unreachable!(),
+            ExprPatP::ConstructData {
+                data_constructor,
+                fields,
+                ..
+            } => {
+                let mut result = PatternMatchConstraints {
+                    variables: Vec::new(),
+                    assumptions: Assumptions::default(),
+                    constraints: Constraints::default(),
+                    type_variable_definition_ranges: BTreeMap::new(),
+                };
+
+                let all_fields = fields
+                    .fields
+                    .iter()
+                    .map(|(name, pat)| (name, pat.clone()))
+                    .chain(fields.auto_fields.iter().map(|name| {
+                        (
+                            name,
+                            ExprPatP::Variable(IdentifierP {
+                                segments: vec![name.clone()],
+                            }),
+                        )
+                    }));
+
+                for (field_name, field_pat) in all_fields {
+                    // Create a new type variable for this field.
+                    let field_ty = TypeVariableId::default();
+                    let inner = generate_pattern_variables_inner(
+                        &field_pat,
+                        TypeVariable::Unknown { id: field_ty },
+                        pattern_range,
+                    );
+                    result.variables.extend(inner.variables);
+                    result.assumptions = result.assumptions.union(inner.assumptions);
+                    result.constraints = result.constraints.union(inner.constraints);
+                    result
+                        .type_variable_definition_ranges
+                        .extend(inner.type_variable_definition_ranges);
+
+                    // Add a constraint that the field's type is the correct data type,
+                    // if we know the container's data type.
+                    result.constraints = result.constraints.union(Constraints::new_with(
+                        TypeVariable::Unknown { id: field_ty },
+                        Constraint::FieldAccess {
+                            ty: expr_ty.clone(),
+                            data_type: Some(data_constructor.clone()),
+                            field: field_name.clone(),
+                            reason: ConstraintFieldAccessReason {
+                                input_expr: pattern_range,
+                            },
+                        },
+                    ));
+                }
+
+                result
+            }
+            ExprPatP::Impl { .. } => unreachable!(),
+            ExprPatP::ImplPattern { fields, .. } => {
+                let mut result = PatternMatchConstraints {
+                    variables: Vec::new(),
+                    assumptions: Assumptions::default(),
+                    constraints: Constraints::default(),
+                    type_variable_definition_ranges: BTreeMap::new(),
+                };
+
+                let all_fields = fields
+                    .fields
+                    .iter()
+                    .map(|(name, pat)| (name, pat.clone()))
+                    .chain(fields.auto_fields.iter().map(|name| {
+                        (
+                            name,
+                            ExprPatP::Variable(IdentifierP {
+                                segments: vec![name.clone()],
+                            }),
+                        )
+                    }));
+
+                for (field_name, field_pat) in all_fields {
+                    // Create a new type variable for this field.
+                    let field_ty = TypeVariableId::default();
+                    let inner = generate_pattern_variables_inner(
+                        &field_pat,
+                        TypeVariable::Unknown { id: field_ty },
+                        pattern_range,
+                    );
+                    result.variables.extend(inner.variables);
+                    result.assumptions = result.assumptions.union(inner.assumptions);
+                    result.constraints = result.constraints.union(inner.constraints);
+                    result
+                        .type_variable_definition_ranges
+                        .extend(inner.type_variable_definition_ranges);
+
+                    // Add a constraint that the field's type is the correct data type,
+                    // if we know the container's data type.
+                    result.constraints = result.constraints.union(Constraints::new_with(
+                        TypeVariable::Unknown { id: field_ty },
+                        Constraint::FieldAccess {
+                            ty: expr_ty.clone(),
+                            data_type: None,
+                            field: field_name.clone(),
+                            reason: ConstraintFieldAccessReason {
+                                input_expr: pattern_range,
+                            },
+                        },
+                    ));
+                }
+
+                result
+            }
+            ExprPatP::Match { .. } => unreachable!(),
+            ExprPatP::Unknown(_) => PatternMatchConstraints {
+                variables: Vec::new(),
+                assumptions: Assumptions::default(),
+                constraints: Constraints::default(),
+                type_variable_definition_ranges: BTreeMap::new(),
+            },
+        }
+    }
+
+    // De-duplicate the list of local variables, emitting an error if a local variable name was duplicated.
+    let vars = generate_pattern_variables_inner(pattern, expr_ty, pattern_range);
+    let mut messages = Vec::new();
+    let mut map = BTreeMap::<NameP, TypeVariableId>::new();
+
+    for (k, v) in vars.variables {
+        match map.entry(k) {
+            Entry::Occupied(occupied) => {
+                messages.push(ErrorMessage::new_with(
+                    format!("variable `{}` was already defined", occupied.key()),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &vars.type_variable_definition_ranges[&v]),
+                    HelpMessage {
+                        message: String::from("previously defined here"),
+                        help_type: HelpType::Note,
+                        diagnostic: Diagnostic::at(
+                            source_file,
+                            &vars.type_variable_definition_ranges[occupied.get()],
+                        ),
+                    },
+                ));
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(v);
+            }
+        }
+    }
+
+    let result = PatternMatchConstraints {
+        variables: map,
+        assumptions: vars.assumptions,
+        constraints: vars.constraints,
+        type_variable_definition_ranges: vars.type_variable_definition_ranges,
+    };
+
+    DiagnosticResult::ok_with_many(result, messages)
 }

@@ -212,7 +212,7 @@ impl SemanticTokenGenerator {
                     0,
                 );
             }
-            ExprPatP::Immediate { range, .. } => {
+            ExprPatP::Constant { range, .. } => {
                 self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER], 0);
             }
             ExprPatP::Apply(l, r) => {
@@ -305,6 +305,13 @@ impl SemanticTokenGenerator {
                     );
                 }
             }
+            ExprPatP::Match { expr, cases, .. } => {
+                self.gen_expr(*expr, conditions.clone());
+                for (pat, replacement) in cases {
+                    self.gen_expr(pat, conditions.clone());
+                    self.gen_expr(replacement, conditions.clone());
+                }
+            }
         }
     }
 }
@@ -319,7 +326,7 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
                 Vec::new()
             }
         }
-        ExprPatP::Immediate { .. } => Vec::new(),
+        ExprPatP::Constant { .. } => Vec::new(),
         ExprPatP::Apply(l, r) => {
             let mut result = get_named_parameters(&*l, is_main_pattern);
             result.extend(get_named_parameters(&*r, false));
@@ -352,6 +359,7 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             }
             result
         }
+        ExprPatP::Match { .. } => unreachable!(),
     }
 }
 

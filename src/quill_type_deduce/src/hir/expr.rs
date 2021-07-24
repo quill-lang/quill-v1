@@ -4,12 +4,16 @@ use quill_common::{
     location::{Range, Ranged},
     name::QualifiedName,
 };
-use quill_parser::{definition::DefinitionBodyP, expr_pat::ConstantValue, identifier::NameP};
+use quill_parser::{
+    definition::DefinitionBodyP,
+    expr_pat::{ConstantValue, ExprPatP},
+    identifier::NameP,
+};
 use quill_type::{PrimitiveType, Type};
 
 use crate::type_resolve::TypeVariableId;
 
-use super::definition::Definition;
+use super::{definition::Definition, pattern::Pattern};
 
 /// The Expression type is central to the HIR, or high-level intermediate representation.
 /// In an expression in HIR, the type of each object is known.
@@ -27,10 +31,11 @@ impl Ranged for Expression {
 
 /// Represents the contents of an expression (which may or may not have been already type checked).
 /// The type `V` represents the type variables that we are substituting into this symbol.
+/// The type `P` represents a pattern.
 /// The type `I` represents the contents of an `impl` expression.
 /// You should use `ExpressionContents` or `ExpressionContentsT` instead of this enum directly.
 #[derive(Debug)]
-pub enum ExpressionContentsGeneric<E, T, V, I> {
+pub enum ExpressionContentsGeneric<E, T, V, P, I> {
     /// An argument to this function e.g. `x`.
     Argument(NameP),
     /// A local variable declared by a `lambda` or `let` expression.
@@ -84,9 +89,16 @@ pub enum ExpressionContentsGeneric<E, T, V, I> {
     Copy { copy_token: Range, expr: Box<E> },
     /// An implementation of an aspect.
     Impl {
-        /// Maps names of definitions to their implementations.
         impl_token: Range,
+        /// Maps names of definitions to their implementations.
         implementations: I,
+    },
+    /// A match expression, specifically something of the form `match expr { pat -> result, pat -> result, ... }`
+    Match {
+        match_token: Range,
+        expr: Box<E>,
+        /// A list of patterns and their replacements.
+        cases: Vec<(P, E)>,
     },
 }
 
@@ -101,7 +113,7 @@ pub struct DefinitionCaseGeneric<E> {
     pub replacement: Box<E>,
 }
 
-impl<E, T, V, I> Ranged for ExpressionContentsGeneric<E, T, V, I>
+impl<E, T, V, P, I> Ranged for ExpressionContentsGeneric<E, T, V, P, I>
 where
     E: Ranged,
 {
@@ -135,16 +147,18 @@ where
                 copy_token, expr, ..
             } => copy_token.union(expr.range()),
             ExpressionContentsGeneric::Impl { impl_token, .. } => *impl_token,
+            ExpressionContentsGeneric::Match { match_token, .. } => *match_token,
         }
     }
 }
 
 pub type ExpressionContents =
-    ExpressionContentsGeneric<Expression, Type, Vec<Type>, BTreeMap<String, Definition>>;
+    ExpressionContentsGeneric<Expression, Type, Vec<Type>, Pattern, BTreeMap<String, Definition>>;
 pub type ExpressionContentsT = ExpressionContentsGeneric<
     ExpressionT,
     TypeVariable,
     BTreeMap<String, TypeVariable>,
+    ExprPatP,
     DefinitionBodyP,
 >;
 

@@ -8,12 +8,12 @@ use crate::{
 };
 
 /// Represents either an expression or a pattern.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprPatP {
     /// A named variable e.g. `x` or `+`.
     Variable(IdentifierP),
     /// A primitive constant such as `14` or `false`.
-    Immediate { range: Range, value: ConstantValue },
+    Constant { range: Range, value: ConstantValue },
     /// Apply the left hand side to the right hand side, e.g. `a b`.
     /// More complicated expressions e.g. `a b c d` can be desugared into `((a b) c) d`.
     Apply(Box<ExprPatP>, Box<ExprPatP>),
@@ -47,7 +47,7 @@ pub enum ExprPatP {
         copy_token: Range,
         expr: Box<ExprPatP>,
     },
-    /// The name of a data type, followed by brace brackets containing the data structure's fields.
+    /// The name of a data type or enum variant, followed by brace brackets containing the data structure's fields.
     ConstructData {
         data_constructor: IdentifierP,
         open_brace: Range,
@@ -65,6 +65,13 @@ pub enum ExprPatP {
         open_brace: Range,
         close_brace: Range,
         fields: ConstructDataFields,
+    },
+    /// A match expression, specifically something of the form `match expr { pat -> result, pat -> result, ... }`
+    Match {
+        match_token: Range,
+        expr: Box<ExprPatP>,
+        /// A list of patterns and their replacements.
+        cases: Vec<(ExprPatP, ExprPatP)>,
     },
     /// An underscore `_` representing an unknown.
     /// This is valid only in patterns, not normal expressions.
@@ -89,7 +96,7 @@ impl Display for ConstantValue {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstructDataFields {
     /// Fields that have been assigned values, e.g. `foo = 1`.
     pub fields: Vec<(NameP, ExprPatP)>,
@@ -102,7 +109,7 @@ impl Ranged for ExprPatP {
     fn range(&self) -> Range {
         match self {
             ExprPatP::Variable(identifier) => identifier.range(),
-            ExprPatP::Immediate { range, .. } => *range,
+            ExprPatP::Constant { range, .. } => *range,
             ExprPatP::Apply(left, right) => left.range().union(right.range()),
             ExprPatP::Unknown(range) => *range,
             ExprPatP::Lambda {
@@ -129,6 +136,7 @@ impl Ranged for ExprPatP {
                 close_brace,
                 ..
             } => impl_token.range().union(close_brace.range()),
+            ExprPatP::Match { match_token, .. } => *match_token,
         }
     }
 }

@@ -28,3 +28,4 @@ toml = "0.5"
 [dev-dependencies]
 file_diff = "1.0"
 fs_extra = "1.2"
+rusty-fork = "0.3"
