@@ -755,7 +755,8 @@ pub(crate) fn bind_pattern_variables(
             }
         }
         Pattern::Unknown(range) => {
-            // Drop this variable.
+            // Drop this variable, by moving it into a new variable which will never be used.
+            // The drop checker will automatically insert a drop instruction for this new variable.
             let range = *range;
             let local = ctx.new_local_variable(LocalVariableInfo {
                 range,
@@ -769,14 +770,8 @@ pub(crate) fn bind_pattern_variables(
                     source: Rvalue::Move(value),
                 },
             };
-            let drop_stmt = Statement {
-                range,
-                kind: StatementKind::DropFreeIfAlive {
-                    variable: LocalVariableName::Local(local),
-                },
-            };
             BoundPatternVariables {
-                statements: vec![move_stmt, drop_stmt],
+                statements: vec![move_stmt],
                 bound_variables: Vec::new(),
             }
         }

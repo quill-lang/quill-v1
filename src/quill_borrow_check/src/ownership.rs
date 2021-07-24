@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use quill_common::{
     diagnostic::{Diagnostic, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -14,26 +14,30 @@ enum OwnershipStatus {
     NotInitialised {
         /// Where was this variable defined, even though it was not initialised?
         definition: Range,
+        block: BasicBlockId,
     },
     Owned {
         /// Where did we first gain ownership of this variable?
         assignment: Range,
+        block: BasicBlockId,
     },
     Moved {
         /// Where did we move this variable?
         moved: Range,
-    },
-    Dropped {
-        /// Where did we drop this variable?
-        dropped: Range,
+        block: BasicBlockId,
     },
     Destructured {
         /// Where did we destructure this variable?
         destructured: Range,
+        block: BasicBlockId,
     },
-    /// Sometimes, this object is moved/owned/dropped, and sometimes not, depending on which basic blocks we pass through
+    /// Sometimes, this object is moved/owned, and sometimes not, depending on which basic blocks we pass through
     /// in the real control flow of the function.
     Conditional {
+        /// The place that the conditional statuses were reconciled in.
+        reconciled: Range,
+        /// The block that the conditional statuses were reconciled in.
+        block: BasicBlockId,
         /// Originally, this object is considered 'owned'. But if we pass through the given basic blocks, its ownership
         /// status is considered 'moved' into the given range.
         moved_into_blocks: BTreeMap<BasicBlockId, Range>,
@@ -45,302 +49,280 @@ enum OwnershipStatus {
     },
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct OwnershipStatuses {
     locals: BTreeMap<LocalVariableName, OwnershipStatus>,
 }
 
-/// Checks whether data is owned when it is used or referenced.
+/// The input MIR is not expected to handle dropping/freeing at all, and this function
+/// works out when we need to drop and free local variables.
+///
+/// In particular, this function checks whether data is owned when it is used or referenced.
 /// We walk through all branches of the control flow graph deducing ownership (but not borrow) status.
-/// This allows us to insert StorageLive, StorageDead, and Drop instructions into the MIR.
-/// In particular, we remove DropIfAlive instructions in this step, replacing them with hard drops, introducing drop flags if necessary.
 pub(crate) fn check_ownership(
     source_file: &SourceFileIdentifier,
     def: &mut DefinitionM,
     messages: &mut Vec<ErrorMessage>,
 ) {
-    // println!("{}", def);
+    // eprintln!("{}", def);
     let range = def.range;
 
-    let mut statuses = OwnershipStatuses {
-        locals: def
-            .local_variable_names
-            .iter()
-            .map(|(name, info)| {
-                (
-                    *name,
-                    OwnershipStatus::NotInitialised {
-                        definition: info.range,
-                    },
-                )
-            })
-            .chain((0..def.arity).into_iter().map(|i| {
-                (
-                    LocalVariableName::Argument(ArgumentIndex(i as u64)),
-                    OwnershipStatus::Owned { assignment: range },
-                )
-            }))
-            .collect(),
-    };
-
     if let DefinitionBodyM::PatternMatch(cfg) = &mut def.body {
-        check_ownership_walk(source_file, cfg, messages, &mut statuses, cfg.entry_point);
+        let statuses = OwnershipStatuses {
+            locals: def
+                .local_variable_names
+                .iter()
+                .map(|(name, info)| {
+                    (
+                        *name,
+                        OwnershipStatus::NotInitialised {
+                            definition: info.range,
+                            block: BasicBlockId(0),
+                        },
+                    )
+                })
+                .chain((0..def.arity).into_iter().map(|i| {
+                    (
+                        LocalVariableName::Argument(ArgumentIndex(i as u64)),
+                        OwnershipStatus::Owned {
+                            assignment: range,
+                            block: BasicBlockId(0),
+                        },
+                    )
+                }))
+                .collect(),
+        };
 
-        // Now, check to make sure all variables are successfully moved out or dropped.
-        // Otherwise, there is something dangling.
-        for (name, stat) in statuses.locals {
-            match stat {
-                OwnershipStatus::Owned { assignment } => messages.push(ErrorMessage::new(
-                    format!(
-                        "local variable `{}` was not moved or dropped (this is a compiler bug), MIR was:\n{}",
-                        name,
-                        cfg,
-                    ),
-                    Severity::Error,
-                    Diagnostic::at(source_file, &assignment),
-                )),
-                OwnershipStatus::Moved { .. } => {}
-                OwnershipStatus::Dropped { .. } => {}
-                OwnershipStatus::Destructured { destructured } => messages.push(ErrorMessage::new(
-                    format!(
-                    "local variable `{}` was destructured but not freed (this is a compiler bug), MIR was:\n{}",
-                    name,
-                    cfg,
-                ),
-                    Severity::Error,
-                    Diagnostic::at(source_file, &destructured),
-                )),
-                OwnershipStatus::Conditional {
-                    moved_into_blocks,
-                    destructured_in_blocks,
-                    not_moved_blocks,
-                } => {
-                    if !not_moved_blocks.is_empty() {
-                        messages.push(ErrorMessage::new(
-                        format!(
-                            "local variable `{}` was not moved or dropped (this is a compiler bug): {:#?}; {:#?}; {:#?}; MIR was {}",
-                            name,
-                            moved_into_blocks, destructured_in_blocks, not_moved_blocks,
-                            cfg,
-                        ),
-                        Severity::Error,
-                        Diagnostic::at(source_file, &range),
-                    ));
-                    }
-                }
-                OwnershipStatus::NotInitialised { .. } => {
-                    // The local variable is hidden from this scope, so it must have already been dropped or moved.
-                }
-            }
-        }
+        check_ownership_walk(source_file, cfg, messages, statuses);
     }
 }
 
-/// Check the ownership at this point, adding this block id to the list of completed blocks.
-/// This function may be called multiple times. The language guarantees that statuses will be updated the same way regardless
-/// of when we call this function.
-#[allow(clippy::needless_collect)]
+/// Traverse every route between blocks, working out the usages of each variable in each block.
+/// The input CFG must not have any cycles, and must be topologically sorted.
 fn check_ownership_walk(
     source_file: &SourceFileIdentifier,
     cfg: &mut ControlFlowGraph,
     messages: &mut Vec<ErrorMessage>,
-    statuses: &mut OwnershipStatuses,
-    block_id: BasicBlockId,
+    original_statuses: OwnershipStatuses,
 ) {
-    let block = cfg.basic_blocks.get_mut(&block_id).unwrap();
+    let mut original_statuses = Some(original_statuses);
 
-    // Iterate over each statement to check if that statement's action is ok to perform, given the current ownership of variables at this point.
-    // If the statement is a drop (for example), we might need to add or remove statements, so it's not just a normal "for" loop.
-    let mut i = 0;
-    while i < block.statements.len() {
-        // NOTE! The i++ statement happens HERE not at the end of the loop - this is done to prevent overflow!
-        let stmt = &mut block.statements[i];
-        i += 1;
+    // First, find a list of the transitions of the control flow graph in reverse.
+    // We need to track how each block is arrived at.
+    let mut predecessors = cfg
+        .basic_blocks
+        .keys()
+        .map(|block| (*block, BTreeSet::new()))
+        .collect::<BTreeMap<BasicBlockId, BTreeSet<BasicBlockId>>>();
 
-        match &mut stmt.kind {
-            StatementKind::Assign { target, source } => {
-                make_rvalue_used(source_file, messages, statuses, stmt.range, source.clone());
-                make_owned(statuses, stmt.range, *target);
+    for (block_id, block) in &cfg.basic_blocks {
+        match &block.terminator.kind {
+            TerminatorKind::Goto(target) => {
+                predecessors.get_mut(target).unwrap().insert(*block_id);
             }
-            StatementKind::AssignPhi { target, phi_cases } => {
-                for (_, case) in phi_cases {
-                    // We don't need to worry about move checking much, since the only way a user can ever
-                    // generate a phi node is by using a match expression, which automatically moves
-                    // the result of each branch into the phi node without borrowing or anything.
-                    // So, for the sake of borrowck, just pretend that the variable's been moved out.
-                    *statuses.locals.get_mut(case).unwrap() =
-                        OwnershipStatus::Moved { moved: stmt.range };
+            TerminatorKind::SwitchDiscriminant { cases, .. } => {
+                for target in cases.values() {
+                    predecessors.get_mut(target).unwrap().insert(*block_id);
                 }
-                make_owned(statuses, stmt.range, *target);
             }
-            StatementKind::InstanceSymbol { target, .. } => {
-                // The target is now owned.
-                make_owned(statuses, stmt.range, *target);
-            }
-            StatementKind::Apply {
-                argument,
-                function,
-                target,
-                ..
-            } => {
-                make_rvalue_used(
-                    source_file,
-                    messages,
-                    statuses,
-                    stmt.range,
-                    *argument.clone(),
-                );
-                make_rvalue_used(
-                    source_file,
-                    messages,
-                    statuses,
-                    stmt.range,
-                    *function.clone(),
-                );
-                make_owned(statuses, stmt.range, *target);
-            }
-            StatementKind::DropFreeIfAlive { variable } => {
-                let drop_stmts = make_dropped(statuses, stmt.range, *variable);
-                let len = drop_stmts.len();
-                block.statements.splice((i - 1)..i, drop_stmts);
-                i += len;
-                i -= 1;
-            }
-            StatementKind::Drop { variable } => {
-                // In a previous run of this function, we dropped this variable.
-                // So we call make_dropped like before, but don't update any instructions.
-                make_dropped(statuses, stmt.range, *variable);
-            }
-            StatementKind::Free { .. } => {
-                // In a previous run of this function, we freed this variable.
-                // Don't update any instructions.
-            }
-            StatementKind::ConstructData { fields, target, .. } => {
-                for field_value in fields.values() {
-                    make_rvalue_used(
-                        source_file,
-                        messages,
-                        statuses,
-                        stmt.range,
-                        field_value.clone(),
-                    );
+            TerminatorKind::SwitchConstant { cases, .. } => {
+                for target in cases.values() {
+                    predecessors.get_mut(target).unwrap().insert(*block_id);
                 }
-                make_owned(statuses, stmt.range, *target);
             }
-            StatementKind::ConstructImpl {
-                target,
-                definitions,
-                ..
-            } => {
-                // TODO: For now, we can't pass local variables into impls.
-                // When this is implemented, we can add more things here.
-
-                // Move the definitions out.
-                for def in definitions.values() {
-                    make_rvalue_used(
-                        source_file,
-                        messages,
-                        statuses,
-                        stmt.range,
-                        Rvalue::Move(Place::new(*def)),
-                    );
-                }
-
-                // The target is now owned.
-                make_owned(statuses, stmt.range, *target);
-            }
-            _ => unreachable!(),
+            TerminatorKind::Invalid => unreachable!(),
+            TerminatorKind::Return { .. } => {}
         }
     }
 
-    // Now consider the block's terminator.
-    // We can't express loops literally in Quill, so there's no worry about infinite recursion.
-    let terminator_range = block.terminator.range;
-    match &mut block.terminator.kind {
-        TerminatorKind::Goto(target) => {
-            let target = *target;
-            check_ownership_walk(source_file, cfg, messages, statuses, target)
-        }
-        TerminatorKind::SwitchDiscriminant {
-            enum_place, cases, ..
-        } => {
-            // Ensure that the enum place is OK to use.
-            make_used(
-                source_file,
-                messages,
-                statuses,
-                terminator_range,
-                enum_place.local,
-                UseType::Reference,
-            );
+    // At the *end* of a given basic block, what are the ownership statuses of variables?
+    let mut statuses = BTreeMap::<BasicBlockId, OwnershipStatuses>::new();
 
-            // Now, walk on each branch and collate the results.
-            // Clippy thinks I can elide the collect, but there's a lifetime issue if I do.
-            let branches = cases.values().copied().collect::<Vec<_>>();
-            let branch_statuses = branches
-                .into_iter()
-                .map(|target_block| {
-                    let mut inner_statuses = statuses.clone();
-                    check_ownership_walk(
-                        source_file,
-                        cfg,
-                        messages,
-                        &mut inner_statuses,
-                        target_block,
-                    );
-                    (target_block, inner_statuses)
-                })
-                .collect::<Vec<_>>();
-            *statuses = collate_statuses(terminator_range, branch_statuses);
-        }
-        TerminatorKind::SwitchConstant {
-            place,
-            cases,
-            default,
-        } => {
-            // Ensure that the enum place is OK to use.
-            make_used(
-                source_file,
-                messages,
-                statuses,
-                terminator_range,
-                place.local,
-                UseType::Reference,
-            );
+    // A list of blocks that we need to add drop instructions to, so that certain variables are actually dropped.
+    let mut pending_drops = BTreeMap::<BasicBlockId, Vec<LocalVariableName>>::new();
+    let mut pending_frees = BTreeMap::<BasicBlockId, Vec<LocalVariableName>>::new();
 
-            // Now, walk on each branch and collate the results.
-            // Clippy thinks I can elide the collect, but there's a lifetime issue if I do.
-            let branches = cases
-                .values()
-                .copied()
-                .chain(std::iter::once(*default))
-                .collect::<Vec<_>>();
-            let branch_statuses = branches
-                .into_iter()
-                .map(|target_block| {
-                    let mut inner_statuses = statuses.clone();
-                    check_ownership_walk(
+    // We know that the input graph is topologically sorted.
+    // Therefore, we can iterate through each basic block in order, knowing that all of its
+    // predecessors have already been computed.
+    for (block_id, block) in &mut cfg.basic_blocks {
+        // Work out the ownership statuses at the start of this block.
+        let branch_statuses = predecessors[block_id]
+            .iter()
+            .map(|previous_block| (*previous_block, statuses[previous_block].clone()))
+            .collect::<Vec<_>>();
+
+        // Collate the statuses together.
+        let mut block_statuses = if branch_statuses.is_empty() {
+            assert!(*block_id == cfg.entry_point);
+            original_statuses.take().unwrap()
+        } else {
+            collate_statuses(
+                block.terminator.range,
+                *block_id,
+                branch_statuses,
+                &mut pending_drops,
+                &mut pending_frees,
+            )
+        };
+
+        // For each statement in the block, compute how it changes ownership.
+        for stmt in &block.statements {
+            match &stmt.kind {
+                StatementKind::Assign { target, source } => {
+                    make_rvalue_used(
                         source_file,
-                        cfg,
                         messages,
-                        &mut inner_statuses,
-                        target_block,
+                        &mut block_statuses,
+                        stmt.range,
+                        *block_id,
+                        source.clone(),
                     );
-                    (target_block, inner_statuses)
-                })
-                .collect::<Vec<_>>();
-            *statuses = collate_statuses(terminator_range, branch_statuses);
+                    make_owned(&mut block_statuses, stmt.range, *target, *block_id);
+                }
+                StatementKind::AssignPhi { target, phi_cases } => {
+                    for (_, case) in phi_cases {
+                        // We don't need to worry about move checking much, since the only way a user can ever
+                        // generate a phi node is by using a match expression, which automatically moves
+                        // the result of each branch into the phi node without borrowing or anything.
+                        // So, for the sake of borrowck, just pretend that the variable's been moved out.
+                        *block_statuses.locals.get_mut(case).unwrap() = OwnershipStatus::Moved {
+                            moved: stmt.range,
+                            block: *block_id,
+                        };
+                    }
+                    make_owned(&mut block_statuses, stmt.range, *target, *block_id);
+                }
+                StatementKind::InstanceSymbol { target, .. } => {
+                    // The target is now owned.
+                    make_owned(&mut block_statuses, stmt.range, *target, *block_id);
+                }
+                StatementKind::Apply {
+                    argument,
+                    function,
+                    target,
+                    ..
+                } => {
+                    make_rvalue_used(
+                        source_file,
+                        messages,
+                        &mut block_statuses,
+                        stmt.range,
+                        *block_id,
+                        *argument.clone(),
+                    );
+                    make_rvalue_used(
+                        source_file,
+                        messages,
+                        &mut block_statuses,
+                        stmt.range,
+                        *block_id,
+                        *function.clone(),
+                    );
+                    make_owned(&mut block_statuses, stmt.range, *target, *block_id);
+                }
+                StatementKind::ConstructData { fields, target, .. } => {
+                    for field_value in fields.values() {
+                        make_rvalue_used(
+                            source_file,
+                            messages,
+                            &mut block_statuses,
+                            stmt.range,
+                            *block_id,
+                            field_value.clone(),
+                        );
+                    }
+                    make_owned(&mut block_statuses, stmt.range, *target, *block_id);
+                }
+                StatementKind::ConstructImpl {
+                    target,
+                    definitions,
+                    ..
+                } => {
+                    // TODO: For now, we can't pass local variables into impls.
+                    // When this is implemented, we can add more things here.
+
+                    // Move the definitions out.
+                    for def in definitions.values() {
+                        make_rvalue_used(
+                            source_file,
+                            messages,
+                            &mut block_statuses,
+                            stmt.range,
+                            *block_id,
+                            Rvalue::Move(Place::new(*def)),
+                        );
+                    }
+
+                    // The target is now owned.
+                    make_owned(&mut block_statuses, stmt.range, *target, *block_id);
+                }
+                _ => unreachable!(),
+            }
         }
-        TerminatorKind::Invalid => {}
-        TerminatorKind::Return { value } => {
-            make_used(
-                source_file,
-                messages,
-                statuses,
-                terminator_range,
-                *value,
-                UseType::Move,
-            );
+
+        // If this is a block that returns from the function,
+        // add drop instructions for all unused variables.
+        if let TerminatorKind::Return { value } = &block.terminator.kind {
+            for (variable, status) in &block_statuses.locals {
+                if variable == value {
+                    continue;
+                }
+                match status {
+                    OwnershipStatus::NotInitialised { .. } => {}
+                    OwnershipStatus::Owned { .. } => {
+                        block.statements.push(Statement {
+                            range: block.terminator.range,
+                            kind: StatementKind::Drop {
+                                variable: *variable,
+                            },
+                        });
+                        block.statements.push(Statement {
+                            range: block.terminator.range,
+                            kind: StatementKind::Free {
+                                variable: *variable,
+                            },
+                        });
+                    }
+                    OwnershipStatus::Moved { .. } => {}
+                    OwnershipStatus::Destructured { .. } => {
+                        block.statements.push(Statement {
+                            range: block.terminator.range,
+                            kind: StatementKind::Free {
+                                variable: *variable,
+                            },
+                        });
+                    }
+                    OwnershipStatus::Conditional { .. } => {}
+                }
+            }
+        }
+
+        // Store the new list of statuses into the statuses map.
+        statuses.insert(*block_id, block_statuses);
+    }
+
+    // Create all of the drop/free instructions that were pending, created in the collate_statuses function.
+    for (block_id, vars) in pending_drops {
+        let block = cfg.basic_blocks.get_mut(&block_id).unwrap();
+        for variable in vars {
+            block.statements.push(Statement {
+                range: block.terminator.range,
+                kind: StatementKind::Drop { variable },
+            });
+            block.statements.push(Statement {
+                range: block.terminator.range,
+                kind: StatementKind::Free { variable },
+            });
+        }
+    }
+    for (block_id, vars) in pending_frees {
+        let block = cfg.basic_blocks.get_mut(&block_id).unwrap();
+        for variable in vars {
+            block.statements.push(Statement {
+                range: block.terminator.range,
+                kind: StatementKind::Free { variable },
+            });
         }
     }
 }
@@ -350,7 +332,10 @@ fn check_ownership_walk(
 /// state that is true after the branch finishes.
 fn collate_statuses(
     range: Range,
+    block_id: BasicBlockId,
     branch_statuses: Vec<(BasicBlockId, OwnershipStatuses)>,
+    pending_drops: &mut BTreeMap<BasicBlockId, Vec<LocalVariableName>>,
+    pending_frees: &mut BTreeMap<BasicBlockId, Vec<LocalVariableName>>,
 ) -> OwnershipStatuses {
     // Flatten the list of statuses into a map from local variable names to their potential statuses.
     let flattened =
@@ -368,7 +353,17 @@ fn collate_statuses(
         locals: flattened
             .into_iter()
             .map(|(variable, branch_statuses)| {
-                (variable, collate_statuses_single(range, branch_statuses))
+                (
+                    variable,
+                    collate_statuses_single(
+                        variable,
+                        range,
+                        block_id,
+                        branch_statuses,
+                        pending_drops,
+                        pending_frees,
+                    ),
+                )
             })
             .collect(),
     }
@@ -376,8 +371,12 @@ fn collate_statuses(
 
 /// The branch statuses are disjoint events that could occur.
 fn collate_statuses_single(
+    variable: LocalVariableName,
     range: Range,
+    block_id: BasicBlockId,
     branch_statuses: Vec<(BasicBlockId, OwnershipStatus)>,
+    pending_drops: &mut BTreeMap<BasicBlockId, Vec<LocalVariableName>>,
+    pending_frees: &mut BTreeMap<BasicBlockId, Vec<LocalVariableName>>,
 ) -> OwnershipStatus {
     // If one branch considers a variable not initialised, then the variable is
     // hidden from the outside scope. In this case, this variable contains the location
@@ -388,53 +387,63 @@ fn collate_statuses_single(
     let mut destructured_in_blocks = BTreeMap::new();
     let mut not_moved_blocks = BTreeMap::new();
 
-    for (block, status) in branch_statuses {
+    for (_block, status) in branch_statuses {
         match status {
-            OwnershipStatus::NotInitialised { definition } => {
+            OwnershipStatus::NotInitialised { definition, .. } => {
                 not_initialised_but_defined_at = Some(definition);
             }
-            OwnershipStatus::Owned { assignment } => {
+            OwnershipStatus::Owned { assignment, block } => {
                 not_moved_blocks.insert(block, assignment);
             }
-            OwnershipStatus::Moved { moved } => {
+            OwnershipStatus::Moved { moved, block } => {
                 moved_into_blocks.insert(block, moved);
             }
-            OwnershipStatus::Dropped { dropped } => {
-                moved_into_blocks.insert(block, dropped);
-            }
-            OwnershipStatus::Destructured { destructured } => {
+            OwnershipStatus::Destructured {
+                destructured,
+                block,
+            } => {
                 destructured_in_blocks.insert(block, destructured);
             }
             OwnershipStatus::Conditional {
-                moved_into_blocks: m,
-                destructured_in_blocks: d,
-                not_moved_blocks: n,
+                reconciled, block, ..
             } => {
-                for (k, v) in m {
-                    moved_into_blocks.insert(k, v);
-                }
-                for (k, v) in d {
-                    destructured_in_blocks.insert(k, v);
-                }
-                for (k, v) in n {
-                    not_moved_blocks.insert(k, v);
-                }
+                moved_into_blocks.insert(block, reconciled);
             }
         }
     }
 
     if let Some(definition) = not_initialised_but_defined_at {
-        OwnershipStatus::NotInitialised { definition }
+        OwnershipStatus::NotInitialised {
+            definition,
+            block: block_id,
+        }
     } else if moved_into_blocks.is_empty() && destructured_in_blocks.is_empty() {
-        OwnershipStatus::Owned { assignment: range }
+        OwnershipStatus::Owned {
+            assignment: *not_moved_blocks.iter().next().unwrap().1,
+            block: block_id,
+        }
     } else if not_moved_blocks.is_empty() && destructured_in_blocks.is_empty() {
-        OwnershipStatus::Moved { moved: range }
+        OwnershipStatus::Moved {
+            moved: *moved_into_blocks.iter().next().unwrap().1,
+            block: block_id,
+        }
     } else if moved_into_blocks.is_empty() && not_moved_blocks.is_empty() {
         OwnershipStatus::Destructured {
-            destructured: range,
+            destructured: *destructured_in_blocks.iter().next().unwrap().1,
+            block: block_id,
         }
     } else {
+        // If we have conditional ownership, then treat the variable as dropped, and
+        // add drop/free instructions to the blocks in which the variable was not dropped/freed.
+        for block in not_moved_blocks.keys() {
+            pending_drops.entry(*block).or_default().push(variable);
+        }
+        for block in destructured_in_blocks.keys() {
+            pending_frees.entry(*block).or_default().push(variable);
+        }
         OwnershipStatus::Conditional {
+            reconciled: range,
+            block: block_id,
             moved_into_blocks,
             destructured_in_blocks,
             not_moved_blocks,
@@ -448,6 +457,7 @@ fn make_rvalue_used(
     messages: &mut Vec<ErrorMessage>,
     statuses: &mut OwnershipStatuses,
     range: Range,
+    block_id: BasicBlockId,
     rvalue: Rvalue,
 ) {
     match rvalue {
@@ -458,6 +468,7 @@ fn make_rvalue_used(
                 messages,
                 statuses,
                 range,
+                block_id,
                 place.local,
                 if place.projection.is_empty() {
                     UseType::Move
@@ -471,6 +482,7 @@ fn make_rvalue_used(
             messages,
             statuses,
             range,
+            block_id,
             local,
             UseType::Reference,
         ),
@@ -479,6 +491,7 @@ fn make_rvalue_used(
             messages,
             statuses,
             range,
+            block_id,
             local,
             UseType::Reference,
         ),
@@ -502,6 +515,7 @@ fn make_used(
     messages: &mut Vec<ErrorMessage>,
     statuses: &mut OwnershipStatuses,
     range: Range,
+    block_id: BasicBlockId,
     variable: LocalVariableName,
     use_type: UseType,
 ) {
@@ -510,7 +524,7 @@ fn make_used(
     match statuses.locals.get(&variable).unwrap() {
         OwnershipStatus::NotInitialised { .. } => panic!("variable {} uninitialised", variable),
         OwnershipStatus::Owned { .. } => {}
-        OwnershipStatus::Moved { moved } => messages.push(ErrorMessage::new_with(
+        OwnershipStatus::Moved { moved, .. } => messages.push(ErrorMessage::new_with(
             format!(
                 "this variable ({}) has already been moved out, so it cannot be used here",
                 variable
@@ -523,8 +537,7 @@ fn make_used(
                 diagnostic: Diagnostic::at(source_file, moved),
             },
         )),
-        OwnershipStatus::Dropped { .. } => unreachable!(),
-        OwnershipStatus::Destructured { destructured } => {
+        OwnershipStatus::Destructured { destructured, .. } => {
             // It's syntactically impossible to destructure a variable *and* keep its value,
             // since the only way to destructure something is to pattern match it.
             // So it's safe to destructure a variable multiple times - MIR uses this semantic
@@ -574,11 +587,15 @@ fn make_used(
 
     match use_type {
         UseType::Move => {
-            *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Moved { moved: range }
+            *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Moved {
+                moved: range,
+                block: block_id,
+            }
         }
         UseType::Destructure => {
             *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Destructured {
                 destructured: range,
+                block: block_id,
             }
         }
         UseType::Reference => {}
@@ -586,60 +603,17 @@ fn make_used(
 }
 
 /// Adjusts the statuses to reflect that this value is now owned.
-fn make_owned(statuses: &mut OwnershipStatuses, range: Range, variable: LocalVariableName) {
-    // If this variable is currently alive, we need to translate this instruction into an unconditional drop instruction.
-    // Otherwise, we need to add drop flags and drop the variable if and only if it's not been moved out so far.
-    // Because the MIR is in SSA form, the variable cannot be owned already.
-    *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Owned { assignment: range };
-}
-
-/// Adjusts the statuses to reflect that this value is now dropped.
-/// If this was an invalid operation to perform, the output messages will reflect this.
-/// Returns the statement(s) that will perform the actual drop (if required).
-fn make_dropped(
+fn make_owned(
     statuses: &mut OwnershipStatuses,
     range: Range,
     variable: LocalVariableName,
-) -> Vec<Statement> {
+    block_id: BasicBlockId,
+) {
     // If this variable is currently alive, we need to translate this instruction into an unconditional drop instruction.
     // Otherwise, we need to add drop flags and drop the variable if and only if it's not been moved out so far.
-    let stat = statuses.locals.get_mut(&variable).unwrap();
-    match stat {
-        OwnershipStatus::NotInitialised { .. } => unreachable!(),
-        OwnershipStatus::Owned { .. } => {
-            // Unconditionally drop this variable.
-            *stat = OwnershipStatus::Dropped { dropped: range };
-            vec![
-                Statement {
-                    range,
-                    kind: StatementKind::Drop { variable },
-                },
-                Statement {
-                    range,
-                    kind: StatementKind::Free { variable },
-                },
-            ]
-        }
-        OwnershipStatus::Moved { .. } => {
-            // Unconditionally do not drop this variable. It's already been moved out.
-            Vec::new()
-        }
-        OwnershipStatus::Dropped { .. } => {
-            // Unconditionally do not drop this variable. It's already been dropped.
-            Vec::new()
-        }
-        OwnershipStatus::Destructured { .. } => {
-            // Unconditionally do not drop this variable, but free its memory.
-            // Set its ownership status to "dropped" so we do not free its memory twice.
-            *stat = OwnershipStatus::Dropped { dropped: range };
-            vec![Statement {
-                range,
-                kind: StatementKind::Free { variable },
-            }]
-        }
-        OwnershipStatus::Conditional { .. } => {
-            // Maybe drop this variable, depending on drop flags.
-            panic!("implement drop flags");
-        }
-    }
+    // Because the MIR is in SSA form, the variable cannot be owned already.
+    *statuses.locals.get_mut(&variable).unwrap() = OwnershipStatus::Owned {
+        assignment: range,
+        block: block_id,
+    };
 }

@@ -223,29 +223,6 @@ fn create_cfg(
                 },
             });
 
-            // Further, we need to drop the function's arguments (if they're still alive) in this return block.
-            // Variables bound using patterns may not have been dropped at this point.
-            // We drop these before dropping arguments.
-            for temp in func.locals_to_drop {
-                return_block.statements.push(Statement {
-                    range,
-                    kind: StatementKind::DropFreeIfAlive { variable: temp },
-                })
-            }
-            for temp in bound_variables {
-                return_block.statements.push(Statement {
-                    range,
-                    kind: StatementKind::DropFreeIfAlive { variable: temp },
-                })
-            }
-            for i in 0..arg_types.len() {
-                return_block.statements.push(Statement {
-                    range,
-                    kind: StatementKind::DropFreeIfAlive {
-                        variable: LocalVariableName::Argument(ArgumentIndex(i as u64)),
-                    },
-                })
-            }
             // Now, replace the terminator with a custom terminator that returns the real protected return value from the function.
             return_block.terminator = Terminator {
                 range,
