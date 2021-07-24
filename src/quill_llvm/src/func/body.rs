@@ -668,7 +668,7 @@ fn create_real_func_body_cfg<'ctx>(
                     // Treat this as a move, as far as access to the variable is concerned.
                     // Really, we're copying the value, but we can't use the [Rvalue::Copy] variant
                     // because that expects the argument to be behind a borrow.
-                    &Rvalue::Move(place.clone()),
+                    &Rvalue::Move(place.clone().then(PlaceSegment::Constant)),
                 )
                 .unwrap();
                 let value = ctx

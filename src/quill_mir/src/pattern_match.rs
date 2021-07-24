@@ -435,7 +435,25 @@ fn reference_place(
                 }
             }
             PlaceSegment::EnumDiscriminant => Pattern::Unknown(pattern.range()),
-            PlaceSegment::ImplField { .. } => Pattern::Unknown(pattern.range()),
+            PlaceSegment::Constant => Pattern::Unknown(pattern.range()),
+            PlaceSegment::ImplField { field } => {
+                if let Pattern::Impl {
+                    impl_token,
+                    mut fields,
+                } = pattern
+                {
+                    for (field_name, _field_type, field_pat) in &mut fields {
+                        if field_name.name == field {
+                            *field_pat =
+                                reference_place(place_segments, replacement, field_pat.clone());
+                            break;
+                        }
+                    }
+                    Pattern::Impl { impl_token, fields }
+                } else {
+                    pattern
+                }
+            }
         }
     }
 }

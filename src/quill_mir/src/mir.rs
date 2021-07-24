@@ -586,8 +586,11 @@ pub enum PlaceSegment {
     DataField { field: String },
     /// If the local is a borrowed type, the result of this projection is a borrowed type with the same borrow condition.
     EnumField { variant: String, field: String },
-    /// Regardless if the local is a borrowed type or owned type, the result of this projection is an `int`.
+    /// Regardless if the local is a borrowed type or owned type, the result of this projection is an `Int`.
     EnumDiscriminant,
+    /// Regardless if the local is a borrowed type or owned type, the result of this projection is an `Int`/`Bool`/other primitive type.
+    /// This will repeatedly dereference until the type is primitive.
+    Constant,
     /// If the local is a borrowed type, the result of this projection is a borrowed type with the same borrow condition.
     ImplField { field: String },
 }
@@ -598,6 +601,7 @@ impl Display for PlaceSegment {
             PlaceSegment::DataField { field } => write!(f, ".{}", field),
             PlaceSegment::EnumField { variant, field } => write!(f, ".<{}>.{}", variant, field),
             PlaceSegment::EnumDiscriminant => write!(f, ".discriminant"),
+            PlaceSegment::Constant => write!(f, ".constant"),
             PlaceSegment::ImplField { field } => write!(f, ".<impl>.{}", field),
         }
     }

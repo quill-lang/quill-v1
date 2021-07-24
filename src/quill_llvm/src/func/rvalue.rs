@@ -155,6 +155,18 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                 unreachable!()
                             }
                         }
+                        PlaceSegment::Constant => {
+                            // rvalue_ty is a primitive type, or a borrow of a primitive type.
+                            // If we're manipulating a borrowed value, we need to repeatedly
+                            // dereference the borrow to get the value behind it.
+                            while let Type::Borrow { ty, .. } = &rvalue_ty {
+                                ptr = codegen
+                                    .builder
+                                    .build_load(ptr, "value_behind_borrow")
+                                    .into_pointer_value();
+                                rvalue_ty = ty.deref().clone();
+                            }
+                        }
                         PlaceSegment::ImplField { field } => {
                             // rvalue_ty is an impl of an aspect.
                             if let Type::Impl { name, parameters } = rvalue_ty {
@@ -344,6 +356,11 @@ pub fn get_type_of_rvalue(
                             rvalue_ty = Type::Primitive(PrimitiveType::Int);
                         } else {
                             unreachable!()
+                        }
+                    }
+                    PlaceSegment::Constant => {
+                        while let Type::Borrow { ty, .. } = rvalue_ty {
+                            rvalue_ty = *ty;
                         }
                     }
                     PlaceSegment::ImplField { .. } => todo!(),

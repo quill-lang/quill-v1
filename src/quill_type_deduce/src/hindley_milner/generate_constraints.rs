@@ -1153,7 +1153,28 @@ fn generate_pattern_variables(
             ExprPatP::Lambda { .. } => unreachable!(),
             ExprPatP::Let { .. } => unreachable!(),
             ExprPatP::Block { .. } => unreachable!(),
-            ExprPatP::Borrow { borrow_token, expr } => todo!(),
+            ExprPatP::Borrow { borrow_token, expr } => {
+                // Create a new type variable for this borrowed value.
+                let borrowed_ty = TypeVariableId::default();
+                let mut result = generate_pattern_variables_inner(
+                    &*expr,
+                    TypeVariable::Unknown { id: borrowed_ty },
+                    expr.range(),
+                );
+                result.constraints = result.constraints.union(Constraints::new_with(
+                    TypeVariable::Unknown { id: borrowed_ty },
+                    Constraint::Equality {
+                        ty: TypeVariable::Borrow {
+                            ty: Box::new(expr_ty),
+                        },
+                        reason: ConstraintEqualityReason::Borrow {
+                            expr: pattern.range(),
+                            borrow_token: *borrow_token,
+                        },
+                    },
+                ));
+                result
+            }
             ExprPatP::Copy { .. } => unreachable!(),
             ExprPatP::ConstructData {
                 data_constructor,
