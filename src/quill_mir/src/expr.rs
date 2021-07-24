@@ -51,9 +51,8 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
         ExpressionContents::Match { expr, cases, .. } => {
-            let ty = &expr.ty;
             initialise_expr(ctx, &*expr);
-            for (pat, expr) in cases {
+            for (_pat, expr) in cases {
                 initialise_expr(ctx, expr);
             }
         }
@@ -503,7 +502,7 @@ fn generate_expr_let(
         statements: Vec::new(),
         terminator,
     });
-    let mut rvalue = generate_expr(
+    let rvalue = generate_expr(
         ctx,
         *right_expr,
         Terminator {
@@ -543,16 +542,6 @@ fn generate_expr_block(
     range: quill_common::location::Range,
     terminator: Terminator,
 ) -> ExprGeneratedM {
-    let locals_to_drop = statements
-        .iter()
-        .filter_map(|expr| {
-            if let ExpressionContents::Let { name, .. } = &expr.contents {
-                Some(name.name.clone())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
     let drop_block = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: Vec::new(),
         terminator,
@@ -564,7 +553,7 @@ fn generate_expr_block(
     if let Some(final_expression) = statements.pop() {
         let final_expr = generate_expr(ctx, final_expression, drop_terminator);
 
-        let mut chain = generate_chain_with_terminator(
+        let chain = generate_chain_with_terminator(
             ctx,
             statements,
             Terminator {
@@ -600,7 +589,7 @@ fn generate_expr_block(
             terminator: drop_terminator,
         });
 
-        let mut chain = generate_chain_with_terminator(
+        let chain = generate_chain_with_terminator(
             ctx,
             statements,
             Terminator {
@@ -717,7 +706,7 @@ fn generate_expr_borrow(
         statements: Vec::new(),
         terminator,
     });
-    let mut inner = generate_expr(
+    let inner = generate_expr(
         ctx,
         *expr,
         Terminator {
