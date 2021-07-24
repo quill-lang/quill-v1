@@ -1157,9 +1157,8 @@ fn generate_pattern_variables(
             ExprPatP::Copy { .. } => unreachable!(),
             ExprPatP::ConstructData {
                 data_constructor,
-                open_brace,
-                close_brace,
                 fields,
+                ..
             } => {
                 let mut result = PatternMatchConstraints {
                     variables: Vec::new(),
@@ -1216,7 +1215,12 @@ fn generate_pattern_variables(
             ExprPatP::Impl { impl_token, body } => todo!(),
             ExprPatP::ImplPattern { .. } => unreachable!(),
             ExprPatP::Match { .. } => unreachable!(),
-            ExprPatP::Unknown(token) => todo!(),
+            ExprPatP::Unknown(_) => PatternMatchConstraints {
+                variables: Vec::new(),
+                assumptions: Assumptions::default(),
+                constraints: Constraints::default(),
+                type_variable_definition_ranges: BTreeMap::new(),
+            },
         }
     }
 

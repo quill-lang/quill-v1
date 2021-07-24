@@ -125,10 +125,11 @@ fn check_ownership_walk(
                     predecessors.get_mut(target).unwrap().insert(*block_id);
                 }
             }
-            TerminatorKind::SwitchConstant { cases, .. } => {
+            TerminatorKind::SwitchConstant { cases, default, .. } => {
                 for target in cases.values() {
                     predecessors.get_mut(target).unwrap().insert(*block_id);
                 }
+                predecessors.get_mut(default).unwrap().insert(*block_id);
             }
             TerminatorKind::Invalid => unreachable!(),
             TerminatorKind::Return { .. } => {}
@@ -154,7 +155,13 @@ fn check_ownership_walk(
 
         // Collate the statuses together.
         let mut block_statuses = if branch_statuses.is_empty() {
-            assert!(*block_id == cfg.entry_point);
+            if *block_id != cfg.entry_point {
+                let block_id = *block_id;
+                panic!(
+                    "a block ({}) was found with no predecessors; MIR was {}",
+                    block_id, cfg
+                );
+            }
             original_statuses.take().unwrap()
         } else {
             collate_statuses(

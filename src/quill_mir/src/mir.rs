@@ -515,7 +515,7 @@ impl Display for StatementKind {
                 }
                 write!(f, " with {{ ")?;
                 for (field_name, rvalue) in fields {
-                    write!(f, "{} = {} ", field_name, rvalue)?;
+                    write!(f, "{} = {}, ", field_name, rvalue)?;
                 }
                 write!(f, "}}")
             }

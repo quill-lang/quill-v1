@@ -159,7 +159,33 @@ fn solve_type_constraint_queue(
                         // We know what type we're accessing.
                         // Look up the fields in the project index.
                         match &project_index[&name.source_file].types[&name.name].decl_type {
-                            TypeDeclarationTypeI::Data(datai) => todo!(),
+                            TypeDeclarationTypeI::Data(datai) => {
+                                assert!(data_type.segments.len() == 1);
+                                if let Some((_field_name, field_ty)) = datai
+                                    .type_ctor
+                                    .fields
+                                    .iter()
+                                    .find(|(field_name, _field_ty)| *field_name == field)
+                                {
+                                    let field_ty = instantiate_with(
+                                        field_ty,
+                                        &mut datai
+                                            .type_params
+                                            .iter()
+                                            .map(|param| param.name.clone())
+                                            .zip(parameters)
+                                            .collect::<BTreeMap<String, TypeVariable>>(),
+                                        &mut BTreeMap::new(),
+                                    );
+                                    constraint_queue.push_front((
+                                        type_variable,
+                                        Constraint::Equality {
+                                            ty: field_ty,
+                                            reason: ConstraintEqualityReason::FieldAccess(reason),
+                                        },
+                                    ));
+                                }
+                            }
                             TypeDeclarationTypeI::Enum(enumi) => {
                                 // First, check that the name given in code matches the deduced type.
                                 // TODO: once we have more flexibility in names for data types (#121),
