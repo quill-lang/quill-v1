@@ -133,15 +133,16 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
         .builder
         .build_return(Some(&codegen.context.i32_type().const_int(0, false)));
 
-    let object_path = build_info.build_folder.join(path);
-    let asm_path = build_info.build_folder.join(path.with_extension("asm"));
-    let bc_path = build_info
+    let target_folder = build_info
         .build_folder
-        .join(path.with_extension("basic.bc"));
-    let bc_opt_path = build_info.build_folder.join(path.with_extension("bc"));
-    let ll_unverified_path = build_info
-        .build_folder
-        .join(path.with_extension("unverified.ll"));
+        .join(build_info.target_triple.to_string());
+    let _ = std::fs::create_dir(&target_folder);
+
+    let object_path = target_folder.join(path);
+    let asm_path = target_folder.join(path.with_extension("asm"));
+    let bc_path = target_folder.join(path.with_extension("basic.bc"));
+    let bc_opt_path = target_folder.join(path.with_extension("bc"));
+    let ll_unverified_path = target_folder.join(path.with_extension("unverified.ll"));
 
     if build_info.emit_unverified_llvm_ir {
         // We print twice here because it's useful to see the output if finalize fails.
