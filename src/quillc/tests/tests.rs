@@ -107,6 +107,7 @@ fn build_determinism() {
 
         // Check if the files match exactly.
         let mut diff = |name: &str, path1: &Path, path2: &Path| {
+            eprintln!("running diff {} on target triple {}", name, target_triple);
             let mut file1 = match File::open(path1) {
                 Ok(f) => f,
                 Err(e) => panic!("{}", e),
@@ -132,6 +133,9 @@ fn build_determinism() {
             "core"
         };
 
+        let target_folder = build_folder.join(target_triple.to_string());
+        let other_target_folder = other_build_folder.join(target_triple.to_string());
+
         diff(
             "mir",
             &build_folder.join("out.mir"),
@@ -139,31 +143,31 @@ fn build_determinism() {
         );
         diff(
             "basic.ll",
-            &build_folder.join("out.basic.ll"),
-            &other_build_folder.join("out.basic.ll"),
+            &target_folder.join("out.basic.ll"),
+            &other_target_folder.join("out.basic.ll"),
         );
         diff(
             "ll",
-            &build_folder.join("out.ll"),
-            &other_build_folder.join("out.ll"),
+            &target_folder.join("out.ll"),
+            &other_target_folder.join("out.ll"),
         );
         diff(
             "asm",
-            &build_folder.join("out.asm"),
-            &other_build_folder.join("out.asm"),
+            &target_folder.join("out.asm"),
+            &other_target_folder.join("out.asm"),
         );
         diff(
             "obj",
-            &build_folder.join("out.o"),
-            &other_build_folder.join("out.o"),
+            &target_folder.join("out.o"),
+            &other_target_folder.join("out.o"),
         );
         // FIXME: If we're on Windows, we're allowed to have mismatched executables, since the link timestamp gets
         // embedded in the exe. We can't change this setting currently in the Zig compiler.
         if !matches!(target_triple.os, TargetOS::Windows) {
             diff(
                 "exe",
-                &build_folder.join(exe_name),
-                &other_build_folder.join(exe_name),
+                &target_folder.join(exe_name),
+                &other_target_folder.join(exe_name),
             );
         }
 
@@ -194,15 +198,16 @@ fn run_test(directory: &str, target_triple: TargetTriple) {
         .unwrap();
     let build_folder = code_folder.join("build");
 
-    // Clean the build folder to clean up from previous tests.
-    let _ = std::fs::remove_dir_all(&build_folder);
+    // Clean the build target folder to clean up from previous tests.
+    let target_folder = build_folder.join(target_triple.to_string());
+    let _ = std::fs::remove_dir_all(&target_folder);
 
     // Invoke quillc.
     let compile_result = invoke(QuillcInvocation {
         build_info: BuildInfo {
             target_triple,
             code_folder: code_folder.clone(),
-            build_folder: build_folder.clone(),
+            build_folder,
 
             optimisation_type: quill_target::OptimisationType::Debug,
             emit_hir: false,
@@ -239,11 +244,11 @@ fn run_test(directory: &str, target_triple: TargetTriple) {
             let output = if let quill_target::TargetArchitecture::Wasm32 = target_triple.arch {
                 // Run the WASM using `wasmtime`.
                 let mut command = std::process::Command::new("wasmtime");
-                command.arg(build_folder.join("test.wasm"));
+                command.arg(target_folder.join("test.wasm"));
                 command
             } else {
                 // Run the executable directly.
-                std::process::Command::new(build_folder.join(if cfg!(target_os = "windows") {
+                std::process::Command::new(target_folder.join(if cfg!(target_os = "windows") {
                     "test.exe"
                 } else {
                     "test"
