@@ -102,6 +102,21 @@ impl Display for DefinitionBodyM {
     }
 }
 
+impl DefinitionM {
+    /// Generates the type of this definition as a whole.
+    /// This essentially erases arity information.
+    pub fn symbol_type(&self) -> Type {
+        let mut ty = self.return_type.clone();
+        for i in (0..self.arity).rev() {
+            let arg_ty = self.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(i))]
+                .ty
+                .clone();
+            ty = Type::Function(Box::new(arg_ty), Box::new(ty));
+        }
+        ty
+    }
+}
+
 /// A local variable is a value which can be operated on by functions and expressions.
 /// Other objects, such as symbols in global scope, must be instanced as local variables
 /// before being operated on. This allows the borrow checker and the code translator
