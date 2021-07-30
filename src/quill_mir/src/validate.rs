@@ -371,26 +371,15 @@ fn validate_stmt(
                 "return type of application",
             )
         }
-        StatementKind::InvokeFunction {
-            name,
-            type_variables,
-            target,
-            arguments,
-        } => todo!(),
-        StatementKind::ConstructFunctionObject {
-            name,
-            type_variables,
-            target,
-            curry_steps,
-            curried_arguments,
-        } => todo!(),
-        StatementKind::InvokeFunctionObject {
-            func_object,
-            target,
-            additional_arguments,
-            return_type,
-            additional_argument_types,
-        } => todo!(),
+        StatementKind::InvokeFunction { .. } => {
+            Err("input mir should not contain function object instructions".to_string())
+        }
+        StatementKind::ConstructFunctionObject { .. } => {
+            Err("input mir should not contain function object instructions".to_string())
+        }
+        StatementKind::InvokeFunctionObject { .. } => {
+            Err("input mir should not contain function object instructions".to_string())
+        }
         StatementKind::Drop { .. } => {
             Err("input mir should not contain drop/free instructions".to_string())
         }
@@ -601,7 +590,7 @@ fn validate_terminator(
                 Ok(())
             }
         }
-        TerminatorKind::Invalid => todo!(),
+        TerminatorKind::Invalid => Err("unreachable terminator".to_string()),
         TerminatorKind::Return { value } => {
             assert_ty_eq(locals[value].ty.clone(), return_type.clone(), "return type")
         }
