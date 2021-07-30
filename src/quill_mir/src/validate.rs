@@ -124,6 +124,12 @@ fn place_type(
     for segment in &place.projection {
         match segment {
             PlaceSegment::DataField { field } => {
+                let mut borrowed = false;
+                while let Type::Borrow { ty: next_ty, .. } = ty {
+                    ty = *next_ty;
+                    borrowed = true;
+                }
+
                 if let Type::Named { name, parameters } = ty {
                     if let TypeDeclarationTypeI::Data(datai) =
                         &project_index[&name.source_file].types[&name.name].decl_type
@@ -131,11 +137,20 @@ fn place_type(
                         if let Some(next_ty) =
                             datai.type_ctor.fields.iter().find_map(|(name, ty)| {
                                 if name.name == *field {
-                                    Some(replace_type_variables(
+                                    let field_ty = replace_type_variables(
                                         ty.clone(),
                                         &datai.type_params,
                                         &parameters,
-                                    ))
+                                    );
+
+                                    Some(if borrowed {
+                                        Type::Borrow {
+                                            ty: Box::new(field_ty),
+                                            borrow: None,
+                                        }
+                                    } else {
+                                        field_ty
+                                    })
                                 } else {
                                     None
                                 }
@@ -160,13 +175,74 @@ fn place_type(
                     return Err(format!("tried to access field {} of type {}", field, ty));
                 }
             }
-            PlaceSegment::EnumField { variant, field } => todo!(),
+            PlaceSegment::EnumField { variant, field } => {
+                let mut borrowed = false;
+                while let Type::Borrow { ty: next_ty, .. } = ty {
+                    ty = *next_ty;
+                    borrowed = true;
+                }
+
+                if let Type::Named { name, parameters } = ty {
+                    if let TypeDeclarationTypeI::Enum(enumi) =
+                        &project_index[&name.source_file].types[&name.name].decl_type
+                    {
+                        let variant = enumi
+                            .variants
+                            .iter()
+                            .find(|v| v.name.name == *variant)
+                            .unwrap();
+
+                        if let Some(next_ty) =
+                            variant.type_ctor.fields.iter().find_map(|(name, ty)| {
+                                if name.name == *field {
+                                    let field_ty = replace_type_variables(
+                                        ty.clone(),
+                                        &enumi.type_params,
+                                        &parameters,
+                                    );
+
+                                    Some(if borrowed {
+                                        Type::Borrow {
+                                            ty: Box::new(field_ty),
+                                            borrow: None,
+                                        }
+                                    } else {
+                                        field_ty
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                        {
+                            ty = next_ty;
+                        } else {
+                            return Err(format!(
+                                "tried to access non-existent field {} of type {}",
+                                field,
+                                Type::Named { name, parameters }
+                            ));
+                        }
+                    } else {
+                        return Err(format!(
+                            "tried to access field {} of type {}",
+                            field,
+                            Type::Named { name, parameters }
+                        ));
+                    }
+                } else {
+                    return Err(format!("tried to access field {} of type {}", field, ty));
+                }
+            }
             PlaceSegment::EnumDiscriminant => todo!(),
             PlaceSegment::Constant => todo!(),
             PlaceSegment::ImplField { field } => todo!(),
         }
     }
     Ok(ty)
+}
+
+fn assert_ty_eq(l: Type, r: Type, reason: &str) -> Result<(), String> {
+    assert_eq(l.anonymise_borrows(), r.anonymise_borrows(), reason)
 }
 
 fn assert_eq<T: Display + PartialEq>(l: T, r: T, reason: &str) -> Result<(), String> {
@@ -185,9 +261,9 @@ fn validate_stmt(
     statement: &Statement,
 ) -> Result<(), String> {
     match &statement.kind {
-        StatementKind::Assign { target, source } => assert_eq(
-            &locals[target].ty,
-            &rvalue_type(project_index, locals, source)?,
+        StatementKind::Assign { target, source } => assert_ty_eq(
+            locals[target].ty.clone(),
+            rvalue_type(project_index, locals, source)?,
             "assigning variable",
         ),
         StatementKind::AssignPhi { target, phi_cases } => todo!(),
@@ -205,7 +281,11 @@ fn validate_stmt(
                 let def = &project_index[&name.source_file].definitions[&name.name];
                 replace_type_variables(def.symbol_type.clone(), &def.type_variables, type_variables)
             };
-            assert_eq(&locals[target].ty, &expected_type, "instancing symbol")
+            assert_ty_eq(
+                locals[target].ty.clone(),
+                expected_type,
+                "instancing symbol",
+            )
         }
         StatementKind::Apply {
             argument,
@@ -218,19 +298,19 @@ fn validate_stmt(
                 Box::new(argument_type.clone()),
                 Box::new(return_type.clone()),
             );
-            assert_eq(
+            assert_ty_eq(
                 rvalue_type(project_index, locals, &*function)?,
                 expected_func_ty,
                 "function type",
             )?;
-            assert_eq(
-                &rvalue_type(project_index, locals, &*argument)?,
-                argument_type,
+            assert_ty_eq(
+                rvalue_type(project_index, locals, &*argument)?,
+                argument_type.clone(),
                 "type of argument to application",
             )?;
-            assert_eq(
-                &locals[target].ty,
-                return_type,
+            assert_ty_eq(
+                locals[target].ty.clone(),
+                return_type.clone(),
                 "return type of application",
             )
         }
@@ -306,7 +386,7 @@ fn validate_stmt(
                 let source = &fields[&field_name.name];
                 let expected_type =
                     replace_type_variables(field_ty.clone(), type_params, type_variables);
-                assert_eq(
+                assert_ty_eq(
                     rvalue_type(project_index, locals, source)?,
                     expected_type,
                     &format!("constructing field {}", field_name.name),
@@ -316,9 +396,9 @@ fn validate_stmt(
                 name: name.clone(),
                 parameters: type_variables.clone(),
             };
-            assert_eq(
-                &locals[target].ty,
-                &expected_type,
+            assert_ty_eq(
+                locals[target].ty.clone(),
+                expected_type,
                 "constructing aspect impl",
             )
         }
@@ -336,9 +416,9 @@ fn validate_stmt(
                     &aspecti.type_variables,
                     type_variables,
                 );
-                assert_eq(
-                    &locals[&source].ty,
-                    &expected_type,
+                assert_ty_eq(
+                    locals[&source].ty.clone(),
+                    expected_type,
                     &format!("constructing field {}", def.name.name),
                 )?;
             }
@@ -346,9 +426,9 @@ fn validate_stmt(
                 name: aspect.clone(),
                 parameters: type_variables.clone(),
             };
-            assert_eq(
-                &locals[target].ty,
-                &expected_type,
+            assert_ty_eq(
+                locals[target].ty.clone(),
+                expected_type,
                 "constructing aspect impl",
             )
         }
@@ -408,15 +488,11 @@ fn validate_terminator(
             while let Type::Borrow { ty, .. } = enum_ty {
                 enum_ty = *ty;
             }
-            assert_eq(
+            assert_ty_eq(
                 enum_ty,
                 Type::Named {
                     name: enum_name.clone(),
-                    parameters: enum_parameters
-                        .iter()
-                        .cloned()
-                        .map(Type::anonymise_borrows)
-                        .collect(),
+                    parameters: enum_parameters.clone(),
                 },
                 "switch discriminant type",
             )
@@ -466,10 +542,8 @@ fn validate_terminator(
             }
         }
         TerminatorKind::Invalid => todo!(),
-        TerminatorKind::Return { value } => assert_eq(
-            &locals[value].ty,
-            &return_type.clone().anonymise_borrows(),
-            "return type",
-        ),
+        TerminatorKind::Return { value } => {
+            assert_ty_eq(locals[value].ty.clone(), return_type.clone(), "return type")
+        }
     }
 }
