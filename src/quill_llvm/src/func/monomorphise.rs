@@ -46,8 +46,10 @@ pub fn monomorphise<'ctx>(
                         }
                     }
 
-                    StatementKind::ConstructData { ty, .. } => {
-                        mono(ty);
+                    StatementKind::ConstructData { type_variables, .. } => {
+                        for var in type_variables {
+                            mono(var);
+                        }
                     }
 
                     _ => {}

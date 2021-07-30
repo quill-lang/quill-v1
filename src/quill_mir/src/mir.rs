@@ -102,6 +102,21 @@ impl Display for DefinitionBodyM {
     }
 }
 
+impl DefinitionM {
+    /// Generates the type of this definition as a whole.
+    /// This essentially erases arity information.
+    pub fn symbol_type(&self) -> Type {
+        let mut ty = self.return_type.clone();
+        for i in (0..self.arity).rev() {
+            let arg_ty = self.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(i))]
+                .ty
+                .clone();
+            ty = Type::Function(Box::new(arg_ty), Box::new(ty));
+        }
+        ty
+    }
+}
+
 /// A local variable is a value which can be operated on by functions and expressions.
 /// Other objects, such as symbols in global scope, must be instanced as local variables
 /// before being operated on. This allows the borrow checker and the code translator
@@ -401,7 +416,8 @@ pub enum StatementKind {
     Free { variable: LocalVariableName },
     /// Creates an object of a given type, and puts it in target.
     ConstructData {
-        ty: Type,
+        name: QualifiedName,
+        type_variables: Vec<Type>,
         /// If this type was an enum, which variant should we create?
         variant: Option<String>,
         fields: BTreeMap<String, Rvalue>,
@@ -504,12 +520,21 @@ impl Display for StatementKind {
                 write!(f, ")")
             }
             StatementKind::ConstructData {
-                ty,
+                name,
+                type_variables,
                 variant,
                 fields,
                 target,
             } => {
-                write!(f, "{} = construct {}", target, ty)?;
+                write!(
+                    f,
+                    "{} = construct {}",
+                    target,
+                    Type::Named {
+                        name: name.clone(),
+                        parameters: type_variables.clone(),
+                    }
+                )?;
                 if let Some(variant) = variant {
                     write!(f, "::{}", variant)?;
                 }
@@ -710,6 +735,33 @@ impl Display for TerminatorKind {
             }
             TerminatorKind::Invalid => write!(f, "invalid"),
             TerminatorKind::Return { value } => write!(f, "return {}", value),
+        }
+    }
+}
+
+impl TerminatorKind {
+    /// List the targets we could potentially jump to.
+    pub fn targets(&self) -> Vec<BasicBlockId> {
+        match self {
+            TerminatorKind::Goto(target) => vec![*target],
+            TerminatorKind::SwitchDiscriminant { cases, .. } => {
+                let mut vec = cases.values().copied().collect::<Vec<_>>();
+                vec.sort_unstable();
+                vec.dedup();
+                vec
+            }
+            TerminatorKind::SwitchConstant { cases, default, .. } => {
+                let mut vec = cases
+                    .values()
+                    .copied()
+                    .chain(std::iter::once(*default))
+                    .collect::<Vec<_>>();
+                vec.sort_unstable();
+                vec.dedup();
+                vec
+            }
+            TerminatorKind::Invalid => panic!("can't get targets of invalid terminator"),
+            TerminatorKind::Return { .. } => Vec::new(),
         }
     }
 }

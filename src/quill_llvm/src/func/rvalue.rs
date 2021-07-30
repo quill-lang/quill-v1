@@ -179,7 +179,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                                         if def.name.name == field {
                                             Some(replace_type_variables(
                                                 def.symbol_type.clone(),
-                                                &def.type_variables,
+                                                &aspect.type_variables,
                                                 &parameters,
                                             ))
                                         } else {

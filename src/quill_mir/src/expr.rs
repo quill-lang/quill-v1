@@ -633,16 +633,21 @@ fn generate_expr_construct(
     );
     let construct = Statement {
         range,
-        kind: StatementKind::ConstructData {
-            ty,
-            variant,
-            fields: chain
-                .variables
-                .into_iter()
-                .zip(names)
-                .map(|(name, field_name)| (field_name.name, Rvalue::Move(Place::new(name))))
-                .collect(),
-            target: LocalVariableName::Local(variable),
+        kind: if let Type::Named { name, parameters } = ty {
+            StatementKind::ConstructData {
+                name,
+                type_variables: parameters,
+                variant,
+                fields: chain
+                    .variables
+                    .into_iter()
+                    .zip(names)
+                    .map(|(name, field_name)| (field_name.name, Rvalue::Move(Place::new(name))))
+                    .collect(),
+                target: LocalVariableName::Local(variable),
+            }
+        } else {
+            unreachable!()
         },
     };
     ctx.control_flow_graph
