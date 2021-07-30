@@ -416,7 +416,8 @@ pub enum StatementKind {
     Free { variable: LocalVariableName },
     /// Creates an object of a given type, and puts it in target.
     ConstructData {
-        ty: Type,
+        name: QualifiedName,
+        type_variables: Vec<Type>,
         /// If this type was an enum, which variant should we create?
         variant: Option<String>,
         fields: BTreeMap<String, Rvalue>,
@@ -519,12 +520,21 @@ impl Display for StatementKind {
                 write!(f, ")")
             }
             StatementKind::ConstructData {
-                ty,
+                name,
+                type_variables,
                 variant,
                 fields,
                 target,
             } => {
-                write!(f, "{} = construct {}", target, ty)?;
+                write!(
+                    f,
+                    "{} = construct {}",
+                    target,
+                    Type::Named {
+                        name: name.clone(),
+                        parameters: type_variables.clone(),
+                    }
+                )?;
                 if let Some(variant) = variant {
                     write!(f, "::{}", variant)?;
                 }

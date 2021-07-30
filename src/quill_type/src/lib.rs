@@ -159,6 +159,43 @@ impl Type {
         }
         Ok(())
     }
+
+    /// Removes lifetimes from this type.
+    /// This means that &'a T and &'b T will compare equal after this step.
+    pub fn anonymise_borrows(self) -> Type {
+        match self {
+            Type::Named { name, parameters } => Type::Named {
+                name,
+                parameters: parameters
+                    .into_iter()
+                    .map(Self::anonymise_borrows)
+                    .collect(),
+            },
+            Type::Variable {
+                variable,
+                parameters,
+            } => Type::Variable {
+                variable,
+                parameters: parameters
+                    .into_iter()
+                    .map(Self::anonymise_borrows)
+                    .collect(),
+            },
+            Type::Function(l, r) => Type::Function(
+                Box::new(l.anonymise_borrows()),
+                Box::new(r.anonymise_borrows()),
+            ),
+            Type::Primitive(prim) => Type::Primitive(prim),
+            Type::Borrow { ty, .. } => Type::Borrow { ty, borrow: None },
+            Type::Impl { name, parameters } => Type::Impl {
+                name,
+                parameters: parameters
+                    .into_iter()
+                    .map(Self::anonymise_borrows)
+                    .collect(),
+            },
+        }
+    }
 }
 
 impl Display for Type {

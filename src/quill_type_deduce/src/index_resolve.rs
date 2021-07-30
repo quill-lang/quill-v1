@@ -32,6 +32,7 @@ pub fn replace_type_variables(
     named_type_parameters: &[TypeParameter],
     concrete_type_parameters: &[Type],
 ) -> Type {
+    assert_eq!(named_type_parameters.len(), concrete_type_parameters.len());
     match ty {
         Type::Named { name, parameters } => Type::Named {
             name,

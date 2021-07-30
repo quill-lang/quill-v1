@@ -403,7 +403,8 @@ fn create_real_func_body_cfg<'ctx>(
                     lifetime_end(&ctx, local_variable_names, variable);
                 }
                 StatementKind::ConstructData {
-                    ty,
+                    name,
+                    type_variables,
                     variant,
                     fields,
                     target,
@@ -448,18 +449,12 @@ fn create_real_func_body_cfg<'ctx>(
                     }
 
                     // Memcpy all the fields into the new struct.
-                    let (name, parameters) = if let Type::Named { name, parameters } = ty {
-                        (name.clone(), parameters.clone())
-                    } else {
-                        unreachable!()
-                    };
-
                     if let Some(variant) = variant {
                         let enum_repr = ctx
                             .reprs
                             .get_enum(&MonomorphisedType {
-                                name,
-                                mono: MonomorphisationParameters::new(parameters),
+                                name: name.clone(),
+                                mono: MonomorphisationParameters::new(type_variables.clone()),
                             })
                             .unwrap();
                         // Assign the discriminant.
@@ -488,8 +483,8 @@ fn create_real_func_body_cfg<'ctx>(
                         let data_repr = ctx
                             .reprs
                             .get_data(&MonomorphisedType {
-                                name,
-                                mono: MonomorphisationParameters::new(parameters),
+                                name: name.clone(),
+                                mono: MonomorphisationParameters::new(type_variables.clone()),
                             })
                             .unwrap();
                         for (field_name, field_rvalue) in fields {
