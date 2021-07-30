@@ -738,3 +738,30 @@ impl Display for TerminatorKind {
         }
     }
 }
+
+impl TerminatorKind {
+    /// List the targets we could potentially jump to.
+    pub fn targets(&self) -> Vec<BasicBlockId> {
+        match self {
+            TerminatorKind::Goto(target) => vec![*target],
+            TerminatorKind::SwitchDiscriminant { cases, .. } => {
+                let mut vec = cases.values().copied().collect::<Vec<_>>();
+                vec.sort_unstable();
+                vec.dedup();
+                vec
+            }
+            TerminatorKind::SwitchConstant { cases, default, .. } => {
+                let mut vec = cases
+                    .values()
+                    .copied()
+                    .chain(std::iter::once(*default))
+                    .collect::<Vec<_>>();
+                vec.sort_unstable();
+                vec.dedup();
+                vec
+            }
+            TerminatorKind::Invalid => panic!("can't get targets of invalid terminator"),
+            TerminatorKind::Return { .. } => Vec::new(),
+        }
+    }
+}

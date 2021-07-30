@@ -1,18 +1,14 @@
-use std::{
-    collections::BTreeMap,
-    fmt::{Debug, Display},
-    ops::Deref,
-};
+use std::{collections::BTreeMap, fmt::Display, ops::Deref};
 
 use quill_common::location::SourceFileIdentifier;
-use quill_index::{ProjectIndex, TypeDeclarationI, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
 
 use crate::{
     mir::{
-        BasicBlock, BasicBlockId, DefinitionBodyM, DefinitionM, LocalVariableInfo,
+        BasicBlockId, ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo,
         LocalVariableName, Place, PlaceSegment, Rvalue, Statement, StatementKind, Terminator,
         TerminatorKind,
     },
@@ -52,6 +48,8 @@ pub(crate) fn validate<'a>(
                         project_index,
                         &mir.definitions,
                         source_file,
+                        body,
+                        *block_id,
                         &def.local_variable_names,
                         statement,
                     )
@@ -297,6 +295,8 @@ fn validate_stmt(
     project_index: &ProjectIndex,
     local_defs: &BTreeMap<String, DefinitionM>,
     source_file: &SourceFileIdentifier,
+    body: &ControlFlowGraph,
+    block_id: BasicBlockId,
     locals: &BTreeMap<LocalVariableName, LocalVariableInfo>,
     statement: &Statement,
 ) -> Result<(), String> {
@@ -306,7 +306,24 @@ fn validate_stmt(
             rvalue_type(project_index, locals, source)?,
             "assigning variable",
         ),
-        StatementKind::AssignPhi { target, phi_cases } => todo!(),
+        StatementKind::AssignPhi { target, phi_cases } => {
+            for (source_block, source) in phi_cases {
+                // Verify that the source block actually leads to this block.
+                let targets = body.basic_blocks[source_block].terminator.kind.targets();
+                if !targets.contains(&block_id) {
+                    return Err(format!(
+                        "{} does not lead to {} (targets were {:?})",
+                        source_block, block_id, targets
+                    ));
+                }
+                assert_ty_eq(
+                    locals[target].ty.clone(),
+                    locals[source].ty.clone(),
+                    "assigning variable in phi",
+                )?;
+            }
+            Ok(())
+        }
         StatementKind::InstanceSymbol {
             name,
             type_variables,
@@ -542,7 +559,10 @@ fn validate_terminator(
             cases,
             default,
         } => {
-            let constant_ty = place_type(project_index, locals, place)?;
+            let mut constant_ty = place_type(project_index, locals, place)?;
+            while let Type::Borrow { ty, .. } = constant_ty {
+                constant_ty = *ty;
+            }
             let prim = if let Type::Primitive(prim) = constant_ty {
                 prim
             } else {
