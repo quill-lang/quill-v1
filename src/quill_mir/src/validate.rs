@@ -235,7 +235,47 @@ fn place_type(
             }
             PlaceSegment::EnumDiscriminant => todo!(),
             PlaceSegment::Constant => todo!(),
-            PlaceSegment::ImplField { field } => todo!(),
+            PlaceSegment::ImplField { field } => {
+                let mut borrowed = false;
+                while let Type::Borrow { ty: next_ty, .. } = ty {
+                    ty = *next_ty;
+                    borrowed = true;
+                }
+
+                if let Type::Impl { name, parameters } = ty {
+                    let aspecti = &project_index[&name.source_file].aspects[&name.name];
+                    if let Some(next_ty) = aspecti.definitions.iter().find_map(|def| {
+                        if def.name.name == *field {
+                            let field_ty = replace_type_variables(
+                                def.symbol_type.clone(),
+                                &aspecti.type_variables,
+                                &parameters,
+                            );
+
+                            Some(if borrowed {
+                                Type::Borrow {
+                                    ty: Box::new(field_ty),
+                                    borrow: None,
+                                }
+                            } else {
+                                field_ty
+                            })
+                        } else {
+                            None
+                        }
+                    }) {
+                        ty = next_ty;
+                    } else {
+                        return Err(format!(
+                            "tried to access non-existent field {} of type {}",
+                            field,
+                            Type::Named { name, parameters }
+                        ));
+                    }
+                } else {
+                    return Err(format!("tried to access field {} of type {}", field, ty));
+                }
+            }
         }
     }
     Ok(ty)
