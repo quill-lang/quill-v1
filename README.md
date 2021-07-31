@@ -4,6 +4,7 @@
 [![release latest](https://github.com/quill-lang/quill/actions/workflows/release-latest.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/release-latest.yml)
 [![test](https://github.com/quill-lang/quill/actions/workflows/test.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/test.yml)
 [![format](https://github.com/quill-lang/quill/actions/workflows/format.yml/badge.svg)](https://github.com/quill-lang/quill/actions/workflows/format.yml)
+[![lines of code](https://tokei.rs/b1/github/quill-lang/quill?category=code)](https://github.com/quill-lang/quill)
 
 Quill is a modern programming language that aims to bring the functional paradigm to high-performance, low level programming.
 
@@ -79,3 +80,7 @@ Quill contains a lot of zero-cost abstractions, such as the effect system or the
 ### Reproducibility
 
 Builds in Quill are [reproducible](https://reproducible-builds.org/) at the binary level for release builds on non-Windows platforms. MIR (an intermediate representation of Quill source code) determinism is guaranteed for all platforms and build types.
+
+## Documentation
+
+The rustdoc for the compiler's internals is hosted [here](https://quill-lang.github.io/quill/quill/index.html). The mdBook explaining some of the compiler's functions in more detail is hosted [here](https://quill-lang.github.io/compiler-book/).
