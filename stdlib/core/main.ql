@@ -1,10 +1,19 @@
 use print
+use input
 use list
 use bool
 use int
 
 def main: Unit {
-    main = (
+    main = copy_user_input
+}
+
+def copy_user_input: Unit {
+    copy_user_input = putchar (getchar unit)
+}
+
+def hello_world_factorials: Unit {
+    hello_world_factorials = (
         // "Hello, world!" in Unicode code points is
         // 72 101 108 108 111 44 32 119 111 114 108 100 33
         if false (
@@ -13,10 +22,7 @@ def main: Unit {
             \a -> (
                 let list = 72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty
                 perform_print_list print_list (copy &list)
-                // TODO: borrowing `print_list` directly doesn't work
-                let print_list_2 = print_list
-                let ref_list = as_ref &list
-                perform_print_list (copy &print_list_2) (copied (as_ref &list))
+                perform_print_list (copy &print_list) (copied (as_ref &list))
             )
         )
         newline unit
