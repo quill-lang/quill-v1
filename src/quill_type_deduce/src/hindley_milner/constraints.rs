@@ -127,6 +127,8 @@ pub(crate) enum ConstraintEqualityReason {
     /// so the type must be the same as the other entries in the match expression.
     MatchResult {
         match_token: Range,
+        first_arm: Range,
+        relevant_arm: Range,
     },
     FieldAccess(ConstraintFieldAccessReason),
 }

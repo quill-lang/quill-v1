@@ -993,7 +993,7 @@ impl<'a> TypeChecker<'a> {
                                     .find(|variant| {
                                         variant.name.name == type_ctor.variant.as_deref().unwrap()
                                     })
-                                    .unwrap()
+                                    .unwrap() // FIXME: this can panic if an enum variant for the wrong enum is supplied
                                     .type_ctor
                                     .fields
                                     .iter()
