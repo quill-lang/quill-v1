@@ -9,7 +9,7 @@ def main: Unit {
 }
 
 def copy_user_input: Unit {
-    copy_user_input = putchar (getchar unit)
+    copy_user_input = perform_print_list print_list (get_line unit)
 }
 
 def hello_world_factorials: Unit {
