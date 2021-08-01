@@ -29,6 +29,9 @@ pub(crate) fn create_real_func_body_intrinsic<'ctx>(
         "putchar" => {
             putchar(&ctx);
         }
+        "getchar" => {
+            getchar(&ctx);
+        }
         "add_int_unchecked" => {
             int_binop(&ctx, |lhs, rhs| {
                 ctx.codegen.builder.build_int_add(lhs, rhs, "result")
@@ -124,6 +127,21 @@ fn putchar(ctx: &BodyCreationContext) {
         .builder
         .build_call(putchar, &[arg0_i32.into()], "call_putchar");
     ctx.codegen.builder.build_return(None);
+}
+
+fn getchar(ctx: &BodyCreationContext) {
+    let getchar = ctx.codegen.module.add_function(
+        "getchar",
+        ctx.codegen.context.i32_type().fn_type(&[], false),
+        None,
+    );
+    let result = ctx.codegen.builder.build_call(getchar, &[], "call_getchar");
+    let result = ctx.codegen.builder.build_int_cast(
+        result.try_as_basic_value().left().unwrap().into_int_value(),
+        ctx.codegen.context.i64_type(),
+        "result",
+    );
+    ctx.codegen.builder.build_return(Some(&result));
 }
 
 fn int_binop<'ctx, F, V>(ctx: &BodyCreationContext<'_, 'ctx>, op: F)

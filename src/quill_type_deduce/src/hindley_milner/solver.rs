@@ -439,6 +439,20 @@ fn process_constraint_reason(
             }];
             (expr, messages)
         }
+        ConstraintEqualityReason::MatchResult {
+            first_arm,
+            relevant_arm,
+            ..
+        } => {
+            let messages = vec![HelpMessage {
+                message: String::from(
+                    "error was raised because the type of this arm of the match expression must match all other arms",
+                ),
+                help_type: HelpType::Note,
+                diagnostic: Diagnostic::at(source_file, &first_arm),
+            }];
+            (relevant_arm, messages)
+        }
         _ => {
             panic!("Could not print error message reason {:#?}", reason);
         }

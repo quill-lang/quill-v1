@@ -901,6 +901,7 @@ pub(crate) fn generate_constraints(
         } => {
             let replacement_type = TypeVariableId::default();
             // Generate constraints for the expression.
+            let first_arm = cases[0].1.range();
             generate_constraints(
                 source_file,
                 project_index,
@@ -1023,6 +1024,8 @@ pub(crate) fn generate_constraints(
                                                 },
                                                 reason: ConstraintEqualityReason::MatchResult {
                                                     match_token,
+                                                    first_arm,
+                                                    relevant_arm: replacement.expr.range(),
                                                 },
                                             },
                                         ));
