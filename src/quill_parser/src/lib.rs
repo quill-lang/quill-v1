@@ -332,8 +332,11 @@ impl<'input> Parser<'input> {
             .bind(|decl| self.parse_def_body().map(|body| DefinitionP { decl, body }))
     }
 
-    /// `def_decl ::= name named_type_params? ':' ty
+    /// `def_decl ::= "default"? name named_type_params? ':' ty
     fn parse_def_decl(&mut self, vis: Visibility) -> DiagnosticResult<DefinitionDeclP> {
+        let default = self
+            .parse_token_maybe(|ty| matches!(ty, TokenType::Default))
+            .map(|token| token.range);
         self.parse_name().bind(|name| {
             let type_parameters = if let Some(tree) = self.parse_tree(BracketType::Square) {
                 self.parse_in_tree(tree, |parser| parser.parse_type_param_names())
@@ -345,6 +348,7 @@ impl<'input> Parser<'input> {
                     .bind(|_| {
                         self.parse_type().map(|definition_type| DefinitionDeclP {
                             vis,
+                            default,
                             name,
                             type_parameters,
                             definition_type,

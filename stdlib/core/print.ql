@@ -12,7 +12,7 @@ aspect Print[T] {
     print: T -> Unit
 }
 
-def print_list: impl Print[List[Int]] {
+def default print_list: impl Print[List[Int]] {
     print_list = impl {
         print = for_each putchar
     }

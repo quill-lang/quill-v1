@@ -1218,6 +1218,7 @@ impl<'a> TypeChecker<'a> {
             let implementation = DefinitionP {
                 decl: DefinitionDeclP {
                     vis: Visibility::Private,
+                    default: None,
                     name: NameP {
                         name: def.name.name.clone(),
                         range: impl_token,

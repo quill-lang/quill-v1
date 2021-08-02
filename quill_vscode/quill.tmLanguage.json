@@ -47,7 +47,7 @@
                 {
                     "comment": "storage modifiers",
                     "name": "storage.modifier.quill",
-                    "match": "\\b(pub)\\b"
+                    "match": "\\b(pub|default)\\b"
                 }
             ]
         }
