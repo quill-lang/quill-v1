@@ -21,10 +21,10 @@ pub fn index_single_file(
         })
         .deny();
 
-    file.map(|file| {
+    file.bind(|file| {
         let mut files = BTreeMap::new();
         files.insert(file_ident.clone(), file);
-        ProjectIndex { files }
+        ProjectIndex::new(files)
     })
 }
 
@@ -47,5 +47,5 @@ pub fn index_project(
         })
         .deny();
 
-    files.map(|files| ProjectIndex { files })
+    files.bind(ProjectIndex::new)
 }
