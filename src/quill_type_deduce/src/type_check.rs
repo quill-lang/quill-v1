@@ -958,6 +958,11 @@ impl<'a> TypeChecker<'a> {
                     Diagnostic::at(self.source_file, &borrow_token),
                 )),
             },
+            ExprPatP::Explicit { explicit_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("explicit token not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &explicit_token),
+            )),
             ExprPatP::Copy { copy_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("copies are not allowed in patterns"),
                 Severity::Error,

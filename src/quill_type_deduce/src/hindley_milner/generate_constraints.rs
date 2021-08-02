@@ -38,6 +38,8 @@ use super::{
 /// `lambda_variables` is the set of variables that we introduced using a lambda expression. Assumptions in the returned value only relate to this
 /// set of lambda variables.
 /// `let_variables` is the set of variables that we introduced using a let expression.
+///
+/// If this is the expression *just* inside an @ token, explicit_token is the range of that token.
 pub(crate) fn generate_constraints(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
@@ -46,6 +48,7 @@ pub(crate) fn generate_constraints(
     mut lambda_variables: BTreeMap<String, AbstractionVariable>,
     mut let_variables: BTreeMap<String, AbstractionVariable>,
     expr: ExprPatP,
+    explicit_token: Option<Range>,
 ) -> DiagnosticResult<ExprTypeCheck> {
     match expr {
         ExprPatP::Variable(identifier) => {
@@ -59,6 +62,7 @@ pub(crate) fn generate_constraints(
                         expr: ExpressionT {
                             type_variable: as_variable(&arg.var_type),
                             contents: ExpressionContentsT::Argument(name),
+                            explicit_token,
                         },
                         type_variable_definition_ranges: BTreeMap::new(),
                         assumptions: Assumptions::default(),
@@ -78,6 +82,7 @@ pub(crate) fn generate_constraints(
                         expr: ExpressionT {
                             type_variable: TypeVariable::Unknown { id: type_variable },
                             contents: ExpressionContentsT::Local(name),
+                            explicit_token,
                         },
                         type_variable_definition_ranges,
                         assumptions: Assumptions::new_with(
@@ -99,6 +104,7 @@ pub(crate) fn generate_constraints(
                         expr: ExpressionT {
                             type_variable: TypeVariable::Unknown { id: type_variable },
                             contents: ExpressionContentsT::Local(name),
+                            explicit_token,
                         },
                         type_variable_definition_ranges,
                         assumptions: Assumptions::new_with(
@@ -136,6 +142,7 @@ pub(crate) fn generate_constraints(
                                 range: identifier.range(),
                                 type_variables,
                             },
+                            explicit_token,
                         },
                         type_variable_definition_ranges: BTreeMap::new(),
                         assumptions: Assumptions::default(),
@@ -166,6 +173,7 @@ pub(crate) fn generate_constraints(
                     range,
                     value: ConstantValue::Unit,
                 },
+                explicit_token,
             },
             type_variable_definition_ranges: BTreeMap::new(),
             assumptions: Assumptions::default(),
@@ -183,6 +191,7 @@ pub(crate) fn generate_constraints(
                     range,
                     value: ConstantValue::Bool(value),
                 },
+                explicit_token,
             },
             type_variable_definition_ranges: BTreeMap::new(),
             assumptions: Assumptions::default(),
@@ -200,6 +209,7 @@ pub(crate) fn generate_constraints(
                     range,
                     value: ConstantValue::Int(value),
                 },
+                explicit_token,
             },
             type_variable_definition_ranges: BTreeMap::new(),
             assumptions: Assumptions::default(),
@@ -216,6 +226,7 @@ pub(crate) fn generate_constraints(
                 lambda_variables.clone(),
                 let_variables.clone(),
                 *left,
+                None,
             )
             .bind(|left| {
                 generate_constraints(
@@ -226,6 +237,7 @@ pub(crate) fn generate_constraints(
                     lambda_variables,
                     let_variables.clone(),
                     *right,
+                    None,
                 )
                 .map(|right| {
                     let left_type = left.expr.type_variable.clone();
@@ -251,6 +263,7 @@ pub(crate) fn generate_constraints(
                                 Box::new(left.expr),
                                 Box::new(right.expr),
                             ),
+                            explicit_token,
                         },
                         type_variable_definition_ranges,
                         assumptions: left.assumptions.union(right.assumptions),
@@ -329,6 +342,7 @@ pub(crate) fn generate_constraints(
                         lambda_variables,
                         let_variables.clone(),
                         *expr,
+                        None,
                     )
                     .map(|mut expr| {
                         // First, add the constraint that this lambda abstraction's type is input_types -> expr.type.
@@ -398,6 +412,7 @@ pub(crate) fn generate_constraints(
                                         .collect(),
                                     expr: Box::new(expr.expr),
                                 },
+                                explicit_token,
                             },
                             type_variable_definition_ranges,
                             assumptions: expr.assumptions,
@@ -421,6 +436,7 @@ pub(crate) fn generate_constraints(
                 lambda_variables.clone(),
                 let_variables.clone(),
                 *expr,
+                None,
             )
             .bind(|expr| {
                 // This introduces new let variables, so we'll need to edit the `let_variables` map.
@@ -476,6 +492,7 @@ pub(crate) fn generate_constraints(
                                 name: name.clone(),
                                 expr: Box::new(expr.expr),
                             },
+                            explicit_token,
                         },
                         type_variable_definition_ranges,
                         assumptions: expr.assumptions,
@@ -514,6 +531,7 @@ pub(crate) fn generate_constraints(
                     lambda_variables.clone(),
                     let_variables.clone(),
                     statement,
+                    None,
                 )
                 .destructure();
                 messages.extend(inner_messages);
@@ -583,6 +601,7 @@ pub(crate) fn generate_constraints(
                             close_bracket,
                             statements: statements_with_constraints,
                         },
+                        explicit_token,
                     },
                     type_variable_definition_ranges,
                     assumptions,
@@ -683,6 +702,7 @@ pub(crate) fn generate_constraints(
                             lambda_variables.clone(),
                             let_variables.clone(),
                             field_expr,
+                            None,
                         )
                         .destructure();
                         messages.extend(inner_messages);
@@ -738,6 +758,7 @@ pub(crate) fn generate_constraints(
                             lambda_variables.clone(),
                             let_variables.clone(),
                             field_expr,
+                            None,
                         )
                         .destructure();
                         messages.extend(inner_messages);
@@ -790,6 +811,7 @@ pub(crate) fn generate_constraints(
                                     open_brace,
                                     close_brace,
                                 },
+                                explicit_token,
                             },
                             type_variable_definition_ranges,
                             assumptions,
@@ -810,6 +832,7 @@ pub(crate) fn generate_constraints(
             lambda_variables,
             let_variables,
             *expr,
+            None,
         )
         .map(|mut expr| {
             let type_variable = TypeVariable::Unknown {
@@ -834,9 +857,23 @@ pub(crate) fn generate_constraints(
                     borrow_token,
                     expr: Box::new(expr.expr),
                 },
+                explicit_token,
             };
             expr
         }),
+        ExprPatP::Explicit {
+            explicit_token,
+            expr,
+        } => generate_constraints(
+            source_file,
+            project_index,
+            visible_names,
+            args,
+            lambda_variables,
+            let_variables,
+            *expr,
+            Some(explicit_token),
+        ),
         ExprPatP::Copy { copy_token, expr } => generate_constraints(
             source_file,
             project_index,
@@ -845,6 +882,7 @@ pub(crate) fn generate_constraints(
             lambda_variables,
             let_variables,
             *expr,
+            None,
         )
         .map(|mut expr| {
             let type_variable = TypeVariable::Unknown {
@@ -869,6 +907,7 @@ pub(crate) fn generate_constraints(
                     copy_token,
                     expr: Box::new(expr.expr),
                 },
+                explicit_token,
             };
             expr
         }),
@@ -881,6 +920,7 @@ pub(crate) fn generate_constraints(
                         impl_token,
                         implementations: body,
                     },
+                    explicit_token,
                 },
                 type_variable_definition_ranges: {
                     let mut map = BTreeMap::new();
@@ -909,7 +949,7 @@ pub(crate) fn generate_constraints(
                 args,
                 lambda_variables.clone(),
                 let_variables.clone(),
-                *expr,
+                *expr,None
             )
             .bind(|expr| {
                 // Generate constraints for each pattern replacement.
@@ -977,6 +1017,7 @@ pub(crate) fn generate_constraints(
                                     lambda_variables.clone(),
                                     let_variables,
                                     replacement,
+                                    None
                                 );
                                 replacement.map(|mut replacement| {
                                     for (variable_name, variable_type_var_id) in
@@ -1064,7 +1105,7 @@ pub(crate) fn generate_constraints(
                             match_token,
                             expr: Box::new(expr.expr),
                             cases: body,
-                        },
+                        },explicit_token
                     },
                     type_variable_definition_ranges,
                     assumptions,
@@ -1178,6 +1219,7 @@ fn generate_pattern_variables(
                 ));
                 result
             }
+            ExprPatP::Explicit { .. } => unreachable!(),
             ExprPatP::Copy { .. } => unreachable!(),
             ExprPatP::ConstructData {
                 data_constructor,

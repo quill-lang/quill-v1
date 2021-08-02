@@ -24,14 +24,16 @@ pub enum TokenType {
     Scope,
     /// `|`
     TypeOr,
-    /// '\'
+    /// `\`
     Lambda,
-    /// ',' or '\n' after certain characters
+    /// `,` or `\n` after certain characters
     EndOfLine {
         explicit: bool,
     },
-    /// &
+    /// `&`
     Borrow,
+    /// `@`
+    Explicit,
 
     LeftParenthesis,
     RightParenthesis,
@@ -529,6 +531,7 @@ fn token_type_symbol(s: String) -> TokenType {
         "\\" => TokenType::Lambda,
         "," => TokenType::EndOfLine { explicit: true },
         "&" => TokenType::Borrow,
+        "@" => TokenType::Explicit,
         _ => TokenType::Name(s),
     }
 }

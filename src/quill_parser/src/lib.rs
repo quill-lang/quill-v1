@@ -832,6 +832,7 @@ impl<'input> Parser<'input> {
 
     /// Parses a single term from an expression by consuming either zero or one token trees from the input.
     /// If the token tree is exactly the symbol `&`, it may consume an additional token tree to see what is being borrowed.
+    /// If the token tree is exactly the symbol `@`, it may consume an additional token tree to see what is being explicitly instanced.
     /// If the following token did not constitute an expression, nothing is consumed.
     fn parse_expr_term(&mut self, in_pattern: bool) -> Option<DiagnosticResult<ExprPatP>> {
         if let Some(tree) = self.parse_tree(BracketType::Parentheses) {
@@ -864,6 +865,22 @@ impl<'input> Parser<'input> {
                     "expected expression after borrow symbol".to_string(),
                     Severity::Error,
                     Diagnostic::at(self.source_file, &borrow_token),
+                )))
+            }
+        } else if let Some(explicit_token) =
+            self.parse_token_maybe(|ty| matches!(ty, TokenType::Explicit))
+        {
+            // This is an explicit instance of a variable.
+            if let Some(expr) = self.parse_expr_term(in_pattern) {
+                Some(expr.map(|expr| ExprPatP::Explicit {
+                    explicit_token: explicit_token.range,
+                    expr: Box::new(expr),
+                }))
+            } else {
+                Some(DiagnosticResult::fail(ErrorMessage::new(
+                    "expected expression after explicit symbol".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(self.source_file, &explicit_token),
                 )))
             }
         } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Impl)) {

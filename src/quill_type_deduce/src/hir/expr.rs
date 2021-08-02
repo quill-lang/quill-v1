@@ -180,6 +180,9 @@ pub struct AbstractionVariable {
 pub struct ExpressionT {
     pub type_variable: TypeVariable,
     pub contents: ExpressionContentsT,
+    /// If this expression was instanced explicitly, the @ token is given here.
+    /// This makes sure that the type variable is never a function where its first argument is an impl.
+    pub explicit_token: Option<Range>,
 }
 
 impl Ranged for ExpressionT {

@@ -31,6 +31,7 @@ pub(crate) fn substitute(
     let ExpressionT {
         type_variable,
         contents,
+        ..
     } = expr;
 
     let (ty, mut messages) =

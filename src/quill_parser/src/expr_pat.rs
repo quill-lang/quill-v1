@@ -42,6 +42,11 @@ pub enum ExprPatP {
         borrow_token: Range,
         expr: Box<ExprPatP>,
     },
+    /// Don't add default impls to this expression.
+    Explicit {
+        explicit_token: Range,
+        expr: Box<ExprPatP>,
+    },
     /// Copy some data behind a borrow.
     Copy {
         copy_token: Range,
@@ -124,6 +129,10 @@ impl Ranged for ExprPatP {
                 ..
             } => open_bracket.union(*close_bracket),
             ExprPatP::Borrow { borrow_token, expr } => borrow_token.union(expr.range()),
+            ExprPatP::Explicit {
+                explicit_token,
+                expr,
+            } => explicit_token.union(expr.range()),
             ExprPatP::Copy { copy_token, expr } => copy_token.union(expr.range()),
             ExprPatP::ConstructData {
                 data_constructor,

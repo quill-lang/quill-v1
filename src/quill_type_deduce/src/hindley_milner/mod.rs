@@ -66,6 +66,7 @@ pub fn deduce_expr_type(
         BTreeMap::new(),
         BTreeMap::new(),
         expr,
+        None,
     )
     .deny()
     .bind(|mut expr_type_check| {
