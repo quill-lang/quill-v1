@@ -9,6 +9,7 @@ use quill_common::{
     location::{
         ModuleIdentifier, Range, SourceFileIdentifier, SourceFileIdentifierSegment, SourceFileType,
     },
+    name::QualifiedName,
 };
 use quill_parser::{file::FileP, identifier::NameP};
 use quill_type::Type;
@@ -27,7 +28,32 @@ pub struct FileIndex {
     pub aspects: BTreeMap<String, AspectI>,
 }
 
-pub type ProjectIndex = BTreeMap<SourceFileIdentifier, FileIndex>;
+#[derive(Debug)]
+pub struct ProjectIndex {
+    pub(crate) files: BTreeMap<SourceFileIdentifier, FileIndex>,
+}
+
+impl ProjectIndex {
+    pub fn is_file_indexed(&self, file: &SourceFileIdentifier) -> bool {
+        self.files.contains_key(file)
+    }
+
+    pub fn get_file_index(&self, file: &SourceFileIdentifier) -> &FileIndex {
+        &self.files[file]
+    }
+
+    pub fn type_decl(&self, name: &QualifiedName) -> &TypeDeclarationI {
+        &self.files[&name.source_file].types[&name.name]
+    }
+
+    pub fn definition(&self, name: &QualifiedName) -> &DefinitionI {
+        &self.files[&name.source_file].definitions[&name.name]
+    }
+
+    pub fn aspect(&self, name: &QualifiedName) -> &AspectI {
+        &self.files[&name.source_file].aspects[&name.name]
+    }
+}
 
 /// A type declaration, e.g. `data Bool = True | False`.
 #[derive(Debug)]
@@ -235,7 +261,7 @@ fn compute_visible_types_and_aspects<'a>(
 }
 
 /// Computes the index for a file.
-pub fn index(
+pub(crate) fn index(
     source_file: &SourceFileIdentifier,
     file_parsed: &FileP,
     project_types: &ProjectTypesAspectsC,

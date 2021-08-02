@@ -1,4 +1,3 @@
-- Make `ProjectTypes` a real struct so that we can abstract away the code to retrieve a named type or definition.
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
 - Decide what terms to use for high level constructs: project, package, module, crate, binary...?

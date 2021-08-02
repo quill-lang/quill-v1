@@ -4,7 +4,7 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Range, Ranged, SourceFileIdentifier},
+    location::{Location, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
 use quill_index::{
@@ -201,7 +201,7 @@ fn compute_visible_names<'a>(
     let mut visible_aspects = BTreeMap::<&str, Vec<ForeignDeclaration<_>>>::new();
 
     let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
-        project_index.contains_key(name)
+        project_index.is_file_indexed(name)
     })
     .destructure();
     assert!(
@@ -209,7 +209,7 @@ fn compute_visible_names<'a>(
         "should have errored in `compute_visible_types_and_aspects`"
     );
     for file in used_files.unwrap() {
-        let file_index = &project_index[&file.file];
+        let file_index = project_index.get_file_index(&file.file);
         for (ty, decl) in &file_index.types {
             visible_types
                 .entry(ty.as_str())
@@ -342,8 +342,11 @@ impl<'a> TypeChecker<'a> {
         let mut definitions = BTreeMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
-            let symbol =
-                &self.project_index[self.source_file].definitions[&definition.decl.name.name];
+            let symbol = self.project_index.definition(&QualifiedName {
+                source_file: self.source_file.clone(),
+                name: definition.decl.name.name.clone(),
+                range: Location { line: 0, col: 0 }.into(),
+            });
             let symbol_type = &symbol.symbol_type;
 
             if let Some((name, def)) =
@@ -968,10 +971,7 @@ impl<'a> TypeChecker<'a> {
                 |type_ctor| {
                     match expected_type {
                         Type::Named { name, parameters } => {
-                            let field_types = match &self.project_index[&name.source_file].types
-                                [&name.name]
-                                .decl_type
-                            {
+                            let field_types = match &self.project_index.type_decl(&name).decl_type {
                                 TypeDeclarationTypeI::Data(datai) => datai
                                     .type_ctor
                                     .fields
@@ -1080,7 +1080,7 @@ impl<'a> TypeChecker<'a> {
             } => {
                 match &expected_type {
                     Type::Impl { name, parameters } => {
-                        let aspecti = &self.project_index[&name.source_file].aspects[&name.name];
+                        let aspecti = self.project_index.aspect(name);
                         let field_types = aspecti
                             .definitions
                             .iter()

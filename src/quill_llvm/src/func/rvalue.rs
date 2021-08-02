@@ -32,7 +32,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                         PlaceSegment::DataField { field } => {
                             // rvalue_ty is a data type.
                             if let Type::Named { name, parameters } = rvalue_ty {
-                                let decl = &index[&name.source_file].types[&name.name];
+                                let decl = index.type_decl(&name);
                                 if let TypeDeclarationTypeI::Data(datai) = &decl.decl_type {
                                     rvalue_ty = datai
                                         .type_ctor
@@ -80,7 +80,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                             }
 
                             if let Type::Named { name, parameters } = rvalue_ty {
-                                let decl = &index[&name.source_file].types[&name.name];
+                                let decl = index.type_decl(&name);
                                 if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
                                     rvalue_ty = enumi
                                         .variants
@@ -170,7 +170,7 @@ pub fn get_pointer_to_rvalue<'ctx>(
                         PlaceSegment::ImplField { field } => {
                             // rvalue_ty is an impl of an aspect.
                             if let Type::Impl { name, parameters } = rvalue_ty {
-                                let aspect = &index[&name.source_file].aspects[&name.name];
+                                let aspect = index.aspect(&name);
 
                                 rvalue_ty = aspect
                                     .definitions
@@ -293,7 +293,7 @@ pub fn get_type_of_rvalue(
                     PlaceSegment::DataField { field } => {
                         // rvalue_ty is a data type.
                         if let Type::Named { name, parameters } = rvalue_ty {
-                            let decl = &index[&name.source_file].types[&name.name];
+                            let decl = index.type_decl(&name);
                             if let TypeDeclarationTypeI::Data(datai) = &decl.decl_type {
                                 rvalue_ty = datai
                                     .type_ctor
@@ -321,7 +321,7 @@ pub fn get_type_of_rvalue(
                     PlaceSegment::EnumField { variant, field } => {
                         // rvalue_ty is an enum type.
                         if let Type::Named { name, parameters } = rvalue_ty {
-                            let decl = &index[&name.source_file].types[&name.name];
+                            let decl = index.type_decl(&name);
                             if let TypeDeclarationTypeI::Enum(enumi) = &decl.decl_type {
                                 rvalue_ty = enumi
                                     .variants

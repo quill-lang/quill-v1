@@ -5,7 +5,6 @@ fn test_borrowck() {
     use quill_common::location::SourceFileType;
     use quill_error::ErrorEmitter;
     use quill_index::index_single_file;
-    use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_mir::to_mir;
     use quill_mir::SourceFileMIR;
@@ -34,9 +33,7 @@ fn test_borrowck() {
         let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
         let mir = parsed
             .bind(|parsed| {
-                index_single_file(&file_ident, &parsed).bind(|index| {
-                    let mut project_index = ProjectIndex::new();
-                    project_index.insert(file_ident.clone(), index);
+                index_single_file(&file_ident, &parsed).bind(|project_index| {
                     check(&file_ident, &project_index, parsed)
                         .deny()
                         .map(|typeck| to_mir(&project_index, typeck, &file_ident))

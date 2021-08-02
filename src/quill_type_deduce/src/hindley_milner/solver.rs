@@ -158,7 +158,7 @@ fn solve_type_constraint_queue(
                     TypeVariable::Named { name, parameters } => {
                         // We know what type we're accessing.
                         // Look up the fields in the project index.
-                        match &project_index[&name.source_file].types[&name.name].decl_type {
+                        match &project_index.type_decl(&name).decl_type {
                             TypeDeclarationTypeI::Data(datai) => {
                                 if let Some((_field_name, field_ty)) = datai
                                     .type_ctor
@@ -230,7 +230,7 @@ fn solve_type_constraint_queue(
                         }
                     }
                     TypeVariable::Impl { name, parameters } => {
-                        let aspecti = &project_index[&name.source_file].aspects[&name.name];
+                        let aspecti = project_index.aspect(&name);
                         if let Some(def) = aspecti.definitions.iter().find(|def| def.name == field)
                         {
                             let field_ty = instantiate_with(

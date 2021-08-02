@@ -4,7 +4,6 @@ fn test_typeck() {
     use quill_common::location::SourceFileType;
     use quill_error::ErrorEmitter;
     use quill_index::index_single_file;
-    use quill_index::ProjectIndex;
     use quill_lexer::lex;
     use quill_parser::parse;
     use quill_source_file::PackageFileSystem;
@@ -30,9 +29,7 @@ fn test_typeck() {
         let parsed = lexed.bind(|lexed| parse(lexed, &file_ident));
         let typeck = parsed
             .bind(|parsed| {
-                index_single_file(&file_ident, &parsed).bind(|index| {
-                    let mut project_index = ProjectIndex::new();
-                    project_index.insert(file_ident.clone(), index);
+                index_single_file(&file_ident, &parsed).bind(|project_index| {
                     quill_type_deduce::check(&file_ident, &project_index, parsed)
                 })
             })

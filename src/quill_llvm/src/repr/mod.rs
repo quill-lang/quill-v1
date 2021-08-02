@@ -106,7 +106,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         for mono_ty in sorted_types {
             match mono_ty.ty {
                 MonomorphisedItem::Type(ty) => {
-                    let decl = &index[&ty.name.source_file].types[&ty.name.name];
+                    let decl = index.type_decl(&ty.name);
                     match &decl.decl_type {
                         TypeDeclarationTypeI::Data(datai) => {
                             let mut builder = DataRepresentationBuilder::new(&reprs);
@@ -133,7 +133,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
                     };
                 }
                 MonomorphisedItem::Aspect(asp) => {
-                    let aspect = &index[&asp.name.source_file].aspects[&asp.name.name];
+                    let aspect = index.aspect(&asp.name);
                     // Make a fake type ctor for the aspect.
                     let type_ctor = TypeConstructorI {
                         fields: aspect

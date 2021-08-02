@@ -130,7 +130,7 @@ fn place_type(
 
                 if let Type::Named { name, parameters } = ty {
                     if let TypeDeclarationTypeI::Data(datai) =
-                        &project_index[&name.source_file].types[&name.name].decl_type
+                        &project_index.type_decl(&name).decl_type
                     {
                         if let Some(next_ty) =
                             datai.type_ctor.fields.iter().find_map(|(name, ty)| {
@@ -182,7 +182,7 @@ fn place_type(
 
                 if let Type::Named { name, parameters } = ty {
                     if let TypeDeclarationTypeI::Enum(enumi) =
-                        &project_index[&name.source_file].types[&name.name].decl_type
+                        &project_index.type_decl(&name).decl_type
                     {
                         let variant = enumi
                             .variants
@@ -241,7 +241,7 @@ fn place_type(
                 }
 
                 if let Type::Impl { name, parameters } = ty {
-                    let aspecti = &project_index[&name.source_file].aspects[&name.name];
+                    let aspecti = project_index.aspect(&name);
                     if let Some(next_ty) = aspecti.definitions.iter().find_map(|def| {
                         if def.name.name == *field {
                             let field_ty = replace_type_variables(
@@ -335,7 +335,7 @@ fn validate_stmt(
                 let def = &local_defs[&name.name];
                 replace_type_variables(def.symbol_type(), &def.type_variables, type_variables)
             } else {
-                let def = &project_index[&name.source_file].definitions[&name.name];
+                let def = project_index.definition(name);
                 replace_type_variables(def.symbol_type.clone(), &def.type_variables, type_variables)
             };
             assert_ty_eq(
@@ -393,7 +393,7 @@ fn validate_stmt(
             fields,
             target,
         } => {
-            let type_decl = &project_index[&name.source_file].types[&name.name];
+            let type_decl = project_index.type_decl(name);
             let (type_ctor, type_params) = match &type_decl.decl_type {
                 TypeDeclarationTypeI::Data(datai) => {
                     if variant.is_some() {
@@ -454,7 +454,7 @@ fn validate_stmt(
             definitions,
             target,
         } => {
-            let aspecti = &project_index[&aspect.source_file].aspects[&aspect.name];
+            let aspecti = project_index.aspect(aspect);
             for def in &aspecti.definitions {
                 let source = definitions[&def.name.name];
                 let expected_type = replace_type_variables(
@@ -506,7 +506,7 @@ fn validate_terminator(
             cases,
         } => {
             let enumi = if let TypeDeclarationTypeI::Enum(enumi) =
-                &project_index[&enum_name.source_file].types[&enum_name.name].decl_type
+                &project_index.type_decl(enum_name).decl_type
             {
                 enumi
             } else {

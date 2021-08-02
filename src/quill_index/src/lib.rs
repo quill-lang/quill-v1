@@ -12,14 +12,20 @@ use type_index::{compute_types_aspects, ProjectTypesAspectsC};
 pub fn index_single_file(
     file_ident: &SourceFileIdentifier,
     parsed: &FileP,
-) -> DiagnosticResult<FileIndex> {
-    compute_types_aspects(file_ident, parsed)
+) -> DiagnosticResult<ProjectIndex> {
+    let file = compute_types_aspects(file_ident, parsed)
         .bind(|cache| {
             let mut project_types = ProjectTypesAspectsC::new();
             project_types.insert(file_ident.clone(), cache);
             index(file_ident, parsed, &project_types)
         })
-        .deny()
+        .deny();
+
+    file.map(|file| {
+        let mut files = BTreeMap::new();
+        files.insert(file_ident.clone(), file);
+        ProjectIndex { files }
+    })
 }
 
 pub fn index_project(
@@ -32,12 +38,14 @@ pub fn index_project(
         .map(|file_types| file_types.into_iter().collect::<ProjectTypesAspectsC>())
         .deny();
 
-    project_types_cache
+    let files = project_types_cache
         .bind(|project_types_cache| {
             DiagnosticResult::sequence_unfail(files.iter().map(|(file, parsed)| {
                 index(file, parsed, &project_types_cache).map(|index| (file.clone(), index))
             }))
-            .map(|index| index.into_iter().collect())
+            .map(|index| index.into_iter().collect::<BTreeMap<_, _>>())
         })
-        .deny()
+        .deny();
+
+    files.map(|files| ProjectIndex { files })
 }

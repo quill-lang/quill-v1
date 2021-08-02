@@ -331,7 +331,7 @@ fn typeck_impl(
         }
     };
 
-    let aspect = &project_index[&aspect.source_file].aspects[&aspect.name];
+    let aspect = project_index.aspect(aspect);
 
     let typeck = TypeChecker {
         source_file,
