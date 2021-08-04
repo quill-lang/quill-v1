@@ -1,5 +1,6 @@
 mod assumptions;
 mod constraints;
+mod explicit;
 mod generate_constraints;
 mod solver;
 mod substitute;
@@ -74,12 +75,14 @@ pub fn deduce_expr_type(
             panic!("unresolved assumptions {:#?}", expr_type_check.assumptions);
         }
         expr_type_check.constraints.0.push((
-            expr_type_check.expr.type_variable.clone(),
+            expr_type_check.expr.type_variable.into(),
             Constraint::Equality {
                 ty: as_variable(&expected_type),
                 reason: ConstraintEqualityReason::ByDefinition {
                     expr: expr_type_check.expr.range(),
+                    definition_source: source_file.clone(),
                     definition: definition_identifier_range,
+                    high_priority: false,
                 },
             },
         ));

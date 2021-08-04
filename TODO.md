@@ -7,3 +7,4 @@
 - Implement pattern exhaustiveness check *in MIR*.
 - Try using symbol names `+, -` etc in weird places e.g. type parameters, to see what breaks.
 - Remove brackets around definitions (and the `def` keyword) to make it more like other functional languages.
+- Remove TypeVariable and replace with TypeVariableId wherever possible in type deduction algorithm.

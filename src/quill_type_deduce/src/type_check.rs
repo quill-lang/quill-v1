@@ -1265,7 +1265,7 @@ impl<'a> TypeChecker<'a> {
     }
 }
 
-fn get_constant_type(constant: &ConstantValue) -> PrimitiveType {
+pub(crate) fn get_constant_type(constant: &ConstantValue) -> PrimitiveType {
     match constant {
         ConstantValue::Unit => PrimitiveType::Unit,
         ConstantValue::Bool(_) => PrimitiveType::Bool,

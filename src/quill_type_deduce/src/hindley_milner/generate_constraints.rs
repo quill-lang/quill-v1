@@ -7,10 +7,10 @@ use quill_common::{
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_parser::{
-    expr_pat::{ConstantValue, ExprPatP},
+    expr_pat::ExprPatP,
     identifier::{IdentifierP, NameP},
 };
-use quill_type::PrimitiveType;
+use quill_type::{PrimitiveType, Type};
 
 use crate::{
     hindley_milner::{constraints::ConstraintFieldAccessReason, LetStatementNewVariables},
@@ -21,7 +21,7 @@ use crate::{
         as_variable, instantiate, instantiate_with, resolve_definition, resolve_type_constructor,
         InstantiationResult,
     },
-    type_check::VisibleNames,
+    type_check::{get_constant_type, VisibleNames},
     type_resolve::TypeVariableId,
 };
 
@@ -55,18 +55,31 @@ pub(crate) fn generate_constraints(
             // Let's try to work out what this identifier is referring to.
             if identifier.segments.len() == 1 {
                 let name = identifier.segments[0].clone();
+                let name_range = name.range;
+
                 // First, check the function's arguments.
                 if let Some(arg) = args.get(&name.name) {
-                    // We don't need to add an assumption or constraint about this type variable, since it is known.
+                    let type_variable = TypeVariableId::default();
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: as_variable(&arg.var_type),
+                            type_variable,
                             contents: ExpressionContentsT::Argument(name),
                             explicit_token,
                         },
                         type_variable_definition_ranges: BTreeMap::new(),
                         assumptions: Assumptions::default(),
-                        constraints: Constraints::default(),
+                        constraints: Constraints::new_with(
+                            type_variable.into(),
+                            Constraint::Equality {
+                                ty: as_variable(&arg.var_type),
+                                reason: ConstraintEqualityReason::ByDefinition {
+                                    expr: name_range,
+                                    definition_source: source_file.clone(),
+                                    definition: arg.range,
+                                    high_priority: true,
+                                },
+                            },
+                        ),
                         let_variables,
                         new_variables: None,
                     });
@@ -80,7 +93,7 @@ pub(crate) fn generate_constraints(
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: TypeVariable::Unknown { id: type_variable },
+                            type_variable,
                             contents: ExpressionContentsT::Local(name),
                             explicit_token,
                         },
@@ -94,6 +107,7 @@ pub(crate) fn generate_constraints(
                         new_variables: None,
                     });
                 }
+
                 // Now, check the let variables.
                 if let_variables.get(&name.name).is_some() {
                     let type_variable = TypeVariableId::default();
@@ -102,7 +116,7 @@ pub(crate) fn generate_constraints(
                     type_variable_definition_ranges.insert(type_variable, name.range);
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: TypeVariable::Unknown { id: type_variable },
+                            type_variable,
                             contents: ExpressionContentsT::Local(name),
                             explicit_token,
                         },
@@ -126,10 +140,16 @@ pub(crate) fn generate_constraints(
                 Some((symbol_source_file, symbol)) => {
                     // We don't need an assumption, we know what the type of this symbol is.
                     let InstantiationResult {
-                        result: type_variable,
+                        result,
                         ids: type_variables,
                         ..
                     } = instantiate(&symbol.symbol_type);
+                    let result = if explicit_token.is_some() {
+                        result
+                    } else {
+                        remove_impls_variable(result)
+                    };
+                    let type_variable = TypeVariableId::default();
                     DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
                             type_variable,
@@ -146,7 +166,18 @@ pub(crate) fn generate_constraints(
                         },
                         type_variable_definition_ranges: BTreeMap::new(),
                         assumptions: Assumptions::default(),
-                        constraints: Constraints::default(),
+                        constraints: Constraints::new_with(
+                            type_variable.into(),
+                            Constraint::Equality {
+                                ty: result,
+                                reason: ConstraintEqualityReason::ByDefinition {
+                                    expr: identifier.range(),
+                                    definition_source: symbol_source_file.clone(),
+                                    definition: symbol.name.range,
+                                    high_priority: true,
+                                },
+                            },
+                        ),
                         let_variables,
                         new_variables: None,
                     })
@@ -163,60 +194,31 @@ pub(crate) fn generate_constraints(
                 }
             }
         }
-        ExprPatP::Constant {
-            range,
-            value: ConstantValue::Unit,
-        } => DiagnosticResult::ok(ExprTypeCheck {
-            expr: ExpressionT {
-                type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
-                contents: ExpressionContentsT::ConstantValue {
-                    range,
-                    value: ConstantValue::Unit,
+        ExprPatP::Constant { range, value } => {
+            let type_variable = TypeVariableId::default();
+            let ty = get_constant_type(&value);
+            DiagnosticResult::ok(ExprTypeCheck {
+                expr: ExpressionT {
+                    type_variable,
+                    contents: ExpressionContentsT::ConstantValue { range, value },
+                    explicit_token,
                 },
-                explicit_token,
-            },
-            type_variable_definition_ranges: BTreeMap::new(),
-            assumptions: Assumptions::default(),
-            constraints: Constraints::default(),
-            let_variables,
-            new_variables: None,
-        }),
-        ExprPatP::Constant {
-            range,
-            value: ConstantValue::Bool(value),
-        } => DiagnosticResult::ok(ExprTypeCheck {
-            expr: ExpressionT {
-                type_variable: TypeVariable::Primitive(PrimitiveType::Bool),
-                contents: ExpressionContentsT::ConstantValue {
-                    range,
-                    value: ConstantValue::Bool(value),
-                },
-                explicit_token,
-            },
-            type_variable_definition_ranges: BTreeMap::new(),
-            assumptions: Assumptions::default(),
-            constraints: Constraints::default(),
-            let_variables,
-            new_variables: None,
-        }),
-        ExprPatP::Constant {
-            range,
-            value: ConstantValue::Int(value),
-        } => DiagnosticResult::ok(ExprTypeCheck {
-            expr: ExpressionT {
-                type_variable: TypeVariable::Primitive(PrimitiveType::Int),
-                contents: ExpressionContentsT::ConstantValue {
-                    range,
-                    value: ConstantValue::Int(value),
-                },
-                explicit_token,
-            },
-            type_variable_definition_ranges: BTreeMap::new(),
-            assumptions: Assumptions::default(),
-            constraints: Constraints::default(),
-            let_variables,
-            new_variables: None,
-        }),
+                type_variable_definition_ranges: BTreeMap::new(),
+                assumptions: Assumptions::default(),
+                constraints: Constraints::new_with(
+                    type_variable.into(),
+                    Constraint::Equality {
+                        ty: TypeVariable::Primitive(ty),
+                        reason: ConstraintEqualityReason::Literal {
+                            expr: range,
+                            ty: Type::Primitive(ty),
+                        },
+                    },
+                ),
+                let_variables,
+                new_variables: None,
+            })
+        }
         ExprPatP::Apply(left, right) => {
             generate_constraints(
                 source_file,
@@ -242,9 +244,7 @@ pub(crate) fn generate_constraints(
                 .map(|right| {
                     let left_type = left.expr.type_variable.clone();
                     let right_type = right.expr.type_variable.clone();
-                    let result_type = TypeVariable::Unknown {
-                        id: TypeVariableId::default(),
-                    };
+                    let result_type = TypeVariableId::default();
 
                     let function_range = left.expr.contents.range();
                     let argument_range = right.expr.contents.range();
@@ -269,17 +269,17 @@ pub(crate) fn generate_constraints(
                         assumptions: left.assumptions.union(right.assumptions),
                         constraints: left.constraints.union(right.constraints).union(
                             Constraints::new_with(
-                                left_type,
+                                left_type.into(),
                                 Constraint::Equality {
                                     ty: TypeVariable::Function(
-                                        Box::new(right_type),
-                                        Box::new(result_type),
+                                        Box::new(right_type.into()),
+                                        Box::new(result_type.into()),
                                     ),
                                     reason: ConstraintEqualityReason::Apply {
                                         function_range,
                                         argument_range,
-                                        function_ty,
-                                        argument_ty,
+                                        function_ty: function_ty.into(),
+                                        argument_ty: argument_ty.into(),
                                     },
                                 },
                             ),
@@ -349,15 +349,13 @@ pub(crate) fn generate_constraints(
                         // Gradually process the params to this function, curring each at a time, to get a resultant type variable.
                         let mut lambda_type = expr.expr.type_variable.clone();
                         for param in param_types.iter().rev() {
-                            let lambda_step_type = TypeVariable::Unknown {
-                                id: TypeVariableId::default(),
-                            };
+                            let lambda_step_type = TypeVariableId::default();
                             expr.constraints.0.push((
-                                lambda_step_type.clone(),
+                                lambda_step_type.into(),
                                 Constraint::Equality {
                                     ty: TypeVariable::Function(
                                         Box::new(TypeVariable::Unknown { id: *param }),
-                                        Box::new(lambda_type),
+                                        Box::new(lambda_type.into()),
                                     ),
                                     reason: ConstraintEqualityReason::LambdaType {
                                         lambda: lambda_token,
@@ -475,7 +473,7 @@ pub(crate) fn generate_constraints(
                         id: new_variable_type,
                     },
                     Constraint::Equality {
-                        ty: expr.expr.type_variable.clone(),
+                        ty: expr.expr.type_variable.into(),
                         reason: ConstraintEqualityReason::LetType {
                             let_token,
                             expression: expr.expr.range(),
@@ -483,10 +481,11 @@ pub(crate) fn generate_constraints(
                     },
                 ));
 
+                let type_variable = TypeVariableId::default();
                 DiagnosticResult::ok_with_many(
                     ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: TypeVariable::Primitive(PrimitiveType::Unit),
+                            type_variable,
                             contents: ExpressionContentsT::Let {
                                 let_token,
                                 name: name.clone(),
@@ -496,7 +495,13 @@ pub(crate) fn generate_constraints(
                         },
                         type_variable_definition_ranges,
                         assumptions: expr.assumptions,
-                        constraints,
+                        constraints: constraints.union(Constraints::new_with(
+                            type_variable.into(),
+                            Constraint::Equality {
+                                ty: TypeVariable::Primitive(PrimitiveType::Unit),
+                                reason: ConstraintEqualityReason::LetResult { let_token },
+                            },
+                        )),
                         let_variables,
                         new_variables: Some(LetStatementNewVariables {
                             let_token,
@@ -726,7 +731,7 @@ pub(crate) fn generate_constraints(
                                 instantiate_with(field_type, &mut ids, &mut higher_kinded_ids);
 
                             constraints.0.push((
-                                result.expr.type_variable.clone(),
+                                result.expr.type_variable.into(),
                                 Constraint::Equality {
                                     ty: field_type_variable,
                                     reason: ConstraintEqualityReason::Field {
@@ -781,7 +786,7 @@ pub(crate) fn generate_constraints(
                                 instantiate_with(field_type, &mut ids, &mut higher_kinded_ids);
 
                             constraints.0.push((
-                                result.expr.type_variable.clone(),
+                                result.expr.type_variable.into(),
                                 Constraint::Equality {
                                     ty: field_type_variable,
                                     reason: ConstraintEqualityReason::Field {
@@ -800,10 +805,20 @@ pub(crate) fn generate_constraints(
                         }
                     }
 
+                    let id = TypeVariableId::default();
+                    constraints.0.push((
+                        id.into(),
+                        Constraint::Equality {
+                            ty: type_variable,
+                            reason: ConstraintEqualityReason::Construct {
+                                expression: data_constructor.range(),
+                            },
+                        },
+                    ));
                     DiagnosticResult::ok_with_many(
                         ExprTypeCheck {
                             expr: ExpressionT {
-                                type_variable,
+                                type_variable: id,
                                 contents: ExpressionContentsT::ConstructData {
                                     data_type_name: type_constructor_invocation.data_type,
                                     variant: type_constructor_invocation.variant,
@@ -835,15 +850,13 @@ pub(crate) fn generate_constraints(
             None,
         )
         .map(|mut expr| {
-            let type_variable = TypeVariable::Unknown {
-                id: TypeVariableId::default(),
-            };
+            let type_variable = TypeVariableId::default();
             let expr_range = expr.expr.range();
             expr.constraints.0.push((
-                type_variable.clone(),
+                type_variable.into(),
                 Constraint::Equality {
                     ty: TypeVariable::Borrow {
-                        ty: Box::new(expr.expr.type_variable.clone()),
+                        ty: Box::new(expr.expr.type_variable.into()),
                     },
                     reason: ConstraintEqualityReason::Borrow {
                         expr: expr_range,
@@ -885,15 +898,13 @@ pub(crate) fn generate_constraints(
             None,
         )
         .map(|mut expr| {
-            let type_variable = TypeVariable::Unknown {
-                id: TypeVariableId::default(),
-            };
+            let type_variable = TypeVariableId::default();
             let expr_range = expr.expr.range();
             expr.constraints.0.push((
-                expr.expr.type_variable.clone(),
+                expr.expr.type_variable.into(),
                 Constraint::Equality {
                     ty: TypeVariable::Borrow {
-                        ty: Box::new(type_variable.clone()),
+                        ty: Box::new(type_variable.into()),
                     },
                     reason: ConstraintEqualityReason::Copy {
                         expr: expr_range,
@@ -915,7 +926,7 @@ pub(crate) fn generate_constraints(
             let type_variable = TypeVariableId::default();
             DiagnosticResult::ok(ExprTypeCheck {
                 expr: ExpressionT {
-                    type_variable: TypeVariable::Unknown { id: type_variable },
+                    type_variable,
                     contents: ExpressionContentsT::Impl {
                         impl_token,
                         implementations: body,
@@ -949,7 +960,8 @@ pub(crate) fn generate_constraints(
                 args,
                 lambda_variables.clone(),
                 let_variables.clone(),
-                *expr,None
+                *expr,
+                None
             )
             .bind(|expr| {
                 // Generate constraints for each pattern replacement.
@@ -963,7 +975,7 @@ pub(crate) fn generate_constraints(
                         generate_pattern_variables(
                             source_file,
                             &pattern,
-                            expr.expr.type_variable.clone(),
+                            expr.expr.type_variable.into(),
                             expr.expr.range(),
                         )
                         .bind(|new_variables| {
@@ -1058,7 +1070,7 @@ pub(crate) fn generate_constraints(
                                         .constraints
                                         .union(constraints)
                                         .union(Constraints::new_with(
-                                            replacement.expr.type_variable.clone(),
+                                            replacement.expr.type_variable.into(),
                                             Constraint::Equality {
                                                 ty: TypeVariable::Unknown {
                                                     id: replacement_type,
@@ -1098,14 +1110,13 @@ pub(crate) fn generate_constraints(
 
                 ExprTypeCheck {
                     expr: ExpressionT {
-                        type_variable: TypeVariable::Unknown {
-                            id: replacement_type,
-                        },
+                        type_variable:  replacement_type,
                         contents: ExpressionContentsT::Match {
                             match_token,
                             expr: Box::new(expr.expr),
                             cases: body,
-                        },explicit_token
+                        },
+                        explicit_token
                     },
                     type_variable_definition_ranges,
                     assumptions,
@@ -1116,6 +1127,18 @@ pub(crate) fn generate_constraints(
             })
         }
     }
+}
+
+fn remove_impls_variable(mut ty: TypeVariable) -> TypeVariable {
+    while let TypeVariable::Function(l, r) = ty {
+        if let TypeVariable::Impl { .. } = &*l {
+            ty = *r;
+        } else {
+            ty = TypeVariable::Function(l, r);
+            break;
+        }
+    }
+    ty
 }
 
 /// Returns an error message saying a variable was already defined.

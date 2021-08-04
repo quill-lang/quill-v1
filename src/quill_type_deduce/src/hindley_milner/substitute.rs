@@ -35,7 +35,7 @@ pub(crate) fn substitute(
     } = expr;
 
     let (ty, mut messages) =
-        substitute_type(substitution, type_variable.clone(), source_file, range).destructure();
+        substitute_type(substitution, type_variable.into(), source_file, range).destructure();
 
     // We only want to generate one error message, all the others will just say "could not deduce type of expression".
     messages.truncate(1);
@@ -45,7 +45,7 @@ pub(crate) fn substitute(
             message.help.push(HelpMessage {
                 message: format!(
                     "best guess of expression type was {}",
-                    tvp.print(type_variable)
+                    tvp.print(type_variable.into())
                 ),
                 help_type: HelpType::Note,
                 diagnostic: Diagnostic::at(source_file, &range),
