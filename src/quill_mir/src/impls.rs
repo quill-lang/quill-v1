@@ -1,4 +1,7 @@
-use std::ops::Deref;
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    ops::Deref,
+};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -133,14 +136,27 @@ fn find_default_impl(
             let mut result_ty = &def.symbol_type;
             while let Type::Function(_, r) = result_ty {
                 result_ty = r.deref();
+                panic!("arguments in default impls not supported yet");
             }
 
-            // TODO: For now, just assume that the impl definition is compatible,
-            // and that it takes no arguments or type params.
-            Some(DefaultImpl {
-                def_name: def_name.clone(),
-                type_params: Vec::new(),
-                params: Vec::new(),
+            can_instance_as(
+                result_ty,
+                &Type::Impl {
+                    name: name.clone(),
+                    parameters: parameters.clone(),
+                },
+            )
+            .map(|map| {
+                // TODO: For now, just assume that the impl definition takes no arguments.
+                DefaultImpl {
+                    def_name: def_name.clone(),
+                    type_params: def
+                        .type_variables
+                        .iter()
+                        .map(|param| map[&param.name].clone())
+                        .collect(),
+                    params: Vec::new(),
+                }
             })
         })
         .collect::<Vec<_>>();
@@ -184,4 +200,106 @@ fn find_default_impl(
     } else {
         candidates.pop().unwrap().into()
     }
+}
+
+/// Can we instance this generic type by replacing type variables so that it matches the expected type?
+/// If so, return the mapping of type variables to actual types.
+/// TODO: add the mapping of borrow conditions, when borrow checking is fully implemented.
+fn can_instance_as(generic: &Type, expected: &Type) -> Option<BTreeMap<String, Type>> {
+    match generic {
+        Type::Named { name, parameters } => {
+            if let Type::Named {
+                name: name2,
+                parameters: parameters2,
+            } = expected
+            {
+                if name == name2 {
+                    let maps = parameters
+                        .iter()
+                        .zip(parameters2)
+                        .map(|(generic, expected)| can_instance_as(generic, expected))
+                        .collect::<Vec<_>>();
+                    if maps.iter().any(|opt| opt.is_none()) {
+                        None
+                    } else {
+                        unify_if_possible(maps.into_iter().map(|opt| opt.unwrap()).collect())
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        Type::Variable { variable, .. } => Some({
+            // TODO: what to do with the higher kinded parameters?
+            let mut map = BTreeMap::new();
+            map.insert(variable.clone(), expected.clone());
+            map
+        }),
+        Type::Function(l, r) => {
+            if let Type::Function(l2, r2) = expected {
+                unify_if_possible(vec![can_instance_as(l, l2)?, can_instance_as(r, r2)?])
+            } else {
+                None
+            }
+        }
+        ty @ Type::Primitive(_) => {
+            if ty == expected {
+                Some(BTreeMap::new())
+            } else {
+                None
+            }
+        }
+        Type::Borrow { ty, .. } => {
+            if let Type::Borrow { ty: ty2, .. } = expected {
+                can_instance_as(ty, ty2)
+            } else {
+                None
+            }
+        }
+        Type::Impl { name, parameters } => {
+            if let Type::Impl {
+                name: name2,
+                parameters: parameters2,
+            } = expected
+            {
+                if name == name2 {
+                    let maps = parameters
+                        .iter()
+                        .zip(parameters2)
+                        .map(|(generic, expected)| can_instance_as(generic, expected))
+                        .collect::<Vec<_>>();
+                    if maps.iter().any(|opt| opt.is_none()) {
+                        None
+                    } else {
+                        unify_if_possible(maps.into_iter().map(|opt| opt.unwrap()).collect())
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn unify_if_possible(maps: Vec<BTreeMap<String, Type>>) -> Option<BTreeMap<String, Type>> {
+    let mut result = BTreeMap::new();
+    for map in maps {
+        for (k, v) in map {
+            match result.entry(k) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(v);
+                }
+                Entry::Occupied(occupied) => {
+                    if v != *occupied.get() {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    Some(result)
 }
