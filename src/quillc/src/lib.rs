@@ -85,7 +85,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
                         |(file_ident, parsed)| {
                             quill_type_deduce::check(&file_ident, &index, parsed)
                                 .deny()
-                                .map(|typeck| {
+                                .bind(|typeck| {
                                     // Output the HIR to a build file.
                                     let f = build_info.build_folder.join("ir").join(
                                         fs2.file_path(&file_ident)
@@ -99,15 +99,16 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
                                         std::fs::write(f.with_extension("hir"), typeck.to_string())
                                             .unwrap();
                                     }
-                                    let mir = quill_mir::to_mir(&index, typeck, &file_ident);
-                                    if build_info.emit_mir {
-                                        std::fs::write(
-                                            f.with_extension("basic.mir"),
-                                            mir.to_string(),
-                                        )
-                                        .unwrap();
-                                    }
-                                    mir
+                                    quill_mir::to_mir(&index, typeck, &file_ident).map(|mir| {
+                                        if build_info.emit_mir {
+                                            std::fs::write(
+                                                f.with_extension("basic.mir"),
+                                                mir.to_string(),
+                                            )
+                                            .unwrap();
+                                        }
+                                        mir
+                                    })
                                 })
                                 .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
                                 .map(|mir| {

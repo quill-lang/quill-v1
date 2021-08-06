@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use quill_common::location::{Range, Ranged, SourceFileIdentifier};
+use quill_common::{
+    diagnostic::DiagnosticResult,
+    location::{Range, Ranged, SourceFileIdentifier},
+};
 use quill_index::{ProjectIndex, TypeParameter};
 use quill_type::Type;
 use quill_type_deduce::hir::definition::{Definition, DefinitionBody, DefinitionCase};
@@ -21,7 +24,7 @@ pub(crate) struct DefinitionTranslationContext<'a> {
     /// Retrieves the unique name of a named local variable.
     local_name_map: BTreeMap<String, LocalVariableName>,
 
-    pub local_variable_names: BTreeMap<LocalVariableName, LocalVariableInfo>,
+    pub locals: BTreeMap<LocalVariableName, LocalVariableInfo>,
     pub control_flow_graph: ControlFlowGraph,
     pub type_variables: Vec<TypeParameter>,
     pub project_index: &'a ProjectIndex,
@@ -48,7 +51,7 @@ impl DefinitionTranslationContext<'_> {
             self.local_name_map
                 .insert(name, LocalVariableName::Local(id));
         }
-        self.local_variable_names
+        self.locals
             .insert(LocalVariableName::Local(id), info);
         id
     }
@@ -71,7 +74,7 @@ pub(crate) fn to_mir_def(
     source_file: &SourceFileIdentifier,
     def_name: &str,
     lambda_number: &mut usize,
-) -> (DefinitionM, Vec<DefinitionM>) {
+) -> DiagnosticResult<(DefinitionM, Vec<DefinitionM>)> {
     let range = def.range();
     let type_variables = def.type_variables.clone();
     let arity = def.arg_types.len() as u64;
@@ -94,7 +97,7 @@ pub(crate) fn to_mir_def(
         DefinitionBody::PatternMatch(cases) => {
             let mut ctx = DefinitionTranslationContext {
                 next_local_variable_id: LocalVariableId(0),
-                local_variable_names,
+                locals: local_variable_names,
                 local_name_map: BTreeMap::new(),
                 control_flow_graph: ControlFlowGraph::new(),
                 type_variables: type_variables.clone(),
@@ -107,19 +110,21 @@ pub(crate) fn to_mir_def(
 
             // This function will create the rest of the control flow graph
             // for sub-expressions.
-            ctx.control_flow_graph.entry_point = create_cfg(&mut ctx, cases, def.arg_types, range);
-            ctx.control_flow_graph.reorder();
+            create_cfg(&mut ctx, cases, def.arg_types, range).map(|entry_point| {
+                ctx.control_flow_graph.entry_point = entry_point;
+                ctx.control_flow_graph.reorder();
 
-            let def = DefinitionM {
-                range,
-                type_variables,
-                arity,
-                local_variable_names: ctx.local_variable_names,
-                return_type,
-                body: DefinitionBodyM::PatternMatch(ctx.control_flow_graph),
-            };
+                let def = DefinitionM {
+                    range,
+                    type_variables,
+                    arity,
+                    local_variable_names: ctx.locals,
+                    return_type,
+                    body: DefinitionBodyM::PatternMatch(ctx.control_flow_graph),
+                };
 
-            (def, ctx.additional_definitions)
+                (def, ctx.additional_definitions)
+            })
         }
 
         DefinitionBody::CompilerIntrinsic => {
@@ -132,7 +137,7 @@ pub(crate) fn to_mir_def(
                 body: DefinitionBodyM::CompilerIntrinsic,
             };
 
-            (def, Vec::new())
+            (def, Vec::new()).into()
         }
     }
 }
@@ -144,7 +149,7 @@ fn create_cfg(
     cases: Vec<DefinitionCase>,
     arg_types: Vec<Type>,
     range: Range,
-) -> BasicBlockId {
+) -> DiagnosticResult<BasicBlockId> {
     // Begin by creating the CFG for each case in the definition.
     let cases = cases
         .into_iter()
@@ -201,48 +206,52 @@ fn create_cfg(
                 },
             );
 
-            // Before we return `func.variable` from our function, we first need to drop any locals that have not yet
-            // been dropped. We will simply accomplish this by moving the return value into a "protected" variable,
-            // and then drop every other variable that could possibly be alive at this point.
-            let protected_return_value = ctx.new_local_variable(LocalVariableInfo {
-                range: ctx.local_variable_names[&func.variable].range,
-                ty: ctx.local_variable_names[&func.variable].ty.clone(),
-                name: Some("return value".to_string()),
-            });
-            // Move the return value into this protected slot.
-            let return_block = ctx
-                .control_flow_graph
-                .basic_blocks
-                .get_mut(&return_block)
-                .unwrap();
-            return_block.statements.push(Statement {
-                range,
-                kind: StatementKind::Assign {
-                    target: LocalVariableName::Local(protected_return_value),
-                    source: Rvalue::Move(Place::new(func.variable)),
-                },
-            });
+            let case_arg_patterns = case.arg_patterns;
 
-            // Now, replace the terminator with a custom terminator that returns the real protected return value from the function.
-            return_block.terminator = Terminator {
-                range,
-                kind: TerminatorKind::Return {
-                    value: LocalVariableName::Local(protected_return_value),
-                },
-            };
+            func.map(|func| {
+                // Before we return `func.variable` from our function, we first need to drop any locals that have not yet
+                // been dropped. We will simply accomplish this by moving the return value into a "protected" variable,
+                // and then drop every other variable that could possibly be alive at this point.
+                let protected_return_value = ctx.new_local_variable(LocalVariableInfo {
+                    range: ctx.locals[&func.variable].range,
+                    ty: ctx.locals[&func.variable].ty.clone(),
+                    name: Some("return value".to_string()),
+                });
+                // Move the return value into this protected slot.
+                let return_block = ctx
+                    .control_flow_graph
+                    .basic_blocks
+                    .get_mut(&return_block)
+                    .unwrap();
+                return_block.statements.push(Statement {
+                    range,
+                    kind: StatementKind::Assign {
+                        target: LocalVariableName::Local(protected_return_value),
+                        source: Rvalue::Move(Place::new(func.variable)),
+                    },
+                });
 
-            ctx.control_flow_graph
-                .basic_blocks
-                .get_mut(&unwrap_patterns_block)
-                .unwrap()
-                .terminator = Terminator {
-                range,
-                kind: TerminatorKind::Goto(func.block),
-            };
+                // Now, replace the terminator with a custom terminator that returns the real protected return value from the function.
+                return_block.terminator = Terminator {
+                    range,
+                    kind: TerminatorKind::Return {
+                        value: LocalVariableName::Local(protected_return_value),
+                    },
+                };
 
-            (case.arg_patterns, unwrap_patterns_block)
+                ctx.control_flow_graph
+                    .basic_blocks
+                    .get_mut(&unwrap_patterns_block)
+                    .unwrap()
+                    .terminator = Terminator {
+                    range,
+                    kind: TerminatorKind::Goto(func.block),
+                };
+
+                (case_arg_patterns, unwrap_patterns_block)
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<DiagnosticResult<Vec<_>>>();
 
     // Then perform the pattern matching operation on each parameter to the function, in reverse order.
     let args = arg_types
@@ -250,5 +259,7 @@ fn create_cfg(
         .enumerate()
         .map(|(i, _)| LocalVariableName::Argument(ArgumentIndex(i as u64)))
         .collect::<Vec<_>>();
-    perform_match_function(ctx, range, arg_types, &args, cases)
+    cases
+        .deny()
+        .map(|cases| perform_match_function(ctx, range, arg_types, &args, cases))
 }

@@ -38,7 +38,9 @@ pub(crate) fn substitute(
         substitute_type(substitution, type_variable.into(), source_file, range).destructure();
 
     // We only want to generate one error message, all the others will just say "could not deduce type of expression".
-    messages.truncate(1);
+    // TODO: is this actually true? and anyway, don't we still want to know which expression types are not known?
+    // messages.truncate(1);
+
     if let Some(message) = messages.get_mut(0) {
         if message.help.is_empty() {
             let mut tvp = TypeVariablePrinter::new(substitution.clone());
@@ -67,7 +69,8 @@ pub(crate) fn substitute(
     }
 }
 
-/// `ty` is the type of `contents`.
+/// `ty` is the expected type of `contents`, after type coercion (eliding impls, for example).
+/// Type coercion is implemented in the MIR translation phase.
 fn substitute_contents(
     substitution: &BTreeMap<TypeVariableId, TypeVariable>,
     contents: ExpressionContentsT,

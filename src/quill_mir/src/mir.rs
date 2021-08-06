@@ -367,6 +367,7 @@ pub enum StatementKind {
         function: Box<Rvalue>,
         target: LocalVariableName,
 
+        // TODO: Remove these fields.
         return_type: Type,
         argument_type: Type,
     },

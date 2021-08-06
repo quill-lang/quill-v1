@@ -70,6 +70,10 @@ impl ProjectIndex {
     pub fn aspect(&self, name: &QualifiedName) -> &AspectI {
         &self.files[&name.source_file].aspects[&name.name]
     }
+
+    pub fn default_impls(&self, name: &QualifiedName) -> &BTreeSet<QualifiedName> {
+        &self.default_impls.impls[name]
+    }
 }
 
 /// Searches each file for definitions marked with "default" and
