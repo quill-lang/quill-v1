@@ -290,11 +290,16 @@ fn coerce(
         if let Type::Impl { name, parameters } = *l {
             // Check if there exists a default impl.
             let (val, more_messages) =
-                find_and_apply_default_impl(ctx, range, &name, parameters, &expr, coerce_block)
-                    .destructure();
+                find_and_apply_default_impl(ctx, range, &name, &parameters, &expr).destructure();
             messages.extend(more_messages);
             if let Some(val) = val {
-                expr = val;
+                expr.variable = val.variable;
+                ctx.control_flow_graph
+                    .basic_blocks
+                    .get_mut(&coerce_block)
+                    .unwrap()
+                    .statements
+                    .extend(val.statements);
             }
             original_ty = *r;
         } else {
@@ -408,8 +413,6 @@ fn generate_expr_apply(
                         argument: Box::new(Rvalue::Move(Place::new(right.variable))),
                         function: Box::new(Rvalue::Move(Place::new(left.variable))),
                         target: LocalVariableName::Local(variable),
-                        return_type,
-                        argument_type,
                     },
                 });
             ExprGeneratedM {
@@ -519,8 +522,6 @@ fn generate_expr_lambda(
                         projection: Vec::new(),
                     })),
                     target: LocalVariableName::Local(next_variable),
-                    return_type: ty,
-                    argument_type: ctx.locals[&ctx.get_name_of_local(&local.name)].ty.clone(),
                 },
             });
             variable = next_variable;
@@ -857,16 +858,6 @@ fn generate_expr_impl(
     } else {
         unreachable!()
     };
-    let def_types = implementations
-        .values()
-        .map(|def| {
-            let mut symbol_type = def.return_type.clone();
-            for arg in def.arg_types.iter().rev() {
-                symbol_type = Type::Function(Box::new(arg.clone()), Box::new(symbol_type));
-            }
-            symbol_type
-        })
-        .collect::<Vec<_>>();
     let mut def_numbers = Vec::new();
 
     implementations
@@ -998,10 +989,6 @@ fn generate_expr_impl(
                                 projection: Vec::new(),
                             })),
                             target: LocalVariableName::Local(next_variable),
-                            return_type: ty,
-                            argument_type: ctx.locals[&ctx.get_name_of_local(&local.name)]
-                                .ty
-                                .clone(),
                         },
                     });
                     variable = next_variable;

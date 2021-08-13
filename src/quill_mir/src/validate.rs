@@ -348,9 +348,9 @@ fn validate_stmt(
             argument,
             function,
             target,
-            return_type,
-            argument_type,
         } => {
+            let argument_type = rvalue_type(project_index, locals, &*argument)?;
+            let return_type = locals[target].ty.clone();
             let expected_func_ty = Type::Function(
                 Box::new(argument_type.clone()),
                 Box::new(return_type.clone()),
@@ -359,16 +359,6 @@ fn validate_stmt(
                 rvalue_type(project_index, locals, &*function)?,
                 expected_func_ty,
                 "function type",
-            )?;
-            assert_ty_eq(
-                rvalue_type(project_index, locals, &*argument)?,
-                argument_type.clone(),
-                "type of argument to application",
-            )?;
-            assert_ty_eq(
-                locals[target].ty.clone(),
-                return_type.clone(),
-                "return type of application",
             )
         }
         StatementKind::InvokeFunction { .. } => {

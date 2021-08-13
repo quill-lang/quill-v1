@@ -35,17 +35,6 @@ pub fn monomorphise<'ctx>(
                         }
                     }
 
-                    StatementKind::InvokeFunctionObject {
-                        return_type,
-                        additional_argument_types,
-                        ..
-                    } => {
-                        mono(return_type);
-                        for ty in additional_argument_types {
-                            mono(ty);
-                        }
-                    }
-
                     StatementKind::ConstructData { type_variables, .. } => {
                         for var in type_variables {
                             mono(var);

@@ -46,8 +46,8 @@ def hello_world_factorials: Unit {
         ) (
             \a -> (
                 let list = 72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty
-                @print print_list (copy &list)
-                @print (copy &print_list) (copied (as_ref &list))
+                @print print_show (copy &list)
+                @print (copy &print_show) (copied (as_ref &list))
             )
         )
         newline unit

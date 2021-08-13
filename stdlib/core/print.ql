@@ -27,8 +27,7 @@ def print[T]: impl Print[T] -> T -> Unit {
     print impl { print } value = print value
 }
 
-// TODO: make this default
-def print_show[T]: impl Show[T] -> impl Print[T] {
+def default print_show[T]: impl Show[T] -> impl Print[T] {
     print_show impl { show } = impl {
         print val = for_each putchar (show val)
     }
@@ -44,18 +43,10 @@ def default show_list: impl Show[List[Int]] {
     }
 }
 
-def default print_list: impl Print[List[Int]] {
-    print_list = print_show
-}
-
 def default show_int: impl Show[Int] {
     show_int = impl {
         show = show_int_inner
     }
-}
-
-def default print_int: impl Print[Int] {
-    print_int = print_show
 }
 
 def show_int_inner: Int -> List[Int] {
