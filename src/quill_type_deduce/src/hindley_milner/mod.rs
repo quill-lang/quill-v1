@@ -52,6 +52,9 @@ struct LetStatementNewVariables {
     new_variables: Vec<(NameP, TypeVariableId)>,
 }
 
+/// The list of `visible_local_names` is used for inner type deduction.
+/// Type deduction of impls is done in a separate step, so we need to use this list to access the types of outer local variables.
+/// This holds the types of outer local variables, including the arguments to the function.
 pub(crate) fn deduce_expr_type(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
