@@ -35,7 +35,7 @@ fn test_mir() {
                 index_single_file(&file_ident, &parsed).bind(|project_index| {
                     check(&file_ident, &project_index, parsed)
                         .deny()
-                        .map(|typeck| to_mir(&project_index, typeck, &file_ident))
+                        .bind(|typeck| to_mir(&project_index, typeck, &file_ident))
                 })
             })
             .deny();
