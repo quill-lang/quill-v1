@@ -23,7 +23,7 @@ toml = "0.5"
 lazy_static = "^1.4.0"
 
 curl = "0.4.38"
-tar = "0.4.35"
+tar = "0.4.37"
 flate2 = "1.0"
 chrono = "0.4.19"
 tempdir = "0.3.7"
