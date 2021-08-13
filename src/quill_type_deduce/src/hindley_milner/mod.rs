@@ -92,6 +92,7 @@ pub fn deduce_expr_type(
             expr_type_check.expr,
             expr_type_check.constraints,
             visible_names,
+            args,
         )
     })
 }

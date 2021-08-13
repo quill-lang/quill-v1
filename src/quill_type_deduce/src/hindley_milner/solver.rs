@@ -10,7 +10,7 @@ use quill_common::{
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 
 use crate::{
-    hir::expr::{Expression, ExpressionContentsT, ExpressionT, TypeVariable},
+    hir::expr::{BoundVariable, Expression, ExpressionContentsT, ExpressionT, TypeVariable},
     index_resolve::instantiate_with,
     type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
@@ -32,6 +32,7 @@ pub(crate) fn solve_type_constraints(
     mut expr: ExpressionT,
     constraints: Constraints,
     visible_names: &VisibleNames,
+    args: &BTreeMap<String, BoundVariable>,
 ) -> DiagnosticResult<Expression> {
     // First, compute which expressions are listed as "explicit",
     // and store the list so that we can keep track of it while unifying variables.
@@ -99,6 +100,7 @@ pub(crate) fn solve_type_constraints(
             source_file,
             project_index,
             visible_names,
+            args,
         )
     })
 }

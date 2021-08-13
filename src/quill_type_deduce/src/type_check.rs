@@ -180,6 +180,8 @@ pub struct ForeignDeclaration<T> {
     pub decl: T,
 }
 
+/// What names are visible in a given source file?
+/// This is generated from the imports provided at the top of a source file.
 pub struct VisibleNames<'a> {
     pub types: BTreeMap<&'a str, ForeignDeclaration<&'a TypeDeclarationI>>,
     pub enum_variants: BTreeMap<&'a str, ForeignDeclaration<&'a str>>,
