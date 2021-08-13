@@ -341,7 +341,8 @@ impl LanguageServer for Backend {
                             |(file_ident, parsed)| {
                                 quill_type_deduce::check(&file_ident, &index, parsed)
                                     .deny()
-                                    .map(|typeck| quill_mir::to_mir(&index, typeck, &file_ident))
+                                    .bind(|typeck| quill_mir::to_mir(&index, typeck, &file_ident))
+                                    .deny()
                                     .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
                                     .map(|mir| (file_ident, mir))
                             },

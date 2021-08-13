@@ -12,6 +12,6 @@ def get_value[T]: impl Container[T] -> T {
 
 def main: Unit {
     main = (
-        putchar (get_value impl { value = 65 })
+        putchar (@get_value impl { value = 65 })
     )
 }

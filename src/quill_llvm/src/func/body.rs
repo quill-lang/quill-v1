@@ -22,7 +22,7 @@ use crate::{
     func::{
         lifetime::{lifetime_end, lifetime_end_if_moved, lifetime_start},
         monomorphise::monomorphise,
-        rvalue::{get_pointer_to_rvalue, get_pointer_to_rvalue_arg},
+        rvalue::{get_pointer_to_rvalue, get_pointer_to_rvalue_arg, get_type_of_rvalue},
     },
     monomorphisation::{
         MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
@@ -292,9 +292,12 @@ fn create_real_func_body_cfg<'ctx>(
                     func_object,
                     target,
                     additional_arguments,
-                    return_type,
-                    additional_argument_types,
                 } => {
+                    let return_type = local_variable_names[target].ty.clone();
+                    let additional_argument_types = additional_arguments
+                        .iter()
+                        .map(|rvalue| get_type_of_rvalue(ctx.index, local_variable_names, rvalue))
+                        .collect::<Vec<_>>();
                     let func_object_ptr = get_pointer_to_rvalue(
                         ctx.codegen,
                         ctx.index,

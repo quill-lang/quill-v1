@@ -111,7 +111,7 @@ fn first_difference(
             };
 
             let all_variants = if let TypeDeclarationTypeI::Enum(enumi) =
-                &project_index[&enum_name.source_file].types[&enum_name.name].decl_type
+                &project_index.type_decl(&enum_name).decl_type
             {
                 enumi
                     .variants
@@ -495,10 +495,8 @@ pub(crate) fn perform_match_function(
                         let new_cases = cases
                             .into_iter()
                             .map(|id| {
-                                let enum_fields = if let TypeDeclarationTypeI::Enum(enumi) = &ctx
-                                    .project_index[&enum_name.source_file]
-                                    .types[&enum_name.name]
-                                    .decl_type
+                                let enum_fields = if let TypeDeclarationTypeI::Enum(enumi) =
+                                    &ctx.project_index.type_decl(&enum_name).decl_type
                                 {
                                     enumi
                                         .variants

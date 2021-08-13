@@ -4,7 +4,7 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Range, Ranged, SourceFileIdentifier},
+    location::{Location, Range, Ranged, SourceFileIdentifier},
     name::QualifiedName,
 };
 use quill_index::{
@@ -22,7 +22,7 @@ use quill_parser::{
 use quill_type::{BorrowCondition, PrimitiveType, Type};
 
 use crate::{
-    hindley_milner::deduce_expr_type,
+    hindley_milner::{deduce_expr_type, VisibleLocalNames},
     hir::{
         definition::{Definition, DefinitionBody, DefinitionCase},
         expr::{BoundVariable, Expression, ExpressionContents, TypeVariable},
@@ -180,6 +180,8 @@ pub struct ForeignDeclaration<T> {
     pub decl: T,
 }
 
+/// What names are visible in a given source file?
+/// This is generated from the imports provided at the top of a source file.
 pub struct VisibleNames<'a> {
     pub types: BTreeMap<&'a str, ForeignDeclaration<&'a TypeDeclarationI>>,
     pub enum_variants: BTreeMap<&'a str, ForeignDeclaration<&'a str>>,
@@ -201,7 +203,7 @@ fn compute_visible_names<'a>(
     let mut visible_aspects = BTreeMap::<&str, Vec<ForeignDeclaration<_>>>::new();
 
     let (used_files, more_messages) = compute_used_files(source_file, file_parsed, |name| {
-        project_index.contains_key(name)
+        project_index.is_file_indexed(name)
     })
     .destructure();
     assert!(
@@ -209,7 +211,7 @@ fn compute_visible_names<'a>(
         "should have errored in `compute_visible_types_and_aspects`"
     );
     for file in used_files.unwrap() {
-        let file_index = &project_index[&file.file];
+        let file_index = project_index.get_file_index(&file.file);
         for (ty, decl) in &file_index.types {
             visible_types
                 .entry(ty.as_str())
@@ -342,13 +344,19 @@ impl<'a> TypeChecker<'a> {
         let mut definitions = BTreeMap::<String, Definition>::new();
 
         for definition in file_parsed.definitions {
-            let symbol =
-                &self.project_index[self.source_file].definitions[&definition.decl.name.name];
+            let symbol = self.project_index.definition(&QualifiedName {
+                source_file: self.source_file.clone(),
+                name: definition.decl.name.name.clone(),
+                range: Location { line: 0, col: 0 }.into(),
+            });
             let symbol_type = &symbol.symbol_type;
 
-            if let Some((name, def)) =
-                self.compute_definition(&visible_names, definition, symbol_type)
-            {
+            if let Some((name, def)) = self.compute_definition(
+                &visible_names,
+                &VisibleLocalNames::new(),
+                definition,
+                symbol_type,
+            ) {
                 definitions.insert(name, def);
             }
         }
@@ -361,6 +369,7 @@ impl<'a> TypeChecker<'a> {
     fn compute_definition(
         &mut self,
         visible_names: &VisibleNames,
+        visible_local_names: &VisibleLocalNames,
         definition: DefinitionP,
         symbol_type: &Type,
     ) -> Option<(String, Definition)> {
@@ -384,6 +393,7 @@ impl<'a> TypeChecker<'a> {
                         .map(|(range, args, replacement)| {
                             self.validate_case(
                                 visible_names,
+                                visible_local_names,
                                 symbol_type,
                                 range,
                                 args,
@@ -471,9 +481,11 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Verify that the given case exactly matches the required type, and also type check the expression given the arguments' types and the expected output type.
+    #[allow(clippy::too_many_arguments)]
     fn validate_case(
         &self,
         visible_names: &VisibleNames,
+        visible_local_names: &VisibleLocalNames,
         symbol_type: &Type,
         range: Range,
         args: Vec<Pattern>,
@@ -510,6 +522,7 @@ impl<'a> TypeChecker<'a> {
                     self.source_file,
                     self.project_index,
                     visible_names,
+                    visible_local_names,
                     &arg_vars,
                     replacement,
                     result,
@@ -955,6 +968,11 @@ impl<'a> TypeChecker<'a> {
                     Diagnostic::at(self.source_file, &borrow_token),
                 )),
             },
+            ExprPatP::Explicit { explicit_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
+                String::from("explicit token not allowed in patterns"),
+                Severity::Error,
+                Diagnostic::at(self.source_file, &explicit_token),
+            )),
             ExprPatP::Copy { copy_token, .. } => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("copies are not allowed in patterns"),
                 Severity::Error,
@@ -968,10 +986,7 @@ impl<'a> TypeChecker<'a> {
                 |type_ctor| {
                     match expected_type {
                         Type::Named { name, parameters } => {
-                            let field_types = match &self.project_index[&name.source_file].types
-                                [&name.name]
-                                .decl_type
-                            {
+                            let field_types = match &self.project_index.type_decl(&name).decl_type {
                                 TypeDeclarationTypeI::Data(datai) => datai
                                     .type_ctor
                                     .fields
@@ -1080,7 +1095,7 @@ impl<'a> TypeChecker<'a> {
             } => {
                 match &expected_type {
                     Type::Impl { name, parameters } => {
-                        let aspecti = &self.project_index[&name.source_file].aspects[&name.name];
+                        let aspecti = self.project_index.aspect(name);
                         let field_types = aspecti
                             .definitions
                             .iter()
@@ -1201,6 +1216,7 @@ impl<'a> TypeChecker<'a> {
         parameters: &[Type],
         cases: Vec<DefinitionCaseP>,
         visible_names: &VisibleNames,
+        visible_local_names: &VisibleLocalNames,
     ) -> DiagnosticResult<ExpressionContents> {
         // Split apart each definition in the impl body.
         let mut cases_by_func_name = BTreeMap::<String, Vec<DefinitionCaseP>>::new();
@@ -1218,6 +1234,7 @@ impl<'a> TypeChecker<'a> {
             let implementation = DefinitionP {
                 decl: DefinitionDeclP {
                     vis: Visibility::Private,
+                    default: None,
                     name: NameP {
                         name: def.name.name.clone(),
                         range: impl_token,
@@ -1243,7 +1260,12 @@ impl<'a> TypeChecker<'a> {
             };
 
             // Type check this implementation.
-            let result = self.compute_definition(visible_names, implementation, &symbol_type);
+            let result = self.compute_definition(
+                visible_names,
+                visible_local_names,
+                implementation,
+                &symbol_type,
+            );
             if let Some((k, v)) = result {
                 implementations.insert(k, v);
             }
@@ -1259,7 +1281,7 @@ impl<'a> TypeChecker<'a> {
     }
 }
 
-fn get_constant_type(constant: &ConstantValue) -> PrimitiveType {
+pub(crate) fn get_constant_type(constant: &ConstantValue) -> PrimitiveType {
     match constant {
         ConstantValue::Unit => PrimitiveType::Unit,
         ConstantValue::Bool(_) => PrimitiveType::Bool,

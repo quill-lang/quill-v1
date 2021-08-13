@@ -12,6 +12,8 @@ pub struct DefinitionP {
 #[derive(Debug)]
 pub struct DefinitionDeclP {
     pub vis: Visibility,
+    /// If the "default" keyword was written in this definition, the range of the token is stored here.
+    pub default: Option<Range>,
     pub name: NameP,
     /// This definition might be defined with certain quantified type variables, e.g. foo[A, B].
     pub type_parameters: Vec<TypeParameterP>,

@@ -110,20 +110,18 @@ pub(crate) fn sort_types(
         };
 
         match vertex {
-            MonomorphisedItem::Type(ty) => {
-                match &index[&ty.name.source_file].types[&ty.name.name].decl_type {
-                    TypeDeclarationTypeI::Data(datai) => {
-                        fill_graph(&datai.type_ctor, &datai.type_params);
-                    }
-                    TypeDeclarationTypeI::Enum(enumi) => {
-                        for variant in &enumi.variants {
-                            fill_graph(&variant.type_ctor, &enumi.type_params);
-                        }
+            MonomorphisedItem::Type(ty) => match &index.type_decl(&ty.name).decl_type {
+                TypeDeclarationTypeI::Data(datai) => {
+                    fill_graph(&datai.type_ctor, &datai.type_params);
+                }
+                TypeDeclarationTypeI::Enum(enumi) => {
+                    for variant in &enumi.variants {
+                        fill_graph(&variant.type_ctor, &enumi.type_params);
                     }
                 }
-            }
+            },
             MonomorphisedItem::Aspect(asp) => {
-                let aspect = &index[&asp.name.source_file].aspects[&asp.name.name];
+                let aspect = index.aspect(&asp.name);
                 // Make a fake type constructor for the aspect.
                 let type_ctor = TypeConstructorI {
                     fields: aspect

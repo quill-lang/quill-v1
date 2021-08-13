@@ -6,12 +6,15 @@ use quill_common::{
     name::QualifiedName,
 };
 use quill_index::ProjectIndex;
-use quill_parser::{definition::DefinitionBodyP, expr_pat::ExprPatP};
+use quill_parser::{definition::DefinitionBodyP, expr_pat::ExprPatP, identifier::NameP};
 use quill_type::Type;
 
 use crate::{
     hir::{
-        expr::{Expression, ExpressionContents, ExpressionContentsT, ExpressionT, TypeVariable},
+        expr::{
+            BoundVariable, Expression, ExpressionContents, ExpressionContentsT, ExpressionT,
+            TypeVariable,
+        },
         pattern::Pattern,
     },
     type_check::{TypeChecker, TypeVariablePrinter, VisibleNames},
@@ -26,25 +29,86 @@ pub(crate) fn substitute(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
     visible_names: &VisibleNames,
+    args: &BTreeMap<String, BoundVariable>,
 ) -> DiagnosticResult<Expression> {
+    // Generate a list of arguments to the function.
+    let visible_local_names = args
+        .iter()
+        .map(|(name, bound_variable)| {
+            (
+                NameP {
+                    name: name.clone(),
+                    range: expr.range(),
+                },
+                LocalName {
+                    location: LocalVariableLocation::Argument,
+                    ty: bound_variable.var_type.clone(),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    substitute_outer(
+        substitution,
+        expr,
+        source_file,
+        project_index,
+        visible_names,
+        &visible_local_names,
+    )
+}
+
+fn substitute_outer(
+    substitution: &BTreeMap<TypeVariableId, TypeVariable>,
+    expr: ExpressionT,
+    source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
+    visible_local_names: &VisibleLocalNames,
+) -> DiagnosticResult<Expression> {
+    substitute_inner(
+        substitution,
+        expr,
+        source_file,
+        project_index,
+        visible_names,
+        visible_local_names,
+    )
+    .map(|(substituted, ty)| Expression {
+        ty,
+        contents: substituted.expr,
+    })
+}
+
+fn substitute_inner(
+    substitution: &BTreeMap<TypeVariableId, TypeVariable>,
+    expr: ExpressionT,
+    source_file: &SourceFileIdentifier,
+    project_index: &ProjectIndex,
+    visible_names: &VisibleNames,
+    visible_local_names: &VisibleLocalNames,
+) -> DiagnosticResult<(SubstitutedExpression, Type)> {
     let range = expr.range();
     let ExpressionT {
         type_variable,
         contents,
+        ..
     } = expr;
 
     let (ty, mut messages) =
-        substitute_type(substitution, type_variable.clone(), source_file, range).destructure();
+        substitute_type(substitution, type_variable.into(), source_file, range).destructure();
 
     // We only want to generate one error message, all the others will just say "could not deduce type of expression".
-    messages.truncate(1);
+    // TODO: is this actually true? and anyway, don't we still want to know which expression types are not known?
+    // messages.truncate(1);
+
     if let Some(message) = messages.get_mut(0) {
         if message.help.is_empty() {
             let mut tvp = TypeVariablePrinter::new(substitution.clone());
             message.help.push(HelpMessage {
                 message: format!(
                     "best guess of expression type was {}",
-                    tvp.print(type_variable)
+                    tvp.print(type_variable.into())
                 ),
                 help_type: HelpType::Note,
                 diagnostic: Diagnostic::at(source_file, &range),
@@ -60,13 +124,46 @@ pub(crate) fn substitute(
             source_file,
             project_index,
             visible_names,
+            visible_local_names,
         )
-        .bind(|contents| DiagnosticResult::ok_with_many(Expression { ty, contents }, messages)),
+        .bind(|contents| DiagnosticResult::ok_with_many((contents, ty), messages)),
         None => DiagnosticResult::fail_many(messages),
     }
 }
 
-/// `ty` is the type of `contents`.
+pub(crate) type VisibleLocalNames = BTreeMap<NameP, LocalName>;
+
+#[derive(Debug, Clone)]
+pub(crate) struct LocalName {
+    location: LocalVariableLocation,
+    pub(crate) ty: Type,
+}
+
+/// Where was a local variable defined?
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum LocalVariableLocation {
+    Argument,
+    Local,
+}
+
+/// A substituted expression, along with a map detailing the local variables visible after this expression was executed,
+/// e.g. variables declared in `let` expressions and arguments to the function.
+struct SubstitutedExpression {
+    expr: ExpressionContents,
+    extra_names: VisibleLocalNames,
+}
+
+impl From<ExpressionContents> for SubstitutedExpression {
+    fn from(expr: ExpressionContents) -> Self {
+        Self {
+            expr,
+            extra_names: VisibleLocalNames::new(),
+        }
+    }
+}
+
+/// `ty` is the expected type of `contents`, after type coercion (eliding impls, for example).
+/// Type coercion is implemented in the MIR translation phase.
 fn substitute_contents(
     substitution: &BTreeMap<TypeVariableId, TypeVariable>,
     contents: ExpressionContentsT,
@@ -74,10 +171,10 @@ fn substitute_contents(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
     visible_names: &VisibleNames,
-) -> DiagnosticResult<ExpressionContents> {
+    visible_local_names: &VisibleLocalNames,
+) -> DiagnosticResult<SubstitutedExpression> {
     match contents {
-        ExpressionContentsT::Argument(a) => DiagnosticResult::ok(ExpressionContents::Argument(a)),
-        ExpressionContentsT::Local(a) => DiagnosticResult::ok(ExpressionContents::Local(a)),
+        ExpressionContentsT::Local(a) => DiagnosticResult::ok(ExpressionContents::Local(a).into()),
         ExpressionContentsT::Symbol {
             name,
             range,
@@ -105,79 +202,144 @@ fn substitute_contents(
                     }
                 })
                 .collect::<DiagnosticResult<Vec<Type>>>();
-            type_variables.map(|type_variables| ExpressionContents::Symbol {
-                name,
-                range,
-                type_variables,
+            type_variables.map(|type_variables| {
+                ExpressionContents::Symbol {
+                    name,
+                    range,
+                    type_variables,
+                }
+                .into()
             })
         }
-        ExpressionContentsT::Apply(l, r) => {
-            substitute(substitution, *l, source_file, project_index, visible_names).bind(|l| {
-                substitute(substitution, *r, source_file, project_index, visible_names)
-                    .map(|r| ExpressionContents::Apply(Box::new(l), Box::new(r)))
-            })
-        }
+        ExpressionContentsT::Apply(l, r) => substitute_outer(
+            substitution,
+            *l,
+            source_file,
+            project_index,
+            visible_names,
+            visible_local_names,
+        )
+        .bind(|l| {
+            {
+                substitute_outer(
+                    substitution,
+                    *r,
+                    source_file,
+                    project_index,
+                    visible_names,
+                    visible_local_names,
+                )
+                .map(|r| ExpressionContents::Apply(Box::new(l), Box::new(r)).into())
+            }
+        }),
         ExpressionContentsT::Lambda {
             lambda_token,
             params,
             expr,
-        } => substitute(
-            substitution,
-            *expr,
-            source_file,
-            project_index,
-            visible_names,
-        )
-        .bind(|expr| {
-            params
-                .into_iter()
-                .map(|(name, ty)| {
-                    substitute_type(substitution, ty, source_file, name.range).map(|ty| (name, ty))
+        } => params
+            .into_iter()
+            .map(|(name, ty)| {
+                substitute_type(substitution, ty, source_file, name.range).map(|ty| (name, ty))
+            })
+            .collect::<DiagnosticResult<_>>()
+            .bind(|params| {
+                substitute_outer(
+                    substitution,
+                    *expr,
+                    source_file,
+                    project_index,
+                    visible_names,
+                    &{
+                        let mut locals = visible_local_names.clone();
+                        locals.extend(params.iter().map(|(param_name, param_ty)| {
+                            (
+                                param_name.clone(),
+                                LocalName {
+                                    location: LocalVariableLocation::Local,
+                                    ty: param_ty.clone(),
+                                },
+                            )
+                        }));
+                        locals
+                    },
+                )
+                .map(|expr| {
+                    ExpressionContents::Lambda {
+                        lambda_token,
+                        params,
+                        expr: Box::new(expr),
+                    }
+                    .into()
                 })
-                .collect::<DiagnosticResult<_>>()
-                .map(|params| ExpressionContents::Lambda {
-                    lambda_token,
-                    params,
-                    expr: Box::new(expr),
-                })
-        }),
+            }),
         ExpressionContentsT::Let {
             let_token,
             name,
             expr,
-        } => substitute(
+        } => substitute_outer(
             substitution,
             *expr,
             source_file,
             project_index,
             visible_names,
+            visible_local_names,
         )
-        .map(|expr| ExpressionContents::Let {
-            let_token,
-            name,
-            expr: Box::new(expr),
+        .map(|expr| {
+            let mut extra_names = VisibleLocalNames::new();
+            extra_names.insert(
+                name.clone(),
+                LocalName {
+                    location: LocalVariableLocation::Local,
+                    ty: expr.ty.clone(),
+                },
+            );
+            SubstitutedExpression {
+                expr: ExpressionContents::Let {
+                    let_token,
+                    name,
+                    expr: Box::new(expr),
+                },
+                extra_names,
+            }
         }),
         ExpressionContentsT::Block {
             open_bracket,
             close_bracket,
             statements,
-        } => statements
-            .into_iter()
-            .map(|stmt| {
-                substitute(
+        } => {
+            let mut visible_local_names = visible_local_names.clone();
+            let mut statements_collated = Vec::new();
+            let mut messages = Vec::new();
+            for stmt in statements {
+                let (stmt, more_messages) = substitute_inner(
                     substitution,
                     stmt,
                     source_file,
                     project_index,
                     visible_names,
+                    &visible_local_names,
                 )
-            })
-            .collect::<DiagnosticResult<_>>()
-            .map(|statements| ExpressionContents::Block {
-                open_bracket,
-                close_bracket,
-                statements,
-            }),
+                .destructure();
+                if let Some((substituted, ty)) = stmt {
+                    statements_collated.push(Expression {
+                        ty,
+                        contents: substituted.expr,
+                    });
+                    visible_local_names.extend(substituted.extra_names);
+                }
+                messages.extend(more_messages);
+            }
+
+            DiagnosticResult::ok_with_many(
+                ExpressionContents::Block {
+                    open_bracket,
+                    close_bracket,
+                    statements: statements_collated,
+                }
+                .into(),
+                messages,
+            )
+        }
         ExpressionContentsT::ConstructData {
             data_type_name,
             variant,
@@ -187,47 +349,59 @@ fn substitute_contents(
         } => fields
             .into_iter()
             .map(|(field_name, field_expr)| {
-                substitute(
+                substitute_outer(
                     substitution,
                     field_expr,
                     source_file,
                     project_index,
                     visible_names,
+                    visible_local_names,
                 )
                 .map(|field_expr| (field_name, field_expr))
             })
             .collect::<DiagnosticResult<_>>()
-            .map(|fields| ExpressionContents::ConstructData {
-                data_type_name,
-                variant,
-                fields,
-                open_brace,
-                close_brace,
+            .map(|fields| {
+                ExpressionContents::ConstructData {
+                    data_type_name,
+                    variant,
+                    fields,
+                    open_brace,
+                    close_brace,
+                }
+                .into()
             }),
         ExpressionContentsT::ConstantValue { value, range } => {
-            DiagnosticResult::ok(ExpressionContents::ConstantValue { value, range })
+            DiagnosticResult::ok(ExpressionContents::ConstantValue { value, range }.into())
         }
-        ExpressionContentsT::Borrow { borrow_token, expr } => substitute(
+        ExpressionContentsT::Borrow { borrow_token, expr } => substitute_outer(
             substitution,
             *expr,
             source_file,
             project_index,
             visible_names,
+            visible_local_names,
         )
-        .map(|expr| ExpressionContents::Borrow {
-            borrow_token,
-            expr: Box::new(expr),
+        .map(|expr| {
+            ExpressionContents::Borrow {
+                borrow_token,
+                expr: Box::new(expr),
+            }
+            .into()
         }),
-        ExpressionContentsT::Copy { copy_token, expr } => substitute(
+        ExpressionContentsT::Copy { copy_token, expr } => substitute_outer(
             substitution,
             *expr,
             source_file,
             project_index,
             visible_names,
+            visible_local_names,
         )
-        .map(|expr| ExpressionContents::Copy {
-            copy_token,
-            expr: Box::new(expr),
+        .map(|expr| {
+            ExpressionContents::Copy {
+                copy_token,
+                expr: Box::new(expr),
+            }
+            .into()
         }),
         ExpressionContentsT::Impl {
             impl_token,
@@ -249,29 +423,33 @@ fn substitute_contents(
                 parameters,
                 implementations,
                 visible_names,
+                visible_local_names,
             )
+            .map(|contents| contents.into())
         }
         ExpressionContentsT::Match {
             match_token,
             expr,
             cases,
-        } => substitute(
+        } => substitute_outer(
             substitution,
             *expr,
             source_file,
             project_index,
             visible_names,
+            visible_local_names,
         )
         .bind(|expr| {
             cases
                 .into_iter()
                 .map(|(pattern, replacement)| {
-                    substitute(
+                    substitute_outer(
                         substitution,
                         replacement,
                         source_file,
                         project_index,
                         visible_names,
+                        visible_local_names,
                     )
                     .bind(|replacement| {
                         resolve_pattern(
@@ -285,10 +463,13 @@ fn substitute_contents(
                     })
                 })
                 .collect::<DiagnosticResult<Vec<_>>>()
-                .map(|cases| ExpressionContents::Match {
-                    match_token,
-                    expr: Box::new(expr),
-                    cases,
+                .map(|cases| {
+                    ExpressionContents::Match {
+                        match_token,
+                        expr: Box::new(expr),
+                        cases,
+                    }
+                    .into()
                 })
         }),
     }
@@ -311,6 +492,8 @@ fn resolve_pattern(
     typeck.resolve_type_pattern(visible_names, pat.clone(), ty.clone())
 }
 
+// It doesn't really make sense to try to simplify this function signature too much.
+#[allow(clippy::too_many_arguments)]
 fn typeck_impl(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
@@ -319,6 +502,7 @@ fn typeck_impl(
     parameters: &[Type],
     body: DefinitionBodyP,
     visible_names: &VisibleNames,
+    visible_local_names: &VisibleLocalNames,
 ) -> DiagnosticResult<ExpressionContents> {
     let cases = match body {
         DefinitionBodyP::PatternMatch(cases) => cases,
@@ -331,7 +515,7 @@ fn typeck_impl(
         }
     };
 
-    let aspect = &project_index[&aspect.source_file].aspects[&aspect.name];
+    let aspect = project_index.aspect(aspect);
 
     let typeck = TypeChecker {
         source_file,
@@ -339,7 +523,14 @@ fn typeck_impl(
         messages: Vec::new(),
     };
 
-    typeck.compute_impl(impl_token, aspect, parameters, cases, visible_names)
+    typeck.compute_impl(
+        impl_token,
+        aspect,
+        parameters,
+        cases,
+        visible_names,
+        visible_local_names,
+    )
 }
 
 fn substitute_type(

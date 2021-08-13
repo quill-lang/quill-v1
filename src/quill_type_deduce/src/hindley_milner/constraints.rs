@@ -1,5 +1,9 @@
-use quill_common::{location::Range, name::QualifiedName};
+use quill_common::{
+    location::{Range, SourceFileIdentifier},
+    name::QualifiedName,
+};
 use quill_parser::identifier::{IdentifierP, NameP};
+use quill_type::Type;
 
 use crate::hir::expr::TypeVariable;
 
@@ -68,12 +72,25 @@ pub(crate) enum ConstraintEqualityReason {
         let_token: Range,
         expression: Range,
     },
+    /// This constraint was the return value of a let expression, and thus is the unit type.
+    LetResult {
+        let_token: Range,
+    },
+    /// The expression was a literal of a specific type.
+    Literal {
+        /// The expression we're type checking.
+        expr: Range,
+        /// The known type of this literal.
+        ty: Type,
+    },
     /// The expression was defined to be a specific type.
     ByDefinition {
         /// The expression we're type checking.
         expr: Range,
         /// The definition that shows what type it must have.
+        definition_source: SourceFileIdentifier,
         definition: Range,
+        high_priority: bool,
     },
     /// The expression was used as a field in a data constructor, and we know the type of the field.
     Field {
@@ -129,6 +146,10 @@ pub(crate) enum ConstraintEqualityReason {
         match_token: Range,
         first_arm: Range,
         relevant_arm: Range,
+    },
+    /// This constraint was generated as a result of constructing a type literally.
+    Construct {
+        expression: Range,
     },
     FieldAccess(ConstraintFieldAccessReason),
 }

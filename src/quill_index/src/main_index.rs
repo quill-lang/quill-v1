@@ -2,13 +2,17 @@
 //! storing type information. The module index is sufficient to determine the type
 //! of any expression.
 
-use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
+use std::{
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
+    fmt::Display,
+};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
     location::{
         ModuleIdentifier, Range, SourceFileIdentifier, SourceFileIdentifierSegment, SourceFileType,
     },
+    name::QualifiedName,
 };
 use quill_parser::{file::FileP, identifier::NameP};
 use quill_type::Type;
@@ -27,7 +31,113 @@ pub struct FileIndex {
     pub aspects: BTreeMap<String, AspectI>,
 }
 
-pub type ProjectIndex = BTreeMap<SourceFileIdentifier, FileIndex>;
+#[derive(Debug)]
+pub struct ProjectIndex {
+    files: BTreeMap<SourceFileIdentifier, FileIndex>,
+    default_impls: DefaultImpls,
+}
+
+/// Tracks the definitions in a project which are marked as "default".
+#[derive(Debug)]
+pub struct DefaultImpls {
+    /// Maps names of impls to a set of definition names.
+    /// Each definition listed here has the type impl -> impl -> ... -> T
+    /// where T is the name of the impl that is the key in this map.
+    impls: BTreeMap<QualifiedName, BTreeSet<QualifiedName>>,
+}
+
+impl ProjectIndex {
+    pub(crate) fn new(files: BTreeMap<SourceFileIdentifier, FileIndex>) -> DiagnosticResult<Self> {
+        collate_default_impls(&files).map(|default_impls| Self {
+            files,
+            default_impls,
+        })
+    }
+
+    pub fn is_file_indexed(&self, file: &SourceFileIdentifier) -> bool {
+        self.files.contains_key(file)
+    }
+
+    pub fn get_file_index(&self, file: &SourceFileIdentifier) -> &FileIndex {
+        &self.files[file]
+    }
+
+    pub fn type_decl(&self, name: &QualifiedName) -> &TypeDeclarationI {
+        &self.files[&name.source_file].types[&name.name]
+    }
+
+    pub fn definition(&self, name: &QualifiedName) -> &DefinitionI {
+        &self.files[&name.source_file].definitions[&name.name]
+    }
+
+    pub fn aspect(&self, name: &QualifiedName) -> &AspectI {
+        &self.files[&name.source_file].aspects[&name.name]
+    }
+
+    pub fn default_impls(&self, name: &QualifiedName) -> &BTreeSet<QualifiedName> {
+        &self.default_impls.impls[name]
+    }
+}
+
+/// Searches each file for definitions marked with "default" and
+/// collates them into this list.
+/// Any definitions which are not of the type impl -> impl -> ... -> T
+/// will be discarded, and an error message raised.
+fn collate_default_impls(
+    files: &BTreeMap<SourceFileIdentifier, FileIndex>,
+) -> DiagnosticResult<DefaultImpls> {
+    let mut messages = Vec::new();
+    let mut impls = BTreeMap::<QualifiedName, BTreeSet<QualifiedName>>::new();
+    for (source_file, index) in files {
+        for (def_name, def) in &index.definitions {
+            if let Some(range) = def.default {
+                // First, check if this is a valid "default" definition.
+                let mut result_type = def.symbol_type.clone();
+                loop {
+                    match result_type {
+                        Type::Function(l, r) => {
+                            // Check if the left-hand type was an impl.
+                            if !matches!(&*l, Type::Impl { .. }) {
+                                messages.push(ErrorMessage::new(
+                                    format!(
+                                        "arguments to a `default` function can only be impls, but there was an argument of type {}",
+                                        l,
+                                    ),
+                                    Severity::Error,
+                                    Diagnostic::at(source_file, &range),
+
+                                ));
+                                break;
+                            }
+                            result_type = *r;
+                        }
+                        Type::Impl { name, .. } => {
+                            // This was a valid "default" definition.
+                            impls.entry(name).or_default().insert(QualifiedName {
+                                source_file: source_file.clone(),
+                                name: def_name.clone(),
+                                range,
+                            });
+                            break;
+                        }
+                        other => {
+                            messages.push(ErrorMessage::new(
+                                format!(
+                                    "type of `default` function can only be an impl, but found type {}",
+                                    other,
+                                ),
+                                Severity::Error,
+                                Diagnostic::at(source_file, &range),
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    DiagnosticResult::ok_with_many(DefaultImpls { impls }, messages)
+}
 
 /// A type declaration, e.g. `data Bool = True | False`.
 #[derive(Debug)]
@@ -77,6 +187,8 @@ pub struct TypeConstructorI {
 /// TODO: In the future, we will need to add a list of constraints to definitions and data blocks.
 #[derive(Debug)]
 pub struct DefinitionI {
+    /// If this definition was marked "default", the range of this token is given here.
+    pub default: Option<Range>,
     pub name: NameP,
     pub type_variables: Vec<TypeParameter>,
     pub symbol_type: Type,
@@ -88,6 +200,16 @@ pub struct TypeParameter {
     /// A type variable may have one or more unnamed parameters, e.g. `F[_]` is a common type for a functor.
     /// This field stores how many such parameters the type variable has.
     pub parameters: u32,
+}
+
+impl Display for TypeParameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)?;
+        if self.parameters > 0 {
+            write!(f, "[{}]", self.parameters)?;
+        }
+        Ok(())
+    }
 }
 
 /// An aspect.
@@ -235,7 +357,7 @@ fn compute_visible_types_and_aspects<'a>(
 }
 
 /// Computes the index for a file.
-pub fn index(
+pub(crate) fn index(
     source_file: &SourceFileIdentifier,
     file_parsed: &FileP,
     project_types: &ProjectTypesAspectsC,
@@ -280,6 +402,7 @@ pub fn index(
                 messages.append(&mut inner_messages);
                 if let Some(symbol_type) = symbol_type {
                     let definition = DefinitionI {
+                        default: definition.decl.default,
                         name: definition.decl.name.clone(),
                         type_variables: definition
                             .decl
@@ -472,6 +595,7 @@ pub fn index(
                             &visible_types,
                         )
                         .map(|symbol_type| DefinitionI {
+                            default: None,
                             name: def.name.clone(),
                             type_variables: def
                                 .type_parameters

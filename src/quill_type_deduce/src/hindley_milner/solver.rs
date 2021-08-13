@@ -1,4 +1,7 @@
-use std::collections::{btree_map::Entry, BTreeMap, VecDeque};
+use std::{
+    collections::{btree_map::Entry, BTreeMap, VecDeque},
+    ops::DerefMut,
+};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -7,7 +10,7 @@ use quill_common::{
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 
 use crate::{
-    hir::expr::{Expression, ExpressionT, TypeVariable},
+    hir::expr::{BoundVariable, Expression, ExpressionContentsT, ExpressionT, TypeVariable},
     index_resolve::instantiate_with,
     type_check::{TypeVariablePrinter, VisibleNames},
     type_resolve::TypeVariableId,
@@ -26,12 +29,21 @@ use super::{
 pub(crate) fn solve_type_constraints(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
-    expr: ExpressionT,
+    mut expr: ExpressionT,
     constraints: Constraints,
     visible_names: &VisibleNames,
+    args: &BTreeMap<String, BoundVariable>,
 ) -> DiagnosticResult<Expression> {
-    // println!("Deducing type of {:#?}", expr);
-    // println!("Constraints: {:#?}", constraints);
+    // First, compute which expressions are listed as "explicit",
+    // and store the list so that we can keep track of it while unifying variables.
+    // TODO: This list is used to make explicit `@` calls work when the thing we're calling is
+    // not a global definition. For instance, calling `a -> impl -> b` with an object of type `a` should
+    // automatically return a `b`, unless `@` was provided.
+    let _explicit_vars = find_explicit_vars(&mut expr);
+
+    // eprintln!("Deducing type of {:#?}", expr);
+    // eprintln!("Constraints: {:#?}", constraints);
+    // eprintln!("Explicit: {:#?}", explicit_vars);
 
     // We implement the `SOLVE` algorithm from the above paper.
     // The substitutions are defined to be idempotent, so a map instead of an ordered vec shall suffice.
@@ -45,8 +57,12 @@ pub(crate) fn solve_type_constraints(
                 ConstraintEqualityReason::LambdaType { .. } => {
                     high_priority_constraints.push_back(constraint)
                 }
-                ConstraintEqualityReason::ByDefinition { .. } => {
-                    low_priority_constraints.push_back(constraint)
+                ConstraintEqualityReason::ByDefinition { high_priority, .. } => {
+                    if *high_priority {
+                        high_priority_constraints.push_back(constraint)
+                    } else {
+                        low_priority_constraints.push_back(constraint)
+                    }
                 }
                 _ => mid_priority_constraints.push_back(constraint),
             },
@@ -87,8 +103,67 @@ pub(crate) fn solve_type_constraints(
             source_file,
             project_index,
             visible_names,
+            args,
         )
     })
+}
+
+/// Returns a map which maps type variable IDs marked explicit to the `@` token.
+/// If an expression was found which was not marked explicit, but its type contains a impl -> T function,
+/// then the impl argument is stripped.
+fn find_explicit_vars(expr: &mut ExpressionT) -> BTreeMap<TypeVariableId, Range> {
+    let mut map = BTreeMap::new();
+    if let Some(range) = expr.explicit_token {
+        // Add it to the map, so that when we know what the actual value of id is,
+        // we won't remove the impl args when substituting.
+        map.insert(expr.type_variable, range);
+        if !matches!(expr.contents, ExpressionContentsT::Symbol { .. }) {
+            panic!("type deduction does not work for explicit values that are not symbols");
+        }
+    }
+
+    // Recursively scan the expression contents.
+    match &mut expr.contents {
+        ExpressionContentsT::Local(_) => {}
+        ExpressionContentsT::Symbol { .. } => {}
+        ExpressionContentsT::Apply(l, r) => {
+            map.extend(find_explicit_vars(l.deref_mut()));
+            map.extend(find_explicit_vars(r.deref_mut()));
+        }
+        ExpressionContentsT::Lambda { expr, .. } => {
+            map.extend(find_explicit_vars(expr.deref_mut()))
+        }
+        ExpressionContentsT::Let { expr, .. } => map.extend(find_explicit_vars(expr.deref_mut())),
+        ExpressionContentsT::Block { statements, .. } => {
+            map.extend(statements.iter_mut().map(find_explicit_vars).flatten())
+        }
+        ExpressionContentsT::ConstructData { fields, .. } => map.extend(
+            fields
+                .iter_mut()
+                .map(|(_, expr)| expr)
+                .map(find_explicit_vars)
+                .flatten(),
+        ),
+        ExpressionContentsT::ConstantValue { .. } => {}
+        ExpressionContentsT::Borrow { expr, .. } => {
+            map.extend(find_explicit_vars(expr.deref_mut()))
+        }
+        ExpressionContentsT::Copy { expr, .. } => map.extend(find_explicit_vars(expr.deref_mut())),
+        ExpressionContentsT::Impl { .. } => {
+            // Impl contents are scanned in a separate parse step.
+        }
+        ExpressionContentsT::Match { expr, cases, .. } => map.extend(
+            find_explicit_vars(expr.deref_mut()).into_iter().chain(
+                cases
+                    .iter_mut()
+                    .map(|(_, expr)| expr)
+                    .map(find_explicit_vars)
+                    .flatten(),
+            ),
+        ),
+    }
+
+    map
 }
 
 fn solve_type_constraint_queue(
@@ -97,12 +172,16 @@ fn solve_type_constraint_queue(
     mut constraint_queue: VecDeque<(TypeVariable, Constraint)>,
     mut substitution: BTreeMap<TypeVariableId, TypeVariable>,
 ) -> DiagnosticResult<BTreeMap<TypeVariableId, TypeVariable>> {
-    //dbg!(&constraint_queue);
+    // dbg!(constraint_queue.len());
+    // Track how many times we've skipped a constraint and pushed it back on the constraint queue,
+    // since we last removed a constraint.
+    let mut amount_of_skips = 0usize;
     while let Some((type_variable, constraint)) = constraint_queue.pop_front() {
         // println!(
         //     "Solving constraint {:#?} => {:#?}",
         //     type_variable, constraint
         // );
+        let mut skipped = false;
         match constraint {
             Constraint::Equality { ty: other, reason } => {
                 // This constraint specifies that `type_variable === other`.
@@ -158,7 +237,7 @@ fn solve_type_constraint_queue(
                     TypeVariable::Named { name, parameters } => {
                         // We know what type we're accessing.
                         // Look up the fields in the project index.
-                        match &project_index[&name.source_file].types[&name.name].decl_type {
+                        match &project_index.type_decl(&name).decl_type {
                             TypeDeclarationTypeI::Data(datai) => {
                                 if let Some((_field_name, field_ty)) = datai
                                     .type_ctor
@@ -230,7 +309,7 @@ fn solve_type_constraint_queue(
                         }
                     }
                     TypeVariable::Impl { name, parameters } => {
-                        let aspecti = &project_index[&name.source_file].aspects[&name.name];
+                        let aspecti = project_index.aspect(&name);
                         if let Some(def) = aspecti.definitions.iter().find(|def| def.name == field)
                         {
                             let field_ty = instantiate_with(
@@ -253,8 +332,6 @@ fn solve_type_constraint_queue(
                         }
                     }
                     TypeVariable::Unknown { id } => {
-                        // FIXME: This might enter an infinite loop if we can't deduce the type
-                        // of the variable whose field we are accessing.
                         constraint_queue.push_back((
                             type_variable,
                             Constraint::FieldAccess {
@@ -264,6 +341,7 @@ fn solve_type_constraint_queue(
                                 reason,
                             },
                         ));
+                        skipped = true;
                     }
                     ty => {
                         // This was not the right type; we need a data or enum type in order to access fields.
@@ -284,6 +362,18 @@ fn solve_type_constraint_queue(
                     }
                 }
             }
+        }
+
+        if skipped {
+            amount_of_skips += 1;
+        } else {
+            amount_of_skips = 0;
+        }
+
+        if amount_of_skips >= constraint_queue.len() {
+            // We can't solve any of the constraints in the queue.
+            // Just break and show error messages.
+            break;
         }
     }
 
@@ -380,13 +470,18 @@ fn process_constraint_reason(
             ];
             (function_range, messages)
         }
-        ConstraintEqualityReason::ByDefinition { expr, definition } => {
+        ConstraintEqualityReason::ByDefinition {
+            expr,
+            definition_source,
+            definition,
+            high_priority: _,
+        } => {
             let messages = vec![HelpMessage {
                 message: String::from(
                     "error was raised because this expression's type was defined here",
                 ),
                 help_type: HelpType::Note,
-                diagnostic: Diagnostic::at(source_file, &definition),
+                diagnostic: Diagnostic::at(&definition_source, &definition),
             }];
             (expr, messages)
         }

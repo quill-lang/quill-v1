@@ -312,6 +312,7 @@ impl SemanticTokenGenerator {
                     self.gen_expr(replacement, conditions.clone());
                 }
             }
+            ExprPatP::Explicit { expr, .. } => self.gen_expr(*expr, conditions),
         }
     }
 }
@@ -360,6 +361,7 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             result
         }
         ExprPatP::Match { .. } => unreachable!(),
+        ExprPatP::Explicit { expr, .. } => get_named_parameters(&*expr, is_main_pattern),
     }
 }
 

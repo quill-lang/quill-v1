@@ -47,7 +47,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
         &invocation.build_info.code_folder,
     );
 
-    println!("status found source files");
+    println!("status lexing source files");
 
     let lexed = {
         let mut results = Vec::new();
@@ -60,7 +60,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
             .deny()
     };
 
-    println!("status lexed sources");
+    println!("status parsing source files");
 
     let fs2 = Arc::clone(&fs);
     let build_info = invocation.build_info.clone();
@@ -74,15 +74,18 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
             .deny()
         });
 
+        println!("status indexing project");
+
         parsed
             .bind(|parsed| {
                 quill_index::index_project(&parsed).bind(|index| {
+                    println!("status run type deduction");
                     // Now that we have the index, run type deduction and MIR generation.
                     DiagnosticResult::sequence_unfail(parsed.into_iter().map(
                         |(file_ident, parsed)| {
                             quill_type_deduce::check(&file_ident, &index, parsed)
                                 .deny()
-                                .map(|typeck| {
+                                .bind(|typeck| {
                                     // Output the HIR to a build file.
                                     let f = build_info.build_folder.join("ir").join(
                                         fs2.file_path(&file_ident)
@@ -96,15 +99,16 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
                                         std::fs::write(f.with_extension("hir"), typeck.to_string())
                                             .unwrap();
                                     }
-                                    let mir = quill_mir::to_mir(&index, typeck, &file_ident);
-                                    if build_info.emit_mir {
-                                        std::fs::write(
-                                            f.with_extension("basic.mir"),
-                                            mir.to_string(),
-                                        )
-                                        .unwrap();
-                                    }
-                                    mir
+                                    quill_mir::to_mir(&index, typeck, &file_ident).map(|mir| {
+                                        if build_info.emit_mir {
+                                            std::fs::write(
+                                                f.with_extension("basic.mir"),
+                                                mir.to_string(),
+                                            )
+                                            .unwrap();
+                                        }
+                                        mir
+                                    })
                                 })
                                 .bind(|mir| quill_borrow_check::borrow_check(&file_ident, mir))
                                 .map(|mir| {
@@ -147,8 +151,6 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
             .bind(|mir| validate(&mir).map(|_| mir))
     };
 
-    println!("status generated mir");
-
     // Emit the error messages to the user.
 
     let (mir, messages) = mir.destructure();
@@ -189,6 +191,7 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
 
 /// Perform some basic validation that must pass in order to complete monomorphisation and code emission.
 fn validate(mir: &ProjectMIR) -> DiagnosticResult<()> {
+    println!("status validating mir");
     if let Some(file) = mir.files.get(&mir.entry_point.source_file) {
         if let Some(main) = file.definitions.get("main") {
             // Check that the main function has the correct signature.

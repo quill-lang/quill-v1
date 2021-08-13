@@ -1,4 +1,3 @@
-- Make `ProjectTypes` a real struct so that we can abstract away the code to retrieve a named type or definition.
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
 - Decide what terms to use for high level constructs: project, package, module, crate, binary...?
@@ -8,3 +7,4 @@
 - Implement pattern exhaustiveness check *in MIR*.
 - Try using symbol names `+, -` etc in weird places e.g. type parameters, to see what breaks.
 - Remove brackets around definitions (and the `def` keyword) to make it more like other functional languages.
+- Remove TypeVariable and replace with TypeVariableId wherever possible in type deduction algorithm.

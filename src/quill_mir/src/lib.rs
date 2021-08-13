@@ -3,13 +3,16 @@
 
 mod definition;
 mod expr;
+mod impls;
 pub mod mir;
 mod pattern_match;
 mod validate;
 
 use std::{collections::BTreeMap, fmt::Display};
 
-use quill_common::{location::SourceFileIdentifier, name::QualifiedName};
+use quill_common::{
+    diagnostic::DiagnosticResult, location::SourceFileIdentifier, name::QualifiedName,
+};
 use quill_index::ProjectIndex;
 use quill_type_deduce::hir::SourceFileHIR;
 
@@ -50,37 +53,45 @@ pub fn to_mir(
     project_index: &ProjectIndex,
     file: SourceFileHIR,
     source_file: &SourceFileIdentifier,
-) -> SourceFileMIR {
-    let definitions = file
-        .definitions
-        .into_iter()
-        .map(|(def_name, def)| {
-            let (def, inner_defs) =
-                definition::to_mir_def(project_index, def, source_file, def_name.as_str(), &mut 0);
-            std::iter::once((def_name.clone(), def)).chain(
-                inner_defs
-                    .into_iter()
-                    .enumerate()
-                    .map(move |(i, def)| (format!("{}/lambda/{}", &def_name, i), def)),
-            )
-        })
-        .flatten()
-        .collect();
+) -> DiagnosticResult<SourceFileMIR> {
+    let definitions =
+        file.definitions
+            .into_iter()
+            .map(|(def_name, def)| {
+                definition::to_mir_def(project_index, def, source_file, def_name.as_str(), &mut 0)
+                    .map(|(def, inner_defs)| {
+                        std::iter::once((def_name.clone(), def)).chain(
+                            inner_defs
+                                .into_iter()
+                                .enumerate()
+                                .map(move |(i, def)| (format!("{}/lambda/{}", &def_name, i), def)),
+                        )
+                    })
+            })
+            .collect::<DiagnosticResult<Vec<_>>>();
 
-    let result = SourceFileMIR { definitions };
-    if let Err(err) = validate::validate(project_index, source_file, &result) {
-        panic!(
-            "mir failed to validate in def {} at {} {}: {}\n{}",
-            err.def_name,
-            err.block_id,
-            if let Some(stmt) = err.statement_id {
-                format!("st{}", stmt)
-            } else {
-                "term".to_string()
-            },
-            err.message,
-            result
-        );
-    }
-    result
+    definitions.deny().map(|definitions| {
+        let definitions = definitions
+            .into_iter()
+            .flatten()
+            .collect::<BTreeMap<_, _>>();
+        let result = SourceFileMIR { definitions };
+        // Uncomment this if the `validate` function itself panics.
+        // eprintln!("{}", result);
+        if let Err(err) = validate::validate(project_index, source_file, &result) {
+            panic!(
+                "mir failed to validate in def {} at {} {}: {}\n{}",
+                err.def_name,
+                err.block_id,
+                if let Some(stmt) = err.statement_id {
+                    format!("st{}", stmt)
+                } else {
+                    "term".to_string()
+                },
+                err.message,
+                result
+            );
+        }
+        result
+    })
 }

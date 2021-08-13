@@ -24,14 +24,16 @@ pub enum TokenType {
     Scope,
     /// `|`
     TypeOr,
-    /// '\'
+    /// `\`
     Lambda,
-    /// ',' or '\n' after certain characters
+    /// `,` or `\n` after certain characters
     EndOfLine {
         explicit: bool,
     },
-    /// &
+    /// `&`
     Borrow,
+    /// `@`
+    Explicit,
 
     LeftParenthesis,
     RightParenthesis,
@@ -49,7 +51,7 @@ pub enum TokenType {
     Use,
     Aspect,
     Impl,
-    /// TODO convert the `copy` keyword into a function in a `Copy` trait
+    Default,
     Copy,
     Match,
     CompilerIntrinsic,
@@ -506,6 +508,7 @@ fn token_type_alphabetic(s: String) -> TokenType {
         "use" => TokenType::Use,
         "aspect" => TokenType::Aspect,
         "impl" => TokenType::Impl,
+        "default" => TokenType::Default,
         "copy" => TokenType::Copy,
         "match" => TokenType::Match,
         "compiler_intrinsic" => TokenType::CompilerIntrinsic,
@@ -528,6 +531,7 @@ fn token_type_symbol(s: String) -> TokenType {
         "\\" => TokenType::Lambda,
         "," => TokenType::EndOfLine { explicit: true },
         "&" => TokenType::Borrow,
+        "@" => TokenType::Explicit,
         _ => TokenType::Name(s),
     }
 }
