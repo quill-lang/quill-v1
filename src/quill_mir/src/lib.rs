@@ -3,10 +3,10 @@
 
 mod definition;
 mod expr;
+mod impls;
 pub mod mir;
 mod pattern_match;
 mod validate;
-mod impls;
 
 use std::{collections::BTreeMap, fmt::Display};
 
@@ -76,6 +76,8 @@ pub fn to_mir(
             .flatten()
             .collect::<BTreeMap<_, _>>();
         let result = SourceFileMIR { definitions };
+        // Uncomment this if the `validate` function itself panics.
+        // eprintln!("{}", result);
         if let Err(err) = validate::validate(project_index, source_file, &result) {
             panic!(
                 "mir failed to validate in def {} at {} {}: {}\n{}",

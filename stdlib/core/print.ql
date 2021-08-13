@@ -34,28 +34,39 @@ def print_show[T]: impl Show[T] -> impl Print[T] {
     }
 }
 
+def id[T]: T -> T {
+    id x = x
+}
+
+def default show_list: impl Show[List[Int]] {
+    show_list = impl {
+        show = id
+    }
+}
+
 def default print_list: impl Print[List[Int]] {
-    print_list = impl {
-        print = for_each putchar
+    print_list = print_show
+}
+
+def default show_int: impl Show[Int] {
+    show_int = impl {
+        show = show_int_inner
     }
 }
 
 def default print_int: impl Print[Int] {
-    print_int = impl {
-        print = print_int_inner
-    }
+    print_int = print_show
 }
 
-def print_int_inner: Int -> Unit {
-    print_int_inner n = (
+def show_int_inner: Int -> List[Int] {
+    show_int_inner n = (
         let n2 = copy &n
         if ((copy &n) >= 10) (\a -> (
             let quot = (copy &n) / 10
             let rem = n - (copy &quot) * 10
-            print quot
-            print rem
+            concat (show quot) (show rem)
         )) (\a ->
-            putchar (n2 + 48)
+            (n2 + 48) :- empty
         )
     )
 }

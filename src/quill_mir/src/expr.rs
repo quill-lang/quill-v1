@@ -1,6 +1,6 @@
 //! Creates MIR expressions from HIR expressions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use quill_common::{
     diagnostic::DiagnosticResult,
@@ -308,7 +308,8 @@ fn coerce(
         if let Type::Impl { name, parameters } = *l {
             // Check if there exists a default impl.
             let (val, more_messages) =
-                find_and_apply_default_impl(ctx, range, &name, parameters, &expr, coerce_block).destructure();
+                find_and_apply_default_impl(ctx, range, &name, parameters, &expr, coerce_block)
+                    .destructure();
             messages.extend(more_messages);
             if let Some(val) = val {
                 expr = val;
@@ -908,8 +909,54 @@ fn generate_expr_impl(
 
     implementations
         .into_iter()
-        .map(|(name, def)| {
-            def_numbers.push((name, *ctx.lambda_number));
+        .map(|(name, mut def)| {
+            let body = if let DefinitionBody::PatternMatch(body) = def.body {
+                body
+            } else {
+                panic!("cannot have intrinsic body in impl")
+            };
+            let mut used_variables = body
+                .iter()
+                .map(|case| list_used_locals(&case.replacement))
+                .flatten()
+                .collect::<Vec<_>>();
+            let arg_names = body
+                .iter()
+                .map(|case| case.arg_patterns.iter().map(bound_variable_names))
+                .flatten()
+                .flatten()
+                .collect::<BTreeSet<_>>();
+            used_variables.retain(|name| !arg_names.contains(name));
+            used_variables.sort_by(|a, b| a.name.cmp(&b.name));
+            used_variables.dedup();
+            let arg_types = used_variables
+                .iter()
+                .map(|name| ctx.locals[&ctx.get_name_of_local(&name.name)].ty.clone());
+
+            // Reconstruct the def body, adding the new args to each case.
+            def.body = DefinitionBody::PatternMatch(
+                body.into_iter()
+                    .map(|mut case| {
+                        for used_variable in used_variables.iter().rev() {
+                            case.arg_patterns
+                                .insert(0, Pattern::Named(used_variable.clone()));
+                        }
+                        case
+                    })
+                    .collect(),
+            );
+            for used_variable_ty in arg_types.into_iter().rev() {
+                def.arg_types.insert(0, used_variable_ty);
+            }
+            def.type_variables = ctx
+                .type_variables
+                .iter()
+                .cloned()
+                .chain(def.type_variables)
+                .collect();
+
+            let lambda_number = *ctx.lambda_number;
+            def_numbers.push((name.clone(), lambda_number));
             *ctx.lambda_number += 1;
             to_mir_def(
                 ctx.project_index,
@@ -919,33 +966,41 @@ fn generate_expr_impl(
                 ctx.lambda_number,
             )
             .map(|(inner, inner_inner)| {
+                let mut original_def_ty = inner.return_type.clone();
+                for i in ((used_variables.len() as u64)..inner.arity).rev() {
+                    original_def_ty = Type::Function(
+                        Box::new(
+                            inner.local_variable_names
+                                [&LocalVariableName::Argument(ArgumentIndex(i))]
+                                .ty
+                                .clone(),
+                        ),
+                        Box::new(original_def_ty),
+                    );
+                }
+
                 ctx.additional_definitions.push(inner);
                 ctx.additional_definitions.extend(inner_inner);
-            })
-        })
-        .collect::<DiagnosticResult<Vec<_>>>()
-        .map(|_| {
-            let mut statements = Vec::new();
-            let mut definitions = BTreeMap::new();
-            let variable = ctx.new_local_variable(LocalVariableInfo {
-                range,
-                ty,
-                name: None,
-            });
-            for ((def_name, def_number), def_type) in def_numbers.into_iter().zip(def_types) {
-                let def_variable = ctx.new_local_variable(LocalVariableInfo {
+
+                let mut curry_types = vec![original_def_ty];
+                for var in &used_variables {
+                    curry_types.push(Type::Function(
+                        Box::new(ctx.locals[&ctx.get_name_of_local(&var.name)].ty.clone()),
+                        Box::new(curry_types.last().unwrap().clone()),
+                    ));
+                }
+                let mut statements = Vec::new();
+                let mut variable = ctx.new_local_variable(LocalVariableInfo {
                     range,
-                    ty: def_type,
+                    ty: curry_types.pop().unwrap(),
                     name: None,
                 });
-                definitions.insert(def_name, LocalVariableName::Local(def_variable));
-
                 statements.push(Statement {
                     range,
                     kind: StatementKind::InstanceSymbol {
                         name: QualifiedName {
                             source_file: ctx.source_file.clone(),
-                            name: format!("{}/lambda/{}", ctx.def_name, def_number),
+                            name: format!("{}/lambda/{}", ctx.def_name, lambda_number),
                             range,
                         },
                         type_variables: ctx
@@ -956,10 +1011,54 @@ fn generate_expr_impl(
                                 parameters: Vec::new(),
                             })
                             .collect(),
-                        target: LocalVariableName::Local(def_variable),
+                        target: LocalVariableName::Local(variable),
                     },
                 });
-            }
+                for (local, ty) in used_variables
+                    .into_iter()
+                    .zip(curry_types.into_iter().rev())
+                {
+                    // Apply the variable to this local.
+                    let next_variable = ctx.new_local_variable(LocalVariableInfo {
+                        range,
+                        ty: ty.clone(),
+                        name: None,
+                    });
+                    statements.push(Statement {
+                        range,
+                        kind: StatementKind::Apply {
+                            argument: Box::new(Rvalue::Move(Place {
+                                local: ctx.get_name_of_local(&local.name),
+                                projection: Vec::new(),
+                            })),
+                            function: Box::new(Rvalue::Move(Place {
+                                local: LocalVariableName::Local(variable),
+                                projection: Vec::new(),
+                            })),
+                            target: LocalVariableName::Local(next_variable),
+                            return_type: ty,
+                            argument_type: ctx.locals[&ctx.get_name_of_local(&local.name)]
+                                .ty
+                                .clone(),
+                        },
+                    });
+                    variable = next_variable;
+                }
+
+                ((name, LocalVariableName::Local(variable)), statements)
+            })
+        })
+        .collect::<DiagnosticResult<Vec<_>>>()
+        .map(|statements| {
+            let (definitions, statements): (BTreeMap<_, _>, Vec<_>) =
+                statements.into_iter().unzip();
+            let mut statements = statements.into_iter().flatten().collect::<Vec<_>>();
+            let variable = ctx.new_local_variable(LocalVariableInfo {
+                range,
+                ty,
+                name: None,
+            });
+
             statements.push(Statement {
                 range,
                 kind: StatementKind::ConstructImpl {
@@ -978,6 +1077,26 @@ fn generate_expr_impl(
                 variable: LocalVariableName::Local(variable),
             }
         })
+}
+
+fn bound_variable_names(pat: &Pattern) -> Vec<NameP> {
+    match pat {
+        Pattern::Named(name) => vec![name.clone()],
+        Pattern::Constant { .. } => Vec::new(),
+        Pattern::TypeConstructor { fields, .. } => fields
+            .iter()
+            .map(|(_, _, pat)| bound_variable_names(pat))
+            .flatten()
+            .collect(),
+        Pattern::Impl { fields, .. } => fields
+            .iter()
+            .map(|(_, _, pat)| bound_variable_names(pat))
+            .flatten()
+            .collect(),
+        Pattern::Function { args, .. } => args.iter().map(bound_variable_names).flatten().collect(),
+        Pattern::Borrow { borrowed, .. } => bound_variable_names(&*borrowed),
+        Pattern::Unknown(_) => Vec::new(),
+    }
 }
 
 fn generate_expr_match(

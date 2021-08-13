@@ -2,7 +2,10 @@
 //! storing type information. The module index is sufficient to determine the type
 //! of any expression.
 
-use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
+use std::{
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
+    fmt::Display,
+};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
@@ -197,6 +200,16 @@ pub struct TypeParameter {
     /// A type variable may have one or more unnamed parameters, e.g. `F[_]` is a common type for a functor.
     /// This field stores how many such parameters the type variable has.
     pub parameters: u32,
+}
+
+impl Display for TypeParameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)?;
+        if self.parameters > 0 {
+            write!(f, "[{}]", self.parameters)?;
+        }
+        Ok(())
+    }
 }
 
 /// An aspect.

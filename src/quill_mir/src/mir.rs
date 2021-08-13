@@ -76,6 +76,11 @@ impl Ranged for DefinitionM {
 impl Display for DefinitionM {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "arity: {}", self.arity)?;
+        write!(f, "type variables:")?;
+        for type_variable in &self.type_variables {
+            write!(f, " {}", type_variable)?;
+        }
+        writeln!(f)?;
         for (var, info) in &self.local_variable_names {
             writeln!(f, "    {} >> let {}: {}", info.range, var, info)?;
         }

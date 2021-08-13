@@ -51,13 +51,12 @@ impl DefinitionTranslationContext<'_> {
             self.local_name_map
                 .insert(name, LocalVariableName::Local(id));
         }
-        self.locals
-            .insert(LocalVariableName::Local(id), info);
+        self.locals.insert(LocalVariableName::Local(id), info);
         id
     }
 
     pub fn get_name_of_local(&self, local: &str) -> LocalVariableName {
-        // println!("Local: {}, Map: {:#?}", local, self.local_name_map);
+        // eprintln!("Local: {}, Map: {:#?}", local, self.local_name_map);
         self.local_name_map[local]
     }
 }
