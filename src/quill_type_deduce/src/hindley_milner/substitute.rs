@@ -174,9 +174,6 @@ fn substitute_contents(
     visible_local_names: &VisibleLocalNames,
 ) -> DiagnosticResult<SubstitutedExpression> {
     match contents {
-        ExpressionContentsT::Argument(a) => {
-            DiagnosticResult::ok(ExpressionContents::Argument(a).into())
-        }
         ExpressionContentsT::Local(a) => DiagnosticResult::ok(ExpressionContents::Local(a).into()),
         ExpressionContentsT::Symbol {
             name,

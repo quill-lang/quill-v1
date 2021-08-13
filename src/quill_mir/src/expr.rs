@@ -29,7 +29,6 @@ use crate::{
 /// This sets up slots for all local variables that are defined in this expression.
 pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Expression) {
     match &expr.contents {
-        ExpressionContents::Argument(_) => {}
         ExpressionContents::Local(_) => {}
         ExpressionContents::Symbol { .. } => {}
         ExpressionContents::Apply(left, right) => {
@@ -77,7 +76,6 @@ pub(crate) struct ExprGeneratedM {
 /// Creates a list of all local or argument variables used inside this expression.
 fn list_used_locals(expr: &Expression) -> Vec<NameP> {
     match &expr.contents {
-        ExpressionContents::Argument(arg) => vec![arg.clone()],
         ExpressionContents::Local(local) => vec![local.clone()],
         ExpressionContents::Symbol { .. } => Vec::new(),
         ExpressionContents::Apply(l, r) => {
@@ -133,21 +131,6 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
         }
         ExpressionContents::Match { .. } => todo!(),
     }
-}
-
-/// If we're in a lambda, we might need to use some captured local variables.
-/// However, they aren't considered local variables any more; they're really arguments
-/// passed to the expanded lambda. So we need to convert these locals into arguments.
-fn convert_locals_to_args(mut expr: Expression, locals: Vec<NameP>) -> Expression {
-    if let ExpressionContents::Local(l) = &expr.contents {
-        for local in &locals {
-            if local.name == l.name {
-                expr.contents = ExpressionContents::Argument(local.clone());
-                break;
-            }
-        }
-    }
-    expr
 }
 
 struct ChainGeneratedM {
@@ -228,7 +211,6 @@ pub(crate) fn generate_expr(
     };
 
     let result = match expr.contents {
-        ExpressionContents::Argument(arg) => generate_expr_argument(ctx, new_terminator, arg),
         ExpressionContents::Local(local) => generate_expr_local(ctx, new_terminator, local),
         ExpressionContents::Symbol {
             name,
@@ -324,19 +306,6 @@ fn coerce(
         }
     }
     DiagnosticResult::ok_with_many(expr, messages)
-}
-
-fn generate_expr_argument(
-    ctx: &mut DefinitionTranslationContext,
-    terminator: Terminator,
-    arg: NameP,
-) -> DiagnosticResult<ExprGeneratedM> {
-    let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
-        statements: Vec::new(),
-        terminator,
-    });
-    let variable = ctx.get_name_of_local(&arg.name);
-    ExprGeneratedM { block, variable }.into()
 }
 
 fn generate_expr_local(
@@ -481,14 +450,7 @@ fn generate_expr_lambda(
                 .chain(params.iter().map(|(n, _)| n))
                 .map(|n| Pattern::Named(n.clone()))
                 .collect(),
-            replacement: convert_locals_to_args(
-                *expr,
-                used_variables
-                    .iter()
-                    .cloned()
-                    .chain(params.iter().map(|(n, _)| n.clone()))
-                    .collect(),
-            ),
+            replacement: *expr,
         }]),
     };
     let lambda_number = *ctx.lambda_number;

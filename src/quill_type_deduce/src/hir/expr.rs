@@ -36,9 +36,7 @@ impl Ranged for Expression {
 /// You should use `ExpressionContents` or `ExpressionContentsT` instead of this enum directly.
 #[derive(Debug)]
 pub enum ExpressionContentsGeneric<E, T, V, P, I> {
-    /// An argument to this function e.g. `x`.
-    Argument(NameP),
-    /// A local variable declared by a `lambda` or `let` expression.
+    /// An argument to this function, or a local variable declared by a `lambda` or `let` expression.
     Local(NameP),
     /// A symbol in global scope e.g. `+` or `fold`.
     Symbol {
@@ -119,7 +117,6 @@ where
 {
     fn range(&self) -> Range {
         match self {
-            ExpressionContentsGeneric::Argument(arg) => arg.range,
             ExpressionContentsGeneric::Local(var) => var.range,
             ExpressionContentsGeneric::Symbol { range, .. } => *range,
             ExpressionContentsGeneric::Apply(l, r) => l.range().union(r.range()),

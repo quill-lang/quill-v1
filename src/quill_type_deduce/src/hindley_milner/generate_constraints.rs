@@ -63,7 +63,7 @@ pub(crate) fn generate_constraints(
                     return DiagnosticResult::ok(ExprTypeCheck {
                         expr: ExpressionT {
                             type_variable,
-                            contents: ExpressionContentsT::Argument(name),
+                            contents: ExpressionContentsT::Local(name),
                             explicit_token,
                         },
                         type_variable_definition_ranges: BTreeMap::new(),

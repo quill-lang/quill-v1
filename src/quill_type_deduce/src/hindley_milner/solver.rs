@@ -121,7 +121,6 @@ fn find_explicit_vars(expr: &mut ExpressionT) -> BTreeMap<TypeVariableId, Range>
 
     // Recursively scan the expression contents.
     match &mut expr.contents {
-        ExpressionContentsT::Argument(_) => {}
         ExpressionContentsT::Local(_) => {}
         ExpressionContentsT::Symbol { .. } => {}
         ExpressionContentsT::Apply(l, r) => {
