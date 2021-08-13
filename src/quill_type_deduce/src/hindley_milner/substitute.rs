@@ -136,7 +136,7 @@ pub(crate) type VisibleLocalNames = BTreeMap<NameP, LocalName>;
 #[derive(Debug, Clone)]
 pub(crate) struct LocalName {
     location: LocalVariableLocation,
-    ty: Type,
+    pub(crate) ty: Type,
 }
 
 /// Where was a local variable defined?
@@ -505,7 +505,6 @@ fn typeck_impl(
     visible_names: &VisibleNames,
     visible_local_names: &VisibleLocalNames,
 ) -> DiagnosticResult<ExpressionContents> {
-    eprintln!("locals: {:#?}", visible_local_names);
     let cases = match body {
         DefinitionBodyP::PatternMatch(cases) => cases,
         DefinitionBodyP::CompilerIntrinsic(range) => {
@@ -525,7 +524,14 @@ fn typeck_impl(
         messages: Vec::new(),
     };
 
-    typeck.compute_impl(impl_token, aspect, parameters, cases, visible_names)
+    typeck.compute_impl(
+        impl_token,
+        aspect,
+        parameters,
+        cases,
+        visible_names,
+        visible_local_names,
+    )
 }
 
 fn substitute_type(

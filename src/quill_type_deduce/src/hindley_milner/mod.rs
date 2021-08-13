@@ -5,6 +5,8 @@ mod generate_constraints;
 mod solver;
 mod substitute;
 
+pub(crate) use substitute::VisibleLocalNames;
+
 use std::collections::BTreeMap;
 
 use quill_common::{
@@ -16,8 +18,8 @@ use quill_parser::{expr_pat::ExprPatP, identifier::NameP};
 use quill_type::Type;
 
 use crate::{
-    hir::expr::{AbstractionVariable, BoundVariable, Expression, ExpressionT},
-    index_resolve::as_variable,
+    hir::expr::{AbstractionVariable, BoundVariable, Expression, ExpressionT, TypeVariable},
+    index_resolve::{as_variable, instantiate},
     type_check::VisibleNames,
     type_resolve::TypeVariableId,
 };
@@ -50,30 +52,86 @@ struct LetStatementNewVariables {
     new_variables: Vec<(NameP, TypeVariableId)>,
 }
 
-pub fn deduce_expr_type(
+pub(crate) fn deduce_expr_type(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
     visible_names: &VisibleNames,
+    visible_local_names: &VisibleLocalNames,
     args: &BTreeMap<String, BoundVariable>,
     expr: ExprPatP,
     expected_type: Type,
     definition_identifier_range: Range,
 ) -> DiagnosticResult<Expression> {
+    let mut extra_constraints = BTreeMap::new();
+    // Pretend that the visible local names provided were given using `let` statements, just for type deduction to work.
     generate_constraints::generate_constraints(
         source_file,
         project_index,
         visible_names,
         args,
         BTreeMap::new(),
-        BTreeMap::new(),
+        visible_local_names
+            .iter()
+            .map(|(name, local)| {
+                let tvid = TypeVariableId::default();
+                extra_constraints.insert(name, (tvid, &local.ty));
+                (
+                    name.name.clone(),
+                    AbstractionVariable {
+                        range: name.range,
+                        var_type: tvid,
+                    },
+                )
+            })
+            .collect(),
         expr,
         None,
     )
     .deny()
     .bind(|mut expr_type_check| {
+        for (variable_name, (type_variable_id, expected_type)) in extra_constraints {
+            let let_assumptions = expr_type_check
+                .assumptions
+                .0
+                .remove(variable_name)
+                .unwrap_or_else(Vec::new);
+
+            for assumption in let_assumptions {
+                expr_type_check.constraints.0.push((
+                    TypeVariable::Unknown { id: assumption.0 },
+                    Constraint::Equality {
+                        ty: TypeVariable::Unknown {
+                            id: type_variable_id,
+                        },
+                        reason: ConstraintEqualityReason::ByDefinition {
+                            expr: variable_name.range,
+                            definition_source: source_file.clone(),
+                            definition: variable_name.range,
+                            high_priority: true,
+                        },
+                    },
+                ));
+            }
+            expr_type_check.constraints.0.push((
+                TypeVariable::Unknown {
+                    id: type_variable_id,
+                },
+                Constraint::Equality {
+                    ty: instantiate(expected_type).result,
+                    reason: ConstraintEqualityReason::ByDefinition {
+                        expr: variable_name.range,
+                        definition_source: source_file.clone(),
+                        definition: variable_name.range,
+                        high_priority: true,
+                    },
+                },
+            ))
+        }
+
         if !expr_type_check.assumptions.0.is_empty() {
             panic!("unresolved assumptions {:#?}", expr_type_check.assumptions);
         }
+
         expr_type_check.constraints.0.push((
             expr_type_check.expr.type_variable.into(),
             Constraint::Equality {
@@ -86,6 +144,7 @@ pub fn deduce_expr_type(
                 },
             },
         ));
+
         solver::solve_type_constraints(
             source_file,
             project_index,

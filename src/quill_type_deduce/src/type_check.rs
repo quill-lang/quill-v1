@@ -22,7 +22,7 @@ use quill_parser::{
 use quill_type::{BorrowCondition, PrimitiveType, Type};
 
 use crate::{
-    hindley_milner::deduce_expr_type,
+    hindley_milner::{deduce_expr_type, VisibleLocalNames},
     hir::{
         definition::{Definition, DefinitionBody, DefinitionCase},
         expr::{BoundVariable, Expression, ExpressionContents, TypeVariable},
@@ -351,9 +351,12 @@ impl<'a> TypeChecker<'a> {
             });
             let symbol_type = &symbol.symbol_type;
 
-            if let Some((name, def)) =
-                self.compute_definition(&visible_names, definition, symbol_type)
-            {
+            if let Some((name, def)) = self.compute_definition(
+                &visible_names,
+                &VisibleLocalNames::new(),
+                definition,
+                symbol_type,
+            ) {
                 definitions.insert(name, def);
             }
         }
@@ -366,6 +369,7 @@ impl<'a> TypeChecker<'a> {
     fn compute_definition(
         &mut self,
         visible_names: &VisibleNames,
+        visible_local_names: &VisibleLocalNames,
         definition: DefinitionP,
         symbol_type: &Type,
     ) -> Option<(String, Definition)> {
@@ -389,6 +393,7 @@ impl<'a> TypeChecker<'a> {
                         .map(|(range, args, replacement)| {
                             self.validate_case(
                                 visible_names,
+                                visible_local_names,
                                 symbol_type,
                                 range,
                                 args,
@@ -479,6 +484,7 @@ impl<'a> TypeChecker<'a> {
     fn validate_case(
         &self,
         visible_names: &VisibleNames,
+        visible_local_names: &VisibleLocalNames,
         symbol_type: &Type,
         range: Range,
         args: Vec<Pattern>,
@@ -515,6 +521,7 @@ impl<'a> TypeChecker<'a> {
                     self.source_file,
                     self.project_index,
                     visible_names,
+                    visible_local_names,
                     &arg_vars,
                     replacement,
                     result,
@@ -1208,6 +1215,7 @@ impl<'a> TypeChecker<'a> {
         parameters: &[Type],
         cases: Vec<DefinitionCaseP>,
         visible_names: &VisibleNames,
+        visible_local_names: &VisibleLocalNames,
     ) -> DiagnosticResult<ExpressionContents> {
         // Split apart each definition in the impl body.
         let mut cases_by_func_name = BTreeMap::<String, Vec<DefinitionCaseP>>::new();
@@ -1251,7 +1259,12 @@ impl<'a> TypeChecker<'a> {
             };
 
             // Type check this implementation.
-            let result = self.compute_definition(visible_names, implementation, &symbol_type);
+            let result = self.compute_definition(
+                visible_names,
+                visible_local_names,
+                implementation,
+                &symbol_type,
+            );
             if let Some((k, v)) = result {
                 implementations.insert(k, v);
             }

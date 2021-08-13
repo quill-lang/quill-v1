@@ -29,14 +29,9 @@ def print[T]: impl Print[T] -> T -> Unit {
 
 // TODO: make this default
 def print_show[T]: impl Show[T] -> impl Print[T] {
-    print_show impl { show } = (
-        // TODO: make this more ergonomic, e.g.
-        // impl {
-        //     print val = for_each putchar (show val)
-        // }
-        let print_func = \val -> for_each putchar (show val)
-        impl { print = print_func }
-    )
+    print_show impl { show } = impl {
+        print val = for_each putchar (show val)
+    }
 }
 
 def default print_list: impl Print[List[Int]] {
