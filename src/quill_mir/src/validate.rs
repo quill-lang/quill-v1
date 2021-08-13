@@ -351,10 +351,7 @@ fn validate_stmt(
         } => {
             let argument_type = rvalue_type(project_index, locals, &*argument)?;
             let return_type = locals[target].ty.clone();
-            let expected_func_ty = Type::Function(
-                Box::new(argument_type.clone()),
-                Box::new(return_type.clone()),
-            );
+            let expected_func_ty = Type::Function(Box::new(argument_type), Box::new(return_type));
             assert_ty_eq(
                 rvalue_type(project_index, locals, &*function)?,
                 expected_func_ty,

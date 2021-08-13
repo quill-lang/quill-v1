@@ -36,7 +36,10 @@ pub(crate) fn solve_type_constraints(
 ) -> DiagnosticResult<Expression> {
     // First, compute which expressions are listed as "explicit",
     // and store the list so that we can keep track of it while unifying variables.
-    let explicit_vars = find_explicit_vars(&mut expr);
+    // TODO: This list is used to make explicit `@` calls work when the thing we're calling is
+    // not a global definition. For instance, calling `a -> impl -> b` with an object of type `a` should
+    // automatically return a `b`, unless `@` was provided.
+    let _explicit_vars = find_explicit_vars(&mut expr);
 
     // eprintln!("Deducing type of {:#?}", expr);
     // eprintln!("Constraints: {:#?}", constraints);

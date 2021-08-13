@@ -481,6 +481,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Verify that the given case exactly matches the required type, and also type check the expression given the arguments' types and the expected output type.
+    #[allow(clippy::too_many_arguments)]
     fn validate_case(
         &self,
         visible_names: &VisibleNames,

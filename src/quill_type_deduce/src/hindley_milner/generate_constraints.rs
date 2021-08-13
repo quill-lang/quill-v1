@@ -13,7 +13,10 @@ use quill_parser::{
 use quill_type::{PrimitiveType, Type};
 
 use crate::{
-    hindley_milner::{constraints::ConstraintFieldAccessReason, LetStatementNewVariables},
+    hindley_milner::{
+        constraints::ConstraintFieldAccessReason, explicit::remove_impls_variable,
+        LetStatementNewVariables,
+    },
     hir::expr::{
         AbstractionVariable, BoundVariable, ExpressionContentsT, ExpressionT, TypeVariable,
     },
@@ -40,6 +43,7 @@ use super::{
 /// `let_variables` is the set of variables that we introduced using a let expression.
 ///
 /// If this is the expression *just* inside an @ token, explicit_token is the range of that token.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_constraints(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,
@@ -242,14 +246,14 @@ pub(crate) fn generate_constraints(
                     None,
                 )
                 .map(|right| {
-                    let left_type = left.expr.type_variable.clone();
-                    let right_type = right.expr.type_variable.clone();
+                    let left_type = left.expr.type_variable;
+                    let right_type = right.expr.type_variable;
                     let result_type = TypeVariableId::default();
 
                     let function_range = left.expr.contents.range();
                     let argument_range = right.expr.contents.range();
-                    let function_ty = left.expr.type_variable.clone();
-                    let argument_ty = right.expr.type_variable.clone();
+                    let function_ty = left.expr.type_variable;
+                    let argument_ty = right.expr.type_variable;
 
                     // This expression was: left_type right_type : result_type
                     // Constraint: left_type === right_type -> result_type
@@ -258,7 +262,7 @@ pub(crate) fn generate_constraints(
                     type_variable_definition_ranges.extend(right.type_variable_definition_ranges);
                     ExprTypeCheck {
                         expr: ExpressionT {
-                            type_variable: result_type.clone(),
+                            type_variable: result_type,
                             contents: ExpressionContentsT::Apply(
                                 Box::new(left.expr),
                                 Box::new(right.expr),
@@ -347,7 +351,7 @@ pub(crate) fn generate_constraints(
                     .map(|mut expr| {
                         // First, add the constraint that this lambda abstraction's type is input_types -> expr.type.
                         // Gradually process the params to this function, curring each at a time, to get a resultant type variable.
-                        let mut lambda_type = expr.expr.type_variable.clone();
+                        let mut lambda_type = expr.expr.type_variable;
                         for param in param_types.iter().rev() {
                             let lambda_step_type = TypeVariableId::default();
                             expr.constraints.0.push((
@@ -593,9 +597,8 @@ pub(crate) fn generate_constraints(
 
             // Work out what the type of the block is. Typically, this is just the type of the last statement in the block,
             // unless a final semicolon was added.
-            let block_type = statements_with_constraints[statements_with_constraints.len() - 1]
-                .type_variable
-                .clone();
+            let block_type =
+                statements_with_constraints[statements_with_constraints.len() - 1].type_variable;
 
             DiagnosticResult::ok_with_many(
                 ExprTypeCheck {
@@ -1127,18 +1130,6 @@ pub(crate) fn generate_constraints(
             })
         }
     }
-}
-
-fn remove_impls_variable(mut ty: TypeVariable) -> TypeVariable {
-    while let TypeVariable::Function(l, r) = ty {
-        if let TypeVariable::Impl { .. } = &*l {
-            ty = *r;
-        } else {
-            ty = TypeVariable::Function(l, r);
-            break;
-        }
-    }
-    ty
 }
 
 /// Returns an error message saying a variable was already defined.

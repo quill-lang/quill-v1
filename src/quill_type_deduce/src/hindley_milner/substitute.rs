@@ -492,6 +492,8 @@ fn resolve_pattern(
     typeck.resolve_type_pattern(visible_names, pat.clone(), ty.clone())
 }
 
+// It doesn't really make sense to try to simplify this function signature too much.
+#[allow(clippy::too_many_arguments)]
 fn typeck_impl(
     source_file: &SourceFileIdentifier,
     project_index: &ProjectIndex,

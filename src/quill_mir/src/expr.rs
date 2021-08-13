@@ -379,11 +379,6 @@ fn generate_expr_apply(
         statements: Vec::new(),
         terminator,
     });
-    let (argument_type, return_type) = if let Type::Function(l, r) = left.ty.clone() {
-        (*l, *r)
-    } else {
-        unreachable!()
-    };
     let right = generate_expr(
         ctx,
         *right,
