@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use lspower::lsp::*;
 use quill_common::location::Ranged;
 use quill_parser::{
-    data_types::AspectP,
+    data_types::{AspectP, DataP, EnumP, FieldP},
     definition::{DefinitionBodyP, DefinitionDeclP, DefinitionP, TypeParameterP},
     expr_pat::ExprPatP,
     file::FileP,
@@ -85,6 +85,12 @@ impl SemanticTokenGenerator {
     }
 
     fn gen(&mut self, file: FileP) {
+        for data in file.data {
+            self.gen_data(data);
+        }
+        for the_enum in file.enums {
+            self.gen_enum(the_enum);
+        }
         for def in file.definitions {
             self.gen_def(def);
         }
@@ -137,10 +143,54 @@ impl SemanticTokenGenerator {
         }
     }
 
+    fn gen_data(&mut self, data: DataP) {
+        self.push_token(
+            data.identifier.range,
+            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE],
+            0,
+        );
+        for param in data.type_params {
+            self.gen_type_parameter(param);
+        }
+        for field in data.type_ctor.fields {
+            self.gen_field(field);
+        }
+    }
+
+    fn gen_enum(&mut self, the_enum: EnumP) {
+        self.push_token(
+            the_enum.identifier.range,
+            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE],
+            0,
+        );
+        for param in the_enum.type_params {
+            self.gen_type_parameter(param);
+        }
+        for ctor in the_enum.alternatives {
+            self.push_token(
+                ctor.name.range,
+                SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::ENUM_MEMBER],
+                0,
+            );
+            for field in ctor.type_ctor.fields {
+                self.gen_field(field);
+            }
+        }
+    }
+
+    fn gen_field(&mut self, field: FieldP) {
+        self.push_token(
+            field.name.range,
+            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::PROPERTY],
+            0,
+        );
+        self.gen_type(field.ty);
+    }
+
     fn gen_aspect(&mut self, aspect: AspectP) {
         self.push_token(
             aspect.identifier.range,
-            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::FUNCTION],
+            SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::TYPE],
             0,
         );
         for param in aspect.type_params {
@@ -318,6 +368,7 @@ impl SemanticTokenGenerator {
 }
 
 /// `is_main_pattern` is true if this contains the function name.
+/// If we couldn't get named parameters, just return Vec::new().
 fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String> {
     match pattern {
         ExprPatP::Variable(variable) => {
@@ -333,9 +384,9 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             result.extend(get_named_parameters(&*r, false));
             result
         }
-        ExprPatP::Lambda { .. } => unreachable!(),
-        ExprPatP::Let { .. } => unreachable!(),
-        ExprPatP::Block { .. } => unreachable!(),
+        ExprPatP::Lambda { .. } => Vec::new(),
+        ExprPatP::Let { .. } => Vec::new(),
+        ExprPatP::Block { .. } => Vec::new(),
         ExprPatP::ConstructData { fields, .. } => {
             let mut result = Vec::new();
             for (_, pat) in &fields.fields {
@@ -347,9 +398,9 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             result
         }
         ExprPatP::Unknown(_) => Vec::new(),
-        ExprPatP::Borrow { .. } => unreachable!(),
-        ExprPatP::Copy { .. } => unreachable!(),
-        ExprPatP::Impl { .. } => unreachable!(),
+        ExprPatP::Borrow { expr, .. } => get_named_parameters(&*expr, false),
+        ExprPatP::Copy { .. } => Vec::new(),
+        ExprPatP::Impl { .. } => Vec::new(),
         ExprPatP::ImplPattern { fields, .. } => {
             let mut result = Vec::new();
             for (_, pat) in &fields.fields {
@@ -360,7 +411,7 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             }
             result
         }
-        ExprPatP::Match { .. } => unreachable!(),
+        ExprPatP::Match { .. } => Vec::new(),
         ExprPatP::Explicit { expr, .. } => get_named_parameters(&*expr, is_main_pattern),
     }
 }
@@ -383,6 +434,7 @@ lazy_static::lazy_static! {
         vec![
             SemanticTokenType::FUNCTION,
             SemanticTokenType::VARIABLE,
+            SemanticTokenType::ENUM_MEMBER,
             SemanticTokenType::TYPE,
             SemanticTokenType::TYPE_PARAMETER,
             SemanticTokenType::MACRO,
