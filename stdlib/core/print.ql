@@ -1,6 +1,7 @@
 use list
 use int
 use bool
+use func
 
 def putchar: Int -> Unit { compiler_intrinsic }
 
@@ -31,10 +32,6 @@ def default print_show[T]: impl Show[T] -> impl Print[T] {
     print_show impl { show } = impl {
         print val = for_each putchar (show val)
     }
-}
-
-def id[T]: T -> T {
-    id x = x
 }
 
 def default show_list: impl Show[List[Int]] {
