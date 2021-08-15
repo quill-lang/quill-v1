@@ -2,6 +2,7 @@ use list
 use int
 use bool
 use func
+use iter
 
 def putchar: Int -> Unit { compiler_intrinsic }
 

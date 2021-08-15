@@ -13,11 +13,6 @@ def concat[T]: List[T] -> List[T] -> List[T] {
     concat Cons { value, list } other = Cons { value, list = concat list other }
 }
 
-def for_each[T]: (T -> Unit) -> List[T] -> Unit {
-    for_each f Cons { value, list } = ((copy &f) value, for_each f list)
-    for_each f Empty {} = unit
-}
-
 data SameType[T] { a: T, b: T }
 
 def as_ref[T]: (& 'a List[T]) -> List[& 'a T] {
