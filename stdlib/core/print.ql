@@ -18,17 +18,6 @@ aspect Print[T] {
     print: T -> Unit
 }
 
-def show[T]: impl Show[T] -> T -> List[Int] {
-    show impl { show } value = show value
-}
-
-// TODO: Automatically generate this function,
-// perhaps by using a keyword like "export"?
-// `export f: T` => `def f: impl -> T { .. }`
-def print[T]: impl Print[T] -> T -> Unit {
-    print impl { print } value = print value
-}
-
 def default print_show[T]: impl Show[T] -> impl Print[T] {
     print_show impl { show } = impl {
         print val = for_each putchar (show val)
