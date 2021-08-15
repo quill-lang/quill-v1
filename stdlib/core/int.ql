@@ -1,3 +1,5 @@
+use ops
+
 def add_int_unchecked: Int -> Int -> Int { compiler_intrinsic }
 def sub_int_unchecked: Int -> Int -> Int { compiler_intrinsic }
 def mul_int_unchecked: Int -> Int -> Int { compiler_intrinsic }
@@ -9,8 +11,10 @@ def le_int: Int -> Int -> Bool { compiler_intrinsic }
 def eq_int: Int -> Int -> Bool { compiler_intrinsic }
 def ne_int: Int -> Int -> Bool { compiler_intrinsic }
 
-def + : Int -> Int -> Int {
-    + = add_int_unchecked
+def default add_int: impl Add[Int, Int, Int] {
+    add_int = impl {
+        + = add_int_unchecked
+    }
 }
 
 def - : Int -> Int -> Int {
@@ -43,6 +47,12 @@ def <= : Int -> Int -> Bool {
 
 def != : Int -> Int -> Bool {
     != = ne_int
+}
+
+def default partial_eq_int: impl PartialEq[Int] {
+    partial_eq_int = impl {
+        == = eq_int
+    }
 }
 
 def factorial: Int -> Int {

@@ -4,6 +4,7 @@ use list
 use bool
 use int
 use option
+use ops
 
 def main: Unit {
     main = add_ints
