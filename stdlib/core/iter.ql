@@ -20,7 +20,7 @@ def default iter_list[T]: impl Iterator[List[T], T] {
 }
 
 def for_each[Iter, Item]: impl Iterator[Iter, Item] -> (Item -> Unit) -> Iter -> Unit {
-    for_each the_impl f iter = match (@next the_impl iter) (
+    for_each the_impl f iter = match (@next (copy &the_impl) iter) (
         IterResult { iter, item = None {} } -> unit
         IterResult { iter, item = Some { value } } -> (
             (copy &f) value
