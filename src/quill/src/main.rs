@@ -151,6 +151,10 @@ impl CompilerLocation {
                 let mut command = Command::new("cargo");
                 command.current_dir(source);
                 command.arg("run");
+
+                #[cfg(not(debug_assertions))]
+                command.arg("--release");
+
                 command.arg("--bin");
                 command.arg("quillc");
                 if !cli_config.verbose {
