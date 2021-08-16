@@ -1,50 +1,49 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     convert::{TryFrom, TryInto},
 };
 
-use data::FieldIndex;
 use inkwell::{
     debug_info::{AsDIScope, DIDerivedType, DIFlagsConstants},
     types::{BasicType, BasicTypeEnum},
     values::{BasicValueEnum, CallableValue, PointerValue},
     AddressSpace,
 };
-use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
+use quill_index::{ProjectIndex, TypeDeclarationTypeI};
+use quill_reprs::{data::FieldIndex, sort_types::MonomorphisedItem, Representations};
 use quill_type::{PrimitiveType, Type};
 
-use crate::{codegen::CodeGenContext, sort_types::MonomorphisedItem};
-use quill_monomorphise::{
+use crate::codegen::CodeGenContext;
+use quill_monomorphise::monomorphisation::{
     FunctionObjectDescriptor, MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType,
 };
 
 use self::{
     any_type::AnyTypeRepresentation,
-    data::{DataRepresentation, DataRepresentationBuilder, EnumRepresentation},
+    data::{LLVMDataRepresentation, LLVMEnumRepresentation},
 };
 
 pub mod any_type;
 pub mod data;
-mod llvm_struct;
+pub mod llvm_struct;
 
-/// Stores the representations of all data/struct types in a project, post monomorphisation.
-pub struct Representations<'a, 'ctx> {
-    codegen: &'a CodeGenContext<'ctx>,
-    datas: BTreeMap<MonomorphisedType, DataRepresentation<'ctx>>,
-    enums: BTreeMap<MonomorphisedType, EnumRepresentation<'ctx>>,
-    func_objects: BTreeMap<FunctionObjectDescriptor, DataRepresentation<'ctx>>,
+/// Stores the LLVM-specific representations of all data/struct types in a project, post monomorphisation.
+pub struct LLVMRepresentations<'a, 'ctx> {
+    pub codegen: &'a CodeGenContext<'ctx>,
+    datas: BTreeMap<MonomorphisedType, LLVMDataRepresentation<'ctx>>,
+    enums: BTreeMap<MonomorphisedType, LLVMEnumRepresentation<'ctx>>,
+    func_objects: BTreeMap<FunctionObjectDescriptor, LLVMDataRepresentation<'ctx>>,
     /// The representation of an arbitrary impl for a given aspect.
-    aspects: BTreeMap<MonomorphisedAspect, DataRepresentation<'ctx>>,
+    aspects: BTreeMap<MonomorphisedAspect, LLVMDataRepresentation<'ctx>>,
     /// Use this type for a general function object that you don't know the type of.
     pub general_func_obj_ty: AnyTypeRepresentation<'ctx>,
 }
 
-impl<'a, 'ctx> Representations<'a, 'ctx> {
+impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
     pub fn new(
-        codegen: &'a CodeGenContext<'ctx>,
         index: &ProjectIndex,
-        mono_types: BTreeSet<MonomorphisedType>,
-        mono_aspects: BTreeSet<MonomorphisedAspect>,
+        codegen: &'a CodeGenContext<'ctx>,
+        prev_reprs: Representations,
     ) -> Self {
         let general_func_obj_ty = codegen.context.opaque_struct_type("fobj");
         general_func_obj_ty.set_body(
@@ -70,6 +69,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             ],
             false,
         );
+
         let mut reprs = Self {
             codegen,
             datas: BTreeMap::new(),
@@ -94,60 +94,30 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
             ),
         };
 
-        // Sort the types according to what types are used in what other types.
-        // After this step, heap indirections have been added so the exact size of each type is known.
-        let sorted_types = crate::sort_types::sort_types(mono_types, mono_aspects, index);
-        // println!("Sorted: {:#?}", sorted_types);
-
-        for mono_ty in sorted_types {
+        for mono_ty in prev_reprs.sorted_types.iter().cloned() {
             match mono_ty.ty {
                 MonomorphisedItem::Type(ty) => {
                     let decl = index.type_decl(&ty.name);
                     match &decl.decl_type {
                         TypeDeclarationTypeI::Data(datai) => {
-                            let mut builder = DataRepresentationBuilder::new(&reprs);
-                            builder.add_fields(
-                                &datai.type_ctor,
-                                &datai.type_params,
-                                &ty.mono,
-                                mono_ty.indirected,
-                            );
-                            let repr =
-                                builder.build(&ty.name.source_file, ty.name.range, ty.to_string());
-                            reprs.datas.insert(ty, repr);
+                            let repr = prev_reprs.get_data(&ty).unwrap();
+                            reprs
+                                .datas
+                                .insert(ty, LLVMDataRepresentation::new(&reprs, repr));
                         }
                         TypeDeclarationTypeI::Enum(enumi) => {
-                            let repr = EnumRepresentation::new(
-                                &reprs,
-                                codegen,
-                                enumi,
-                                &ty,
-                                mono_ty.indirected,
-                            );
-                            reprs.enums.insert(ty, repr);
+                            let repr = prev_reprs.get_enum(&ty).unwrap();
+                            reprs
+                                .enums
+                                .insert(ty, LLVMEnumRepresentation::new(&reprs, &repr));
                         }
                     };
                 }
                 MonomorphisedItem::Aspect(asp) => {
-                    let aspect = index.aspect(&asp.name);
-                    // Make a fake type ctor for the aspect.
-                    let type_ctor = TypeConstructorI {
-                        fields: aspect
-                            .definitions
-                            .iter()
-                            .map(|def| (def.name.clone(), def.symbol_type.clone()))
-                            .collect(),
-                    };
-                    let mut builder = DataRepresentationBuilder::new(&reprs);
-                    builder.add_fields(
-                        &type_ctor,
-                        &aspect.type_variables,
-                        &asp.mono,
-                        mono_ty.indirected,
-                    );
-                    let repr =
-                        builder.build(&asp.name.source_file, asp.name.range, asp.to_string());
-                    reprs.aspects.insert(asp, repr);
+                    let repr = prev_reprs.get_aspect(&asp).unwrap();
+                    reprs
+                        .aspects
+                        .insert(asp, LLVMDataRepresentation::new(&reprs, &repr));
                 }
             }
         }
@@ -235,25 +205,31 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
         }
     }
 
-    pub fn get_data(&self, descriptor: &MonomorphisedType) -> Option<&DataRepresentation<'ctx>> {
+    pub fn get_data(
+        &self,
+        descriptor: &MonomorphisedType,
+    ) -> Option<&LLVMDataRepresentation<'ctx>> {
         self.datas.get(descriptor)
     }
 
-    pub fn get_enum(&self, descriptor: &MonomorphisedType) -> Option<&EnumRepresentation<'ctx>> {
+    pub fn get_enum(
+        &self,
+        descriptor: &MonomorphisedType,
+    ) -> Option<&LLVMEnumRepresentation<'ctx>> {
         self.enums.get(descriptor)
     }
 
     pub fn get_fobj(
         &self,
         descriptor: &FunctionObjectDescriptor,
-    ) -> Option<&DataRepresentation<'ctx>> {
+    ) -> Option<&LLVMDataRepresentation<'ctx>> {
         self.func_objects.get(descriptor)
     }
 
     pub fn insert_fobj(
         &mut self,
         descriptor: FunctionObjectDescriptor,
-        fobj: DataRepresentation<'ctx>,
+        fobj: LLVMDataRepresentation<'ctx>,
     ) {
         self.func_objects.insert(descriptor, fobj);
     }
@@ -261,7 +237,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
     pub fn get_aspect(
         &self,
         descriptor: &MonomorphisedAspect,
-    ) -> Option<&DataRepresentation<'ctx>> {
+    ) -> Option<&LLVMDataRepresentation<'ctx>> {
         self.aspects.get(descriptor)
     }
 
@@ -972,7 +948,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
     /// Returns the new DIType associated with this repr.
     /// This is used later with `replace_placeholder_derived_type`
     /// to update all of the uses of this DIType across the program.
-    fn create_repr_debug_info(&self, repr: &DataRepresentation<'ctx>) -> DIDerivedType<'ctx> {
+    fn create_repr_debug_info(&self, repr: &LLVMDataRepresentation<'ctx>) -> DIDerivedType<'ctx> {
         // Maps field indices to their DIType.
         let mut field_map = BTreeMap::new();
         for (name, idx) in repr.field_indices() {
@@ -1032,7 +1008,7 @@ impl<'a, 'ctx> Representations<'a, 'ctx> {
 
     fn create_enum_repr_debug_info(
         &self,
-        repr: &EnumRepresentation<'ctx>,
+        repr: &LLVMEnumRepresentation<'ctx>,
     ) -> Vec<DIDerivedType<'ctx>> {
         repr.variants
             .values()

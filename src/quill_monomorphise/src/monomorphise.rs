@@ -1,11 +1,13 @@
+use std::collections::BTreeMap;
+
 use quill_mir::mir::{DefinitionBodyM, DefinitionM, StatementKind};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
 use crate::monomorphisation::MonomorphisedFunction;
 
-pub fn monomorphise<'ctx>(
-    // reprs: &Representations<'_, 'ctx>,
+pub fn monomorphise(
+    has_repr: impl Fn(Type) -> bool,
     func: &MonomorphisedFunction,
     def: &DefinitionM,
 ) -> DefinitionM {
@@ -44,12 +46,11 @@ pub fn monomorphise<'ctx>(
             }
         }
 
-        /*
         // Now erase all loads and stores to/from types without a representation.
         let local_reprs = result
             .local_variable_names
             .iter()
-            .map(|(name, info)| (*name, reprs.repr(info.ty.clone())))
+            .map(|(name, info)| (*name, has_repr(info.ty.clone())))
             .collect::<BTreeMap<_, _>>();
 
         for block in cfg.basic_blocks.values_mut() {
@@ -61,13 +62,13 @@ pub fn monomorphise<'ctx>(
                     | StatementKind::InstanceSymbol { target, .. }
                     | StatementKind::Apply { target, .. }
                     | StatementKind::ConstructFunctionObject { target, .. }
-                    | StatementKind::ConstructData { target, .. } => local_reprs[target].is_some(),
+                    | StatementKind::ConstructData { target, .. } => local_reprs[target],
 
                     StatementKind::InvokeFunction { .. }
                     | StatementKind::InvokeFunctionObject { .. } => true,
 
                     StatementKind::Drop { variable } | StatementKind::Free { variable } => {
-                        local_reprs[variable].is_some()
+                        local_reprs[variable]
                     }
 
                     _ => true,
@@ -79,7 +80,6 @@ pub fn monomorphise<'ctx>(
             }
             block.statements = stmts;
         }
-        */
     }
 
     result

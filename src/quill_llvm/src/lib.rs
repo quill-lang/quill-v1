@@ -6,9 +6,12 @@ use inkwell::{
     targets::{CodeModel, RelocMode},
 };
 use quill_mir::ProjectMIR;
-use quill_monomorphise::{Monomorphisation, MonomorphisationParameters, MonomorphisedFunction};
+use quill_monomorphise::monomorphisation::{
+    Monomorphisation, MonomorphisationParameters, MonomorphisedFunction,
+};
+use quill_reprs::Representations;
 use quill_target::{BuildInfo, TargetTriple};
-use repr::Representations;
+use repr::LLVMRepresentations;
 use std::{
     error::Error,
     fmt::{Debug, Display},
@@ -26,7 +29,6 @@ mod func;
 mod intrinsics;
 mod monomorphisation;
 mod repr;
-mod sort_types;
 
 struct ExecutionError {
     program: String,
@@ -88,15 +90,15 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     println!("status monomorphising");
 
     let mono = Monomorphisation::new(mir);
-    let mut reprs = Representations::new(&codegen, &mir.index, mono.types, mono.aspects);
-    // Now that we've computed data type representations we can actually compile the functions.
-    // First, declare them all.
+    let reprs = Representations::new(&mir.index, mono.types, mono.aspects);
+    let mut reprs = LLVMRepresentations::new(&mir.index, &codegen, reprs);
     for func in &mono.functions {
         add_llvm_type(func, &codegen, &mut reprs, mir);
     }
     reprs.create_debug_info();
     codegen.di_builder.finalize();
 
+    // Now that we've computed data type representations we can actually compile the functions.
     println!("status compiling functions");
 
     for func in &mono.functions {

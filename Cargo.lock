@@ -964,6 +964,7 @@ dependencies = [
  "quill_mir",
  "quill_monomorphise",
  "quill_parser",
+ "quill_reprs",
  "quill_source_file",
  "quill_target",
  "quill_type",
@@ -1011,6 +1012,7 @@ name = "quill_monomorphise"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_index",
  "quill_mir",
  "quill_type",
  "quill_type_deduce",
@@ -1024,6 +1026,18 @@ dependencies = [
  "quill_error",
  "quill_lexer",
  "quill_source_file",
+]
+
+[[package]]
+name = "quill_reprs"
+version = "0.1.0"
+dependencies = [
+ "quill_common",
+ "quill_index",
+ "quill_mir",
+ "quill_monomorphise",
+ "quill_type",
+ "quill_type_deduce",
 ]
 
 [[package]]

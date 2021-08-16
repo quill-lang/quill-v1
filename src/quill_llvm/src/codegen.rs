@@ -12,10 +12,10 @@ use inkwell::{
 };
 use quill_index::ProjectIndex;
 use quill_mir::mir::LocalVariableName;
-use quill_monomorphise::MonomorphisedFunction;
+use quill_monomorphise::monomorphisation::MonomorphisedFunction;
 use quill_target::{TargetArchitecture, TargetTriple};
 
-use crate::repr::Representations;
+use crate::repr::LLVMRepresentations;
 
 pub struct CodeGenContext<'ctx> {
     pub context: &'ctx Context,
@@ -30,7 +30,7 @@ pub struct CodeGenContext<'ctx> {
 /// Contains all the useful information when generating a function body.
 pub struct BodyCreationContext<'a, 'ctx> {
     pub codegen: &'a CodeGenContext<'ctx>,
-    pub reprs: &'a Representations<'a, 'ctx>,
+    pub reprs: &'a LLVMRepresentations<'a, 'ctx>,
     pub index: &'a ProjectIndex,
     pub func: MonomorphisedFunction,
     pub func_value: FunctionValue<'ctx>,

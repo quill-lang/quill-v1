@@ -5,14 +5,14 @@ use quill_mir::{
     mir::{ArgumentIndex, LocalVariableName},
     ProjectMIR,
 };
-use quill_monomorphise::{FunctionObjectDescriptor, MonomorphisedFunction};
+use quill_monomorphise::monomorphisation::{FunctionObjectDescriptor, MonomorphisedFunction};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
 use crate::{
     codegen::{BodyCreationContext, CodeGenContext},
     debug::source_file_debug_info,
-    repr::Representations,
+    repr::LLVMRepresentations,
 };
 
 mod body;
@@ -21,7 +21,7 @@ mod rvalue;
 
 pub fn compile_function<'ctx>(
     codegen: &CodeGenContext<'ctx>,
-    reprs: &Representations<'_, 'ctx>,
+    reprs: &LLVMRepresentations<'_, 'ctx>,
     mir: &ProjectMIR,
     func: MonomorphisedFunction,
 ) {

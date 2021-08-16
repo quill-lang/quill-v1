@@ -1,9 +1,9 @@
 use crate::{
     codegen::CodeGenContext,
+    debug::source_file_debug_info,
     repr::{
-        any_type::AnyTypeRepresentation,
-        data::{DataRepresentation, DataRepresentationBuilder, FieldIndex},
-        Representations,
+        any_type::AnyTypeRepresentation, data::LLVMDataRepresentation,
+        llvm_struct::LLVMStructRepresentation, LLVMRepresentations,
     },
 };
 use inkwell::{
@@ -14,12 +14,13 @@ use quill_mir::{
     mir::{ArgumentIndex, LocalVariableName},
     ProjectMIR,
 };
-use quill_monomorphise::MonomorphisedFunction;
+use quill_reprs::data::FieldIndex;
+use quill_monomorphise::monomorphisation::MonomorphisedFunction;
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
 /// Stores the representations of a monomorphised function's arguments and return type.
-struct ArgReprs<'ctx> {
+struct LLVMArgReprs<'ctx> {
     /// For each argument of the original Quill function, what argument index in LLVM was it mapped to?
     /// If it had no representation, this returns None.
     arg_repr_indices: Vec<Option<usize>>,
@@ -27,15 +28,15 @@ struct ArgReprs<'ctx> {
     args_with_reprs: Vec<(AnyTypeRepresentation<'ctx>, Type)>,
     return_type: Option<BasicTypeEnum<'ctx>>,
     arity: u64,
-    function_object: DataRepresentation<'ctx>,
+    function_object: LLVMDataRepresentation<'ctx>,
 }
 
 fn generate_arg_reprs<'ctx>(
     func: &MonomorphisedFunction,
     codegen: &CodeGenContext<'ctx>,
-    reprs: &mut Representations<'_, 'ctx>,
+    reprs: &mut LLVMRepresentations<'_, 'ctx>,
     mir: &ProjectMIR,
-) -> ArgReprs<'ctx> {
+) -> LLVMArgReprs<'ctx> {
     let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
 
     let args_options = (0..def.arity)
@@ -62,18 +63,19 @@ fn generate_arg_reprs<'ctx>(
     let return_type = replace_type_variables(
         def.return_type.clone(),
         &def.type_variables,
-        &func.mono.type_parameters(),
+        func.mono.type_parameters(),
     );
 
     let descriptor = func.function_object_descriptor();
     let function_object = if let Some(repr) = reprs.get_fobj(&descriptor) {
         repr.clone()
     } else {
-        let mut builder = DataRepresentationBuilder::new(reprs);
+        let mut fields = Vec::new();
+
         // Add the function pointer as the first field.
-        builder.add_field_raw(
+        fields.push((
             ".fptr".to_string(),
-            Some(AnyTypeRepresentation::new(
+            AnyTypeRepresentation::new(
                 codegen,
                 codegen
                     .context
@@ -81,12 +83,13 @@ fn generate_arg_reprs<'ctx>(
                     .ptr_type(AddressSpace::Generic)
                     .into(),
                 reprs.general_func_obj_ty.di_type,
-            )),
-        );
+            ),
+            None,
+        ));
         // Add the copy function as the second field.
-        builder.add_field_raw(
+        fields.push((
             ".copy".to_string(),
-            Some(AnyTypeRepresentation::new(
+            AnyTypeRepresentation::new(
                 codegen,
                 codegen
                     .context
@@ -94,12 +97,13 @@ fn generate_arg_reprs<'ctx>(
                     .ptr_type(AddressSpace::Generic)
                     .into(),
                 reprs.general_func_obj_ty.di_type,
-            )),
-        );
+            ),
+            None,
+        ));
         // Add the drop function as the third field.
-        builder.add_field_raw(
+        fields.push((
             ".drop".to_string(),
-            Some(AnyTypeRepresentation::new(
+            AnyTypeRepresentation::new(
                 codegen,
                 codegen
                     .context
@@ -107,22 +111,54 @@ fn generate_arg_reprs<'ctx>(
                     .ptr_type(AddressSpace::Generic)
                     .into(),
                 reprs.general_func_obj_ty.di_type,
-            )),
-        );
+            ),
+            None,
+        ));
         // Add only the arguments not pertaining to the last currying step.
         for i in 0..def.arity - func.curry_steps.last().copied().unwrap_or(0) {
             if let Some((repr, ty)) =
                 arg_repr_indices[i as usize].map(|i| args_with_reprs[i].clone())
             {
-                builder.add_field_raw_with_type(format!("field_{}", i), Some(repr), ty);
+                fields.push((format!("field_{}", i), repr, Some(ty)));
             }
         }
 
-        let repr = builder.build(
-            &func.func.source_file,
-            func.func.range,
-            descriptor.to_string(),
-        );
+        let llvm_field_types = fields
+            .iter()
+            .map(|(_, repr, _)| repr.llvm_type)
+            .collect::<Vec<_>>();
+        let llvm_repr = reprs.codegen.context.struct_type(&llvm_field_types, false);
+
+        let di_file = source_file_debug_info(reprs.codegen, &func.func.source_file);
+
+        let di_type = unsafe {
+            reprs
+                .codegen
+                .di_builder
+                .create_placeholder_derived_type(reprs.codegen.context)
+        };
+
+        let repr = LLVMDataRepresentation {
+            llvm_repr: Some(LLVMStructRepresentation {
+                ty: llvm_repr,
+                abi_alignment: reprs.codegen.target_data().get_abi_alignment(&llvm_repr),
+            }),
+            di_type,
+            di_file,
+            range: def.range,
+            name: func.func.name.clone(),
+            field_indices: fields
+                .iter()
+                .enumerate()
+                .map(|(i, (field_name, _repr, _ty))| {
+                    (field_name.clone(), FieldIndex::Literal(i as u32))
+                })
+                .collect(),
+            field_types: fields
+                .iter()
+                .filter_map(|(field_name, _repr, ty)| ty.clone().map(|ty| (field_name.clone(), ty)))
+                .collect(),
+        };
 
         // Now, define all the relevant copy and drop functions for this function object.
         // We need to make a copy/drop function for every possible amount of fields stored in this function object.
@@ -269,7 +305,7 @@ fn generate_arg_reprs<'ctx>(
         repr
     };
 
-    ArgReprs {
+    LLVMArgReprs {
         arg_repr_indices,
         args_with_reprs,
         return_type: reprs.repr(return_type).map(|repr| repr.llvm_type),
@@ -281,7 +317,7 @@ fn generate_arg_reprs<'ctx>(
 fn generate_llvm_type<'ctx>(
     func: &MonomorphisedFunction,
     codegen: &CodeGenContext<'ctx>,
-    reprs: &mut Representations<'_, 'ctx>,
+    reprs: &mut LLVMRepresentations<'_, 'ctx>,
     mir: &ProjectMIR,
 ) -> FunctionType<'ctx> {
     let arg_reprs = generate_arg_reprs(func, codegen, reprs, mir);
@@ -370,7 +406,7 @@ fn generate_llvm_type<'ctx>(
 pub fn add_llvm_type<'ctx>(
     func: &MonomorphisedFunction,
     codegen: &CodeGenContext<'ctx>,
-    reprs: &mut Representations<'_, 'ctx>,
+    reprs: &mut LLVMRepresentations<'_, 'ctx>,
     mir: &ProjectMIR,
 ) {
     let ty = generate_llvm_type(func, codegen, reprs, mir);
