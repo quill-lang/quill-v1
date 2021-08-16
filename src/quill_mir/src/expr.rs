@@ -129,7 +129,21 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             todo!()
             // Vec::new()
         }
-        ExpressionContents::Match { .. } => todo!(),
+        ExpressionContents::Match { expr, cases, .. } => {
+            let mut result = cases
+                .iter()
+                .map(|(_, expr)| list_used_locals(expr))
+                .flatten()
+                .chain(list_used_locals(&*expr))
+                .collect::<Vec<_>>();
+            let arg_names = cases
+                .iter()
+                .map(|(pat, _)| bound_variable_names(pat))
+                .flatten()
+                .collect::<BTreeSet<_>>();
+            result.retain(|name| !arg_names.contains(name));
+            result
+        }
     }
 }
 
@@ -464,7 +478,7 @@ fn generate_expr_lambda(
         ctx.additional_definitions.push(inner);
         ctx.additional_definitions.extend(inner_inner);
         let mut curry_types = vec![ty];
-        for var in &used_variables {
+        for var in used_variables.iter().rev() {
             curry_types.push(Type::Function(
                 Box::new(ctx.locals[&ctx.get_name_of_local(&var.name)].ty.clone()),
                 Box::new(curry_types.last().unwrap().clone()),
@@ -931,7 +945,7 @@ fn generate_expr_impl(
                 ctx.additional_definitions.extend(inner_inner);
 
                 let mut curry_types = vec![original_def_ty];
-                for var in &used_variables {
+                for var in used_variables.iter().rev() {
                     curry_types.push(Type::Function(
                         Box::new(ctx.locals[&ctx.get_name_of_local(&var.name)].ty.clone()),
                         Box::new(curry_types.last().unwrap().clone()),

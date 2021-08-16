@@ -404,9 +404,17 @@ impl<'a> TypeChecker<'a> {
                         .collect::<DiagnosticResult<_>>()
                 });
                 // Check that the patterns we have generated are exhaustive.
-                let validated = cases_validated.deny().map(|cases_validated| {
-                    let arity = cases_validated[0].1.len();
-                    (cases_validated, arity)
+                let validated = cases_validated.deny().bind(|cases_validated| {
+                    if cases_validated.is_empty() {
+                        DiagnosticResult::fail(ErrorMessage::new(
+                            format!("no body was given for definition `{}`", def_name.name),
+                            Severity::Error,
+                            Diagnostic::at(self.source_file, &def_name.range),
+                        ))
+                    } else {
+                        let arity = cases_validated[0].1.len();
+                        DiagnosticResult::ok((cases_validated, arity))
+                    }
                 });
 
                 let (definition_parsed, mut inner_messages) = validated.destructure();

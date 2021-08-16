@@ -180,13 +180,28 @@ fn substitute_contents(
             range,
             type_variables,
         } => {
+            // Reorder the type variables so they're in the correct order for this symbol.
+            let expected_type_variable_order = &project_index.definition(&name).type_variables;
+            let mut type_variables = type_variables.into_iter().collect::<Vec<_>>();
+            type_variables.sort_by(|(name1, _), (name2, _)| {
+                // Compare their positions in the expected type variable order.
+                let pos1 = expected_type_variable_order
+                    .iter()
+                    .position(|param| param.name == *name1)
+                    .unwrap();
+                let pos2 = expected_type_variable_order
+                    .iter()
+                    .position(|param| param.name == *name2)
+                    .unwrap();
+                pos1.cmp(&pos2)
+            });
+
             // Check that all the type variables for this symbol are known.
             let type_variables = type_variables
-                .iter()
+                .into_iter()
                 .map(|(ty_name, ty_id)| {
                     let (ty, messages) =
-                        substitute_type(substitution, ty_id.clone(), source_file, range)
-                            .destructure();
+                        substitute_type(substitution, ty_id, source_file, range).destructure();
                     // The error message, if present, needs to be customised to state that the problem is with the type variable.
                     if let Some(ty) = ty {
                         DiagnosticResult::ok_with_many(ty, messages)

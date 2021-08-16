@@ -569,6 +569,15 @@ pub(crate) fn index(
     }
 
     for aspect in &file_parsed.aspects {
+        let aspect_type_variables = aspect
+            .type_params
+            .iter()
+            .map(|param| TypeParameter {
+                name: param.name.name.clone(),
+                parameters: param.parameters,
+            })
+            .collect::<Vec<_>>();
+
         match aspects.entry(aspect.identifier.name.clone()) {
             Entry::Occupied(occupied) => {
                 messages.push(name_used_earlier(
@@ -614,17 +623,72 @@ pub(crate) fn index(
                 if let Some(definitions) = definitions {
                     let aspect = AspectI {
                         name: aspect.identifier.clone(),
-                        type_variables: aspect
-                            .type_params
-                            .iter()
-                            .map(|param| TypeParameter {
-                                name: param.name.name.clone(),
-                                parameters: param.parameters,
-                            })
-                            .collect(),
+                        type_variables: aspect_type_variables.clone(),
                         definitions,
                     };
                     vacant.insert(aspect);
+                }
+            }
+        }
+
+        // Generate index entries for each definition in the aspect.
+        // Each entry `x: T` in `aspect I` creates a definition `x: impl I -> T`.
+        let impl_type = Type::Impl {
+            name: QualifiedName {
+                source_file: source_file.clone(),
+                name: aspect.identifier.name.clone(),
+                range: aspect.identifier.range,
+            },
+            parameters: aspect_type_variables
+                .iter()
+                .map(|param| Type::Variable {
+                    variable: param.name.clone(),
+                    // FIXME: Not sure how to get parameters to work with higher kinded types.
+                    parameters: Vec::new(),
+                })
+                .collect(),
+        };
+        for decl in &aspect.definitions {
+            match definitions.entry(decl.name.name.clone()) {
+                Entry::Occupied(occupied) => {
+                    messages.push(name_used_earlier(
+                        source_file,
+                        decl.name.range,
+                        occupied.get().name.range,
+                    ));
+                }
+                Entry::Vacant(vacant) => {
+                    // Let's add this definition into the map.
+                    let symbol_type = crate::type_resolve::resolve_typep(
+                        source_file,
+                        &decl.definition_type,
+                        &aspect_type_variables
+                            .iter()
+                            .map(|param| param.name.clone())
+                            .chain(decl.type_parameters.iter().map(|id| id.name.name.clone()))
+                            .collect(),
+                        &visible_types,
+                    );
+                    let (symbol_type, mut inner_messages) = symbol_type.destructure();
+                    messages.append(&mut inner_messages);
+                    if let Some(symbol_type) = symbol_type {
+                        let symbol_type =
+                            Type::Function(Box::new(impl_type.clone()), Box::new(symbol_type));
+                        let definition = DefinitionI {
+                            default: decl.default,
+                            name: decl.name.clone(),
+                            type_variables: aspect_type_variables
+                                .iter()
+                                .cloned()
+                                .chain(decl.type_parameters.iter().map(|param| TypeParameter {
+                                    name: param.name.name.clone(),
+                                    parameters: param.parameters,
+                                }))
+                                .collect(),
+                            symbol_type,
+                        };
+                        vacant.insert(definition);
+                    }
                 }
             }
         }
