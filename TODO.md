@@ -1,10 +1,10 @@
 - Make a proper `else` block for the `SwitchDiscriminant` LLVM IR.
 - Add an assert that the `ctx.func.func.source_file` comes from a specific "intrinsics" module inside LLVM IR creation of compiler intrinsics.
 - Decide what terms to use for high level constructs: project, package, module, crate, binary...?
-- Implement a proper vtable for function objects and dynamic trait objects. Should dynamic trait objects be limited to single dispatch?
 - Maybe add a keyword to hint to the compiler that we want heap allocation on a specific variable.
 - Convert `LLVMStructRepresentation` to a specialised `AnyTypeRepresentation` to avoid code duplication.
 - Implement pattern exhaustiveness check *in MIR*.
 - Try using symbol names `+, -` etc in weird places e.g. type parameters, to see what breaks.
 - Remove brackets around definitions (and the `def` keyword) to make it more like other functional languages.
 - Remove TypeVariable and replace with TypeVariableId wherever possible in type deduction algorithm.
+- Add function/impl inlining in MIR. After this is done, we can reform the type checker for higher kinded types, since HKT impls get inlined so can codegen properly.

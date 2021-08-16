@@ -776,7 +776,14 @@ pub(crate) fn bind_pattern_variables(
             let range = *range;
             let local = ctx.new_local_variable(LocalVariableInfo {
                 range,
-                ty,
+                ty: if let Some(borrow) = borrow {
+                    Type::Borrow {
+                        ty: Box::new(ty),
+                        borrow: Some(borrow),
+                    }
+                } else {
+                    ty
+                },
                 name: None,
             });
             let move_stmt = Statement {
