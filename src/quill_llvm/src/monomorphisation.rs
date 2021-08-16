@@ -14,8 +14,8 @@ use quill_mir::{
     mir::{ArgumentIndex, LocalVariableName},
     ProjectMIR,
 };
-use quill_reprs::data::FieldIndex;
 use quill_monomorphise::monomorphisation::MonomorphisedFunction;
+use quill_reprs::data::FieldIndex;
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
@@ -31,6 +31,8 @@ struct LLVMArgReprs<'ctx> {
     function_object: LLVMDataRepresentation<'ctx>,
 }
 
+// We allow the `fields` vec to be pushed one-by-one because it's more legible this way.
+#[allow(clippy::vec_init_then_push)]
 fn generate_arg_reprs<'ctx>(
     func: &MonomorphisedFunction,
     codegen: &CodeGenContext<'ctx>,
@@ -48,7 +50,7 @@ fn generate_arg_reprs<'ctx>(
             let ty = replace_type_variables(
                 info.ty.clone(),
                 &def.type_variables,
-                &func.mono.type_parameters(),
+                func.mono.type_parameters(),
             );
             reprs.repr(ty.clone()).map(|repr| (repr, ty))
         })

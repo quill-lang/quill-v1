@@ -7,11 +7,7 @@ use inkwell::{
     AddressSpace,
 };
 use quill_common::location::Range;
-use quill_monomorphise::monomorphisation::MonomorphisedType;
-use quill_reprs::{
-    data::{DataRepresentation, EnumRepresentation, FieldIndex},
-    sort_types::MonomorphisedItem,
-};
+use quill_reprs::data::{DataRepresentation, EnumRepresentation, FieldIndex};
 use quill_type::Type;
 
 use crate::{codegen::CodeGenContext, debug::source_file_debug_info};
@@ -95,7 +91,7 @@ impl<'ctx> LLVMDataRepresentation<'ctx> {
                 llvm_repr: Some(LLVMStructRepresentation::new(reprs.codegen, llvm_ty)),
                 di_type,
                 di_file,
-                range: ty.range.clone(),
+                range: ty.range,
                 field_indices: ty.field_indices().clone(),
                 field_types: ty.field_types().clone(),
                 name: ty.name.clone(),

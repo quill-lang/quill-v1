@@ -99,17 +99,17 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                 MonomorphisedItem::Type(ty) => {
                     let decl = index.type_decl(&ty.name);
                     match &decl.decl_type {
-                        TypeDeclarationTypeI::Data(datai) => {
+                        TypeDeclarationTypeI::Data(_) => {
                             let repr = prev_reprs.get_data(&ty).unwrap();
                             reprs
                                 .datas
                                 .insert(ty, LLVMDataRepresentation::new(&reprs, repr));
                         }
-                        TypeDeclarationTypeI::Enum(enumi) => {
+                        TypeDeclarationTypeI::Enum(_) => {
                             let repr = prev_reprs.get_enum(&ty).unwrap();
                             reprs
                                 .enums
-                                .insert(ty, LLVMEnumRepresentation::new(&reprs, &repr));
+                                .insert(ty, LLVMEnumRepresentation::new(&reprs, repr));
                         }
                     };
                 }
@@ -117,7 +117,7 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                     let repr = prev_reprs.get_aspect(&asp).unwrap();
                     reprs
                         .aspects
-                        .insert(asp, LLVMDataRepresentation::new(&reprs, &repr));
+                        .insert(asp, LLVMDataRepresentation::new(&reprs, repr));
                 }
             }
         }
