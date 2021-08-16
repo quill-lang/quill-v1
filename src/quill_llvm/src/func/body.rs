@@ -13,13 +13,13 @@ use quill_mir::mir::{
     ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Place,
     PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };
-use quill_parser::expr_pat::ConstantValue;
 use quill_monomorphise::{
     monomorphisation::{
         MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
     },
     monomorphise::monomorphise,
 };
+use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
