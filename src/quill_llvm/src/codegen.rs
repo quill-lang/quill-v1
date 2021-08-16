@@ -12,9 +12,10 @@ use inkwell::{
 };
 use quill_index::ProjectIndex;
 use quill_mir::mir::LocalVariableName;
+use quill_monomorphise::MonomorphisedFunction;
 use quill_target::{TargetArchitecture, TargetTriple};
 
-use crate::{monomorphisation::MonomorphisedFunction, repr::Representations};
+use crate::repr::Representations;
 
 pub struct CodeGenContext<'ctx> {
     pub context: &'ctx Context,

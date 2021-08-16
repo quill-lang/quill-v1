@@ -13,13 +13,9 @@ use inkwell::{
 use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
 use quill_type::{PrimitiveType, Type};
 
-use crate::{
-    codegen::CodeGenContext,
-    monomorphisation::{
-        FunctionObjectDescriptor, MonomorphisationParameters, MonomorphisedAspect,
-        MonomorphisedType,
-    },
-    sort_types::MonomorphisedItem,
+use crate::{codegen::CodeGenContext, sort_types::MonomorphisedItem};
+use quill_monomorphise::{
+    FunctionObjectDescriptor, MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType,
 };
 
 use self::{

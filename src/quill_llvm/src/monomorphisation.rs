@@ -1,17 +1,3 @@
-use std::{collections::BTreeSet, fmt::Display};
-
-use inkwell::{
-    types::{BasicTypeEnum, FunctionType},
-    AddressSpace,
-};
-use quill_common::name::QualifiedName;
-use quill_mir::{
-    mir::{ArgumentIndex, DefinitionBodyM, LocalVariableName, StatementKind},
-    ProjectMIR,
-};
-use quill_type::Type;
-use quill_type_deduce::replace_type_variables;
-
 use crate::{
     codegen::CodeGenContext,
     repr::{
@@ -20,300 +6,17 @@ use crate::{
         Representations,
     },
 };
-
-#[derive(Debug)]
-pub struct Monomorphisation {
-    pub types: BTreeSet<MonomorphisedType>,
-    pub functions: BTreeSet<MonomorphisedFunction>,
-    /// Tracks which monomorphisations of aspects have been used.
-    /// This does *not* track which impls have been used.
-    pub aspects: BTreeSet<MonomorphisedAspect>,
-}
-
-impl Monomorphisation {
-    /// Monomorphise the project. We start by considering the "main" function, and then
-    /// track everything that it calls, so that we can work out which concrete type parameters
-    /// are used.
-    pub fn new(mir: &ProjectMIR) -> Self {
-        let mut mono = Self {
-            types: BTreeSet::new(),
-            functions: BTreeSet::new(),
-            aspects: BTreeSet::new(),
-        };
-
-        mono.track_def(
-            mir,
-            mir.entry_point.clone(),
-            MonomorphisationParameters {
-                type_parameters: Vec::new(),
-            },
-            true,
-            Vec::new(),
-        );
-
-        // println!("Mono: {:#?}", mono);
-
-        mono
-    }
-
-    /// Assuming that this definition has the given possible monomorphisation parameters, track further required
-    /// monomorphisation.
-    fn track_def(
-        &mut self,
-        mir: &ProjectMIR,
-        func: QualifiedName,
-        mono: MonomorphisationParameters,
-        direct: bool,
-        curry_steps: Vec<u64>,
-    ) {
-        let def = &mir.files[&func.source_file].definitions[&func.name];
-        if self.functions.insert(MonomorphisedFunction {
-            func: func.clone(),
-            mono: mono.clone(),
-            curry_steps: curry_steps.clone(),
-            direct,
-        }) {
-            // Work out what functions are called (and what types are referenced) by this function.
-            for info in def.local_variable_names.values() {
-                let ty = replace_type_variables(
-                    info.ty.clone(),
-                    &def.type_variables,
-                    &mono.type_parameters,
-                );
-                self.track_type(ty);
-            }
-
-            if let DefinitionBodyM::PatternMatch(cfg) = &def.body {
-                for block in cfg.basic_blocks.values() {
-                    for stmt in &block.statements {
-                        match &stmt.kind {
-                            StatementKind::InvokeFunction {
-                                name,
-                                type_variables,
-                                ..
-                            } => {
-                                self.track_def(
-                                    mir,
-                                    name.clone(),
-                                    MonomorphisationParameters {
-                                        type_parameters: type_variables
-                                            .iter()
-                                            .cloned()
-                                            .map(|ty| {
-                                                replace_type_variables(
-                                                    ty,
-                                                    &def.type_variables,
-                                                    &mono.type_parameters,
-                                                )
-                                            })
-                                            .collect(),
-                                    },
-                                    true,
-                                    Vec::new(),
-                                );
-                            }
-                            StatementKind::ConstructFunctionObject {
-                                name,
-                                type_variables,
-                                curry_steps,
-                                ..
-                            } => {
-                                self.track_def(
-                                    mir,
-                                    name.clone(),
-                                    MonomorphisationParameters {
-                                        type_parameters: type_variables
-                                            .iter()
-                                            .cloned()
-                                            .map(|ty| {
-                                                replace_type_variables(
-                                                    ty,
-                                                    &def.type_variables,
-                                                    &mono.type_parameters,
-                                                )
-                                            })
-                                            .collect(),
-                                    },
-                                    true,
-                                    curry_steps.clone(),
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            // Add all functions that are generated by partially applying this one.
-            let mut next_curry_steps = curry_steps;
-            while !next_curry_steps.is_empty() {
-                self.track_def(
-                    mir,
-                    func.clone(),
-                    mono.clone(),
-                    false,
-                    next_curry_steps.clone(),
-                );
-                next_curry_steps.remove(0);
-            }
-        }
-    }
-
-    fn track_type(&mut self, ty: Type) {
-        match ty {
-            Type::Named { name, parameters } => {
-                self.types.insert(MonomorphisedType {
-                    name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
-                });
-            }
-            Type::Impl { name, parameters } => {
-                self.aspects.insert(MonomorphisedAspect {
-                    name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
-                });
-            }
-            _ => {}
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MonomorphisationParameters {
-    type_parameters: Vec<Type>,
-}
-
-impl MonomorphisationParameters {
-    pub fn new(type_parameters: Vec<Type>) -> Self {
-        Self {
-            type_parameters: type_parameters
-                .into_iter()
-                .map(Type::anonymise_borrows)
-                .collect(),
-        }
-    }
-
-    /// Get a reference to the type parameters.
-    pub fn type_parameters(&self) -> &[Type] {
-        self.type_parameters.as_slice()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MonomorphisedType {
-    pub name: QualifiedName,
-    pub mono: MonomorphisationParameters,
-}
-
-impl Display for MonomorphisedType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "t/{}", self.name)?;
-        if !self.mono.type_parameters.is_empty() {
-            write!(f, "[")?;
-            for ty_param in &self.mono.type_parameters {
-                write!(f, "{},", ty_param)?;
-            }
-            write!(f, "]")?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MonomorphisedFunction {
-    pub func: QualifiedName,
-    pub mono: MonomorphisationParameters,
-    /// Must never contain a zero.
-    pub curry_steps: Vec<u64>,
-    /// If this is true, the function will be monomorphised as a "direct" function; no function pointer is supplied and
-    /// all arguments before (but NOT including) the given curry steps are given as function parameters. The return type is a function object
-    /// that will compute the result of the function when executed with an "indirect" function call (or multiple in a chain).
-    /// If this is false, the function is considered "indirect"; a function pointer (representing this function) is supplied as
-    /// the first parameter. The next n parameters are the params for the first curry step.
-    ///
-    /// For example, if `curry_steps = [1,1]`, `arity = 2`, and `direct = false` then the function's signature will be
-    /// `(fobj0, first parameter) -> fobj1` where `fobj0` is a function object containing no data, and `fobj1` is a function
-    /// object storing the first parameter, pointing to an this function with `curry_steps = [1]` and `direct = false`.
-    ///
-    /// If `curry_steps = [1,1]`, `arity = 2`, and `direct = true` then the function's signature will be
-    /// `() -> fobj0` where `fobj0` if a function object containing no data and pointing to this function with `curry_steps = [1,1]`
-    /// and `direct = false`.
-    ///
-    /// We can think of indirect functions as "going one level down the currying chain", since they always consume and emit a function
-    /// object (unless, of course, this is the last currying step - in which case the actual function is executed and its return type
-    /// becomes the only return value). Direct functions allow us to "jump inside the currying chain" - providing an amount of parameters,
-    /// we can create a function object holding these parameters.
-    pub direct: bool,
-}
-
-impl Display for MonomorphisedFunction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.func)?;
-        if !self.mono.type_parameters.is_empty() {
-            write!(f, "[")?;
-            for ty_param in &self.mono.type_parameters {
-                write!(f, "{},", ty_param)?;
-            }
-            write!(f, "]")?;
-        }
-        write!(f, "/{:?}", self.curry_steps)?;
-        if self.direct {
-            write!(f, "d")
-        } else {
-            write!(f, "i")
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MonomorphisedAspect {
-    pub name: QualifiedName,
-    pub mono: MonomorphisationParameters,
-}
-
-impl Display for MonomorphisedAspect {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "a/{}", self.name)?;
-        if !self.mono.type_parameters.is_empty() {
-            write!(f, "[")?;
-            for ty_param in &self.mono.type_parameters {
-                write!(f, "{},", ty_param)?;
-            }
-            write!(f, "]")?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FunctionObjectDescriptor {
-    pub func: QualifiedName,
-    pub mono: MonomorphisationParameters,
-    /// If this monomorphisation of this function requires a currying step,
-    /// this contains the amount of parameters applied in the *last* such step.
-    pub last_curry_step: Option<u64>,
-}
-
-impl Display for FunctionObjectDescriptor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "o/{}", self.func)?;
-        if !self.mono.type_parameters.is_empty() {
-            write!(f, "[")?;
-            for ty_param in &self.mono.type_parameters {
-                write!(f, "{},", ty_param)?;
-            }
-            write!(f, "]")?;
-        }
-        if let Some(last) = self.last_curry_step {
-            write!(f, "/{}", last)?;
-        }
-        Ok(())
-    }
-}
+use inkwell::{
+    types::{BasicTypeEnum, FunctionType},
+    AddressSpace,
+};
+use quill_mir::{
+    mir::{ArgumentIndex, LocalVariableName},
+    ProjectMIR,
+};
+use quill_monomorphise::MonomorphisedFunction;
+use quill_type::Type;
+use quill_type_deduce::replace_type_variables;
 
 /// Stores the representations of a monomorphised function's arguments and return type.
 struct ArgReprs<'ctx> {
@@ -327,120 +30,155 @@ struct ArgReprs<'ctx> {
     function_object: DataRepresentation<'ctx>,
 }
 
-impl MonomorphisedFunction {
-    pub fn function_object_descriptor(&self) -> FunctionObjectDescriptor {
-        FunctionObjectDescriptor {
-            func: self.func.clone(),
-            mono: self.mono.clone(),
-            last_curry_step: self.curry_steps.last().copied(),
-        }
+fn generate_arg_reprs<'ctx>(
+    func: &MonomorphisedFunction,
+    codegen: &CodeGenContext<'ctx>,
+    reprs: &mut Representations<'_, 'ctx>,
+    mir: &ProjectMIR,
+) -> ArgReprs<'ctx> {
+    let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
+
+    let args_options = (0..def.arity)
+        .map(|i| {
+            let info = def
+                .local_variable_names
+                .get(&LocalVariableName::Argument(ArgumentIndex(i)))
+                .unwrap();
+            let ty = replace_type_variables(
+                info.ty.clone(),
+                &def.type_variables,
+                &func.mono.type_parameters(),
+            );
+            reprs.repr(ty.clone()).map(|repr| (repr, ty))
+        })
+        .collect::<Vec<_>>();
+
+    let mut arg_repr_indices = Vec::new();
+    for arg in &args_options {
+        arg_repr_indices.push(arg.as_ref().map(|_| arg_repr_indices.len()));
     }
+    let args_with_reprs = args_options.iter().cloned().flatten().collect::<Vec<_>>();
 
-    fn generate_arg_reprs<'ctx>(
-        &self,
-        codegen: &CodeGenContext<'ctx>,
-        reprs: &mut Representations<'_, 'ctx>,
-        mir: &ProjectMIR,
-    ) -> ArgReprs<'ctx> {
-        let def = &mir.files[&self.func.source_file].definitions[&self.func.name];
+    let return_type = replace_type_variables(
+        def.return_type.clone(),
+        &def.type_variables,
+        &func.mono.type_parameters(),
+    );
 
-        let args_options = (0..def.arity)
-            .map(|i| {
-                let info = def
-                    .local_variable_names
-                    .get(&LocalVariableName::Argument(ArgumentIndex(i)))
-                    .unwrap();
-                let ty = replace_type_variables(
-                    info.ty.clone(),
-                    &def.type_variables,
-                    &self.mono.type_parameters,
-                );
-                reprs.repr(ty.clone()).map(|repr| (repr, ty))
-            })
-            .collect::<Vec<_>>();
-
-        let mut arg_repr_indices = Vec::new();
-        for arg in &args_options {
-            arg_repr_indices.push(arg.as_ref().map(|_| arg_repr_indices.len()));
+    let descriptor = func.function_object_descriptor();
+    let function_object = if let Some(repr) = reprs.get_fobj(&descriptor) {
+        repr.clone()
+    } else {
+        let mut builder = DataRepresentationBuilder::new(reprs);
+        // Add the function pointer as the first field.
+        builder.add_field_raw(
+            ".fptr".to_string(),
+            Some(AnyTypeRepresentation::new(
+                codegen,
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+                reprs.general_func_obj_ty.di_type,
+            )),
+        );
+        // Add the copy function as the second field.
+        builder.add_field_raw(
+            ".copy".to_string(),
+            Some(AnyTypeRepresentation::new(
+                codegen,
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+                reprs.general_func_obj_ty.di_type,
+            )),
+        );
+        // Add the drop function as the third field.
+        builder.add_field_raw(
+            ".drop".to_string(),
+            Some(AnyTypeRepresentation::new(
+                codegen,
+                codegen
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::Generic)
+                    .into(),
+                reprs.general_func_obj_ty.di_type,
+            )),
+        );
+        // Add only the arguments not pertaining to the last currying step.
+        for i in 0..def.arity - func.curry_steps.last().copied().unwrap_or(0) {
+            if let Some((repr, ty)) =
+                arg_repr_indices[i as usize].map(|i| args_with_reprs[i].clone())
+            {
+                builder.add_field_raw_with_type(format!("field_{}", i), Some(repr), ty);
+            }
         }
-        let args_with_reprs = args_options.iter().cloned().flatten().collect::<Vec<_>>();
 
-        let return_type = replace_type_variables(
-            def.return_type.clone(),
-            &def.type_variables,
-            &self.mono.type_parameters,
+        let repr = builder.build(
+            &func.func.source_file,
+            func.func.range,
+            descriptor.to_string(),
         );
 
-        let descriptor = self.function_object_descriptor();
-        let function_object = if let Some(repr) = reprs.get_fobj(&descriptor) {
-            repr.clone()
-        } else {
-            let mut builder = DataRepresentationBuilder::new(reprs);
-            // Add the function pointer as the first field.
-            builder.add_field_raw(
-                ".fptr".to_string(),
-                Some(AnyTypeRepresentation::new(
-                    codegen,
-                    codegen
-                        .context
-                        .i8_type()
-                        .ptr_type(AddressSpace::Generic)
-                        .into(),
-                    reprs.general_func_obj_ty.di_type,
-                )),
-            );
-            // Add the copy function as the second field.
-            builder.add_field_raw(
-                ".copy".to_string(),
-                Some(AnyTypeRepresentation::new(
-                    codegen,
-                    codegen
-                        .context
-                        .i8_type()
-                        .ptr_type(AddressSpace::Generic)
-                        .into(),
-                    reprs.general_func_obj_ty.di_type,
-                )),
-            );
-            // Add the drop function as the third field.
-            builder.add_field_raw(
-                ".drop".to_string(),
-                Some(AnyTypeRepresentation::new(
-                    codegen,
-                    codegen
-                        .context
-                        .i8_type()
-                        .ptr_type(AddressSpace::Generic)
-                        .into(),
-                    reprs.general_func_obj_ty.di_type,
-                )),
-            );
-            // Add only the arguments not pertaining to the last currying step.
-            for i in 0..def.arity - self.curry_steps.last().copied().unwrap_or(0) {
-                if let Some((repr, ty)) =
-                    arg_repr_indices[i as usize].map(|i| args_with_reprs[i].clone())
-                {
-                    builder.add_field_raw_with_type(format!("field_{}", i), Some(repr), ty);
+        // Now, define all the relevant copy and drop functions for this function object.
+        // We need to make a copy/drop function for every possible amount of fields stored in this function object.
+        for fields_stored in 0..=def.arity - func.curry_steps.last().copied().unwrap_or(0) {
+            // Unlike the drop/copy functions for known types,
+            // function object drop/copy functions take/return pointers, not raw values.
+
+            // Generate the drop function.
+            {
+                let func = codegen.module.add_function(
+                    &format!("drop/{}#{}", descriptor.to_string(), fields_stored),
+                    codegen.context.void_type().fn_type(
+                        &[repr
+                            .llvm_repr
+                            .as_ref()
+                            .unwrap()
+                            .ty
+                            .ptr_type(AddressSpace::Generic)
+                            .into()],
+                        false,
+                    ),
+                    None,
+                );
+                let block = codegen.context.append_basic_block(func, "drop");
+                codegen.builder.position_at_end(block);
+                codegen.builder.unset_current_debug_location();
+
+                let ptr = func.get_first_param().unwrap().into_pointer_value();
+                for field_name in repr.field_indices().keys() {
+                    // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
+                    let assigned = match repr.field_indices()[field_name] {
+                        FieldIndex::Heap(i) | FieldIndex::Literal(i) => {
+                            // The +3 and minimum value of 3 are because fptr/drop/copy functions are the first three entries of the structure.
+                            3 <= i && i < fields_stored as u32 + 3
+                        }
+                    };
+                    if assigned {
+                        let ptr_to_field = repr.load(codegen, reprs, ptr, field_name).unwrap();
+                        let ty = repr.field_ty(field_name).unwrap().clone();
+                        reprs.drop_ptr(ty, ptr_to_field);
+                    }
                 }
+                repr.free_fields(codegen, ptr);
+                codegen.builder.build_return(None);
             }
 
-            let repr = builder.build(
-                &self.func.source_file,
-                self.func.range,
-                descriptor.to_string(),
-            );
-
-            // Now, define all the relevant copy and drop functions for this function object.
-            // We need to make a copy/drop function for every possible amount of fields stored in this function object.
-            for fields_stored in 0..=def.arity - self.curry_steps.last().copied().unwrap_or(0) {
-                // Unlike the drop/copy functions for known types,
-                // function object drop/copy functions take/return pointers, not raw values.
-
-                // Generate the drop function.
-                {
-                    let func = codegen.module.add_function(
-                        &format!("drop/{}#{}", descriptor.to_string(), fields_stored),
-                        codegen.context.void_type().fn_type(
+            // Generate the copy function.
+            {
+                let func = codegen.module.add_function(
+                    &format!("copy/{}#{}", descriptor.to_string(), fields_stored),
+                    repr.llvm_repr
+                        .as_ref()
+                        .unwrap()
+                        .ty
+                        .ptr_type(AddressSpace::Generic)
+                        .fn_type(
                             &[repr
                                 .llvm_repr
                                 .as_ref()
@@ -450,241 +188,191 @@ impl MonomorphisedFunction {
                                 .into()],
                             false,
                         ),
-                        None,
-                    );
-                    let block = codegen.context.append_basic_block(func, "drop");
-                    codegen.builder.position_at_end(block);
-                    codegen.builder.unset_current_debug_location();
+                    None,
+                );
+                let block = codegen.context.append_basic_block(func, "copy");
+                codegen.builder.position_at_end(block);
+                codegen.builder.unset_current_debug_location();
 
-                    let ptr = func.get_first_param().unwrap().into_pointer_value();
-                    for field_name in repr.field_indices().keys() {
-                        // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
-                        let assigned = match repr.field_indices()[field_name] {
-                            FieldIndex::Heap(i) | FieldIndex::Literal(i) => {
-                                // The +3 and minimum value of 3 are because fptr/drop/copy functions are the first three entries of the structure.
-                                3 <= i && i < fields_stored as u32 + 3
-                            }
-                        };
-                        if assigned {
-                            let ptr_to_field = repr.load(codegen, reprs, ptr, field_name).unwrap();
-                            let ty = repr.field_ty(field_name).unwrap().clone();
-                            reprs.drop_ptr(ty, ptr_to_field);
-                        }
-                    }
-                    repr.free_fields(codegen, ptr);
-                    codegen.builder.build_return(None);
-                }
-
-                // Generate the copy function.
-                {
-                    let func = codegen.module.add_function(
-                        &format!("copy/{}#{}", descriptor.to_string(), fields_stored),
+                // Since we return a pointer, we must malloc the return value.
+                let source = func.get_first_param().unwrap().into_pointer_value();
+                let ptr = codegen
+                    .builder
+                    .build_call(
+                        codegen.libc("malloc"),
+                        &[codegen
+                            .context
+                            .i64_type()
+                            .const_int(
+                                codegen
+                                    .target_data()
+                                    .get_store_size(&repr.llvm_repr.as_ref().unwrap().ty),
+                                false,
+                            )
+                            .into()],
+                        "return_value_raw",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left()
+                    .into_pointer_value();
+                let ptr = codegen
+                    .builder
+                    .build_bitcast(
+                        ptr,
                         repr.llvm_repr
                             .as_ref()
                             .unwrap()
                             .ty
-                            .ptr_type(AddressSpace::Generic)
-                            .fn_type(
-                                &[repr
-                                    .llvm_repr
-                                    .as_ref()
-                                    .unwrap()
-                                    .ty
-                                    .ptr_type(AddressSpace::Generic)
-                                    .into()],
-                                false,
-                            ),
-                        None,
-                    );
-                    let block = codegen.context.append_basic_block(func, "copy");
-                    codegen.builder.position_at_end(block);
-                    codegen.builder.unset_current_debug_location();
+                            .ptr_type(AddressSpace::Generic),
+                        "return_value",
+                    )
+                    .into_pointer_value();
 
-                    // Since we return a pointer, we must malloc the return value.
-                    let source = func.get_first_param().unwrap().into_pointer_value();
-                    let ptr = codegen
-                        .builder
-                        .build_call(
-                            codegen.libc("malloc"),
-                            &[codegen
-                                .context
-                                .i64_type()
-                                .const_int(
-                                    codegen
-                                        .target_data()
-                                        .get_store_size(&repr.llvm_repr.as_ref().unwrap().ty),
-                                    false,
-                                )
-                                .into()],
-                            "return_value_raw",
-                        )
-                        .try_as_basic_value()
-                        .unwrap_left()
-                        .into_pointer_value();
-                    let ptr = codegen
-                        .builder
-                        .build_bitcast(
-                            ptr,
-                            repr.llvm_repr
-                                .as_ref()
-                                .unwrap()
-                                .ty
-                                .ptr_type(AddressSpace::Generic),
-                            "return_value",
-                        )
-                        .into_pointer_value();
+                // Copy each field over into the new value.
+                // Start by allocating sufficient space on the heap for the new values.
+                repr.malloc_fields(codegen, reprs, ptr);
 
-                    // Copy each field over into the new value.
-                    // Start by allocating sufficient space on the heap for the new values.
-                    repr.malloc_fields(codegen, reprs, ptr);
+                // Copy over the fptr, copy, drop functions.
+                let fptr = repr.load(codegen, reprs, source, ".fptr").unwrap();
+                repr.store_ptr(codegen, reprs, ptr, fptr, ".fptr");
+                let copy = repr.load(codegen, reprs, source, ".copy").unwrap();
+                repr.store_ptr(codegen, reprs, ptr, copy, ".copy");
+                let drop = repr.load(codegen, reprs, source, ".drop").unwrap();
+                repr.store_ptr(codegen, reprs, ptr, drop, ".drop");
 
-                    // Copy over the fptr, copy, drop functions.
-                    let fptr = repr.load(codegen, reprs, source, ".fptr").unwrap();
-                    repr.store_ptr(codegen, reprs, ptr, fptr, ".fptr");
-                    let copy = repr.load(codegen, reprs, source, ".copy").unwrap();
-                    repr.store_ptr(codegen, reprs, ptr, copy, ".copy");
-                    let drop = repr.load(codegen, reprs, source, ".drop").unwrap();
-                    repr.store_ptr(codegen, reprs, ptr, drop, ".drop");
-
-                    // Now, for each field, copy it over.
-                    for field_name in repr.field_indices().keys() {
-                        // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
-                        let assigned = match repr.field_indices()[field_name] {
-                            FieldIndex::Heap(i) | FieldIndex::Literal(i) => {
-                                // The +3 and minimum value of 3 are because fptr/drop/copy functions are the first three entries of the structure.
-                                3 <= i && i < fields_stored as u32 + 3
-                            }
-                        };
-                        if assigned {
-                            // Get the field from the source.
-                            if let Some(source_field) =
-                                repr.load(codegen, reprs, source, field_name)
-                            {
-                                // Copy the field.
-                                let source_field_copied = reprs
-                                    .copy_ptr(
-                                        repr.field_ty(field_name).unwrap().clone(),
-                                        source_field,
-                                    )
-                                    .unwrap();
-                                repr.store(codegen, reprs, ptr, source_field_copied, field_name);
-                            }
+                // Now, for each field, copy it over.
+                for field_name in repr.field_indices().keys() {
+                    // Check if this field has been assigned, given that we've assigned to the first `fields_stored` fields.
+                    let assigned = match repr.field_indices()[field_name] {
+                        FieldIndex::Heap(i) | FieldIndex::Literal(i) => {
+                            // The +3 and minimum value of 3 are because fptr/drop/copy functions are the first three entries of the structure.
+                            3 <= i && i < fields_stored as u32 + 3
+                        }
+                    };
+                    if assigned {
+                        // Get the field from the source.
+                        if let Some(source_field) = repr.load(codegen, reprs, source, field_name) {
+                            // Copy the field.
+                            let source_field_copied = reprs
+                                .copy_ptr(repr.field_ty(field_name).unwrap().clone(), source_field)
+                                .unwrap();
+                            repr.store(codegen, reprs, ptr, source_field_copied, field_name);
                         }
                     }
-
-                    codegen.builder.build_return(Some(&ptr));
                 }
+
+                codegen.builder.build_return(Some(&ptr));
             }
-
-            reprs.insert_fobj(descriptor, repr.clone());
-            repr
-        };
-
-        ArgReprs {
-            arg_repr_indices,
-            args_with_reprs,
-            return_type: reprs.repr(return_type).map(|repr| repr.llvm_type),
-            arity: def.arity,
-            function_object,
         }
+
+        reprs.insert_fobj(descriptor, repr.clone());
+        repr
+    };
+
+    ArgReprs {
+        arg_repr_indices,
+        args_with_reprs,
+        return_type: reprs.repr(return_type).map(|repr| repr.llvm_type),
+        arity: def.arity,
+        function_object,
     }
+}
 
-    fn generate_llvm_type<'ctx>(
-        &self,
-        codegen: &CodeGenContext<'ctx>,
-        reprs: &mut Representations<'_, 'ctx>,
-        mir: &ProjectMIR,
-    ) -> FunctionType<'ctx> {
-        let arg_reprs = self.generate_arg_reprs(codegen, reprs, mir);
+fn generate_llvm_type<'ctx>(
+    func: &MonomorphisedFunction,
+    codegen: &CodeGenContext<'ctx>,
+    reprs: &mut Representations<'_, 'ctx>,
+    mir: &ProjectMIR,
+) -> FunctionType<'ctx> {
+    let arg_reprs = generate_arg_reprs(func, codegen, reprs, mir);
 
-        let curry_steps_amount = self.curry_steps.iter().sum::<u64>() as usize;
+    let curry_steps_amount = func.curry_steps.iter().sum::<u64>() as usize;
 
-        // Check to see if this function is direct or indirect.
-        if self.direct {
-            // The parameters to this function are exactly the first n arguments, where n = arity - sum(curry_steps).
-            // But some of these args may not have representations, so we'll need to be careful.
-            let real_args = (0..arg_reprs.arity as usize
-                - self.curry_steps.iter().sum::<u64>() as usize)
-                .filter_map(|idx| {
-                    arg_reprs.arg_repr_indices[idx]
-                        .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
+    // Check to see if this function is direct or indirect.
+    if func.direct {
+        // The parameters to this function are exactly the first n arguments, where n = arity - sum(curry_steps).
+        // But some of these args may not have representations, so we'll need to be careful.
+        let real_args = (0..arg_reprs.arity as usize
+            - func.curry_steps.iter().sum::<u64>() as usize)
+            .filter_map(|idx| {
+                arg_reprs.arg_repr_indices[idx]
+                    .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
+            })
+            .collect::<Vec<_>>();
+
+        // The return value is the function return type if curry_steps_amount == 0, else it's a function object.
+        if curry_steps_amount == 0 {
+            arg_reprs
+                .return_type
+                .map(|repr| match repr {
+                    BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
+                    BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
+                    BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
+                    BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&real_args, false),
+                    BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&real_args, false),
+                    BasicTypeEnum::VectorType(vec) => vec.fn_type(&real_args, false),
                 })
-                .collect::<Vec<_>>();
-
-            // The return value is the function return type if curry_steps_amount == 0, else it's a function object.
-            if curry_steps_amount == 0 {
-                arg_reprs
-                    .return_type
-                    .map(|repr| match repr {
-                        BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
-                        BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
-                        BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
-                        BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&real_args, false),
-                        BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&real_args, false),
-                        BasicTypeEnum::VectorType(vec) => vec.fn_type(&real_args, false),
-                    })
-                    .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
-            } else {
-                arg_reprs
-                    .function_object
-                    .llvm_repr
-                    .unwrap()
-                    .ty
-                    .ptr_type(AddressSpace::Generic)
-                    .fn_type(&real_args, false)
-            }
+                .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
         } else {
-            // The parameters to this function are a function ptr, and then the first n arguments, where n = curry_steps[0].
-            // But some of these args may not have representations, so we'll need to be careful.
-            let mut real_args = vec![arg_reprs
+            arg_reprs
                 .function_object
                 .llvm_repr
-                .as_ref()
                 .unwrap()
                 .ty
                 .ptr_type(AddressSpace::Generic)
-                .into()];
-            let args_already_calculated = arg_reprs.arity as usize - curry_steps_amount;
-            real_args.extend(
-                (args_already_calculated..args_already_calculated + self.curry_steps[0] as usize)
-                    .filter_map(|idx| {
-                        arg_reprs.arg_repr_indices[idx]
-                            .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
-                    }),
-            );
+                .fn_type(&real_args, false)
+        }
+    } else {
+        // The parameters to this function are a function ptr, and then the first n arguments, where n = curry_steps[0].
+        // But some of these args may not have representations, so we'll need to be careful.
+        let mut real_args = vec![arg_reprs
+            .function_object
+            .llvm_repr
+            .as_ref()
+            .unwrap()
+            .ty
+            .ptr_type(AddressSpace::Generic)
+            .into()];
+        let args_already_calculated = arg_reprs.arity as usize - curry_steps_amount;
+        real_args.extend(
+            (args_already_calculated..args_already_calculated + func.curry_steps[0] as usize)
+                .filter_map(|idx| {
+                    arg_reprs.arg_repr_indices[idx]
+                        .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
+                }),
+        );
 
-            if self.curry_steps.len() == 1 {
-                arg_reprs
-                    .return_type
-                    .map(|repr| match repr {
-                        BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
-                        BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
-                        BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
-                        BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&real_args, false),
-                        BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&real_args, false),
-                        BasicTypeEnum::VectorType(vec) => vec.fn_type(&real_args, false),
-                    })
-                    .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
-            } else {
-                arg_reprs
-                    .function_object
-                    .llvm_repr
-                    .unwrap()
-                    .ty
-                    .ptr_type(AddressSpace::Generic)
-                    .fn_type(&real_args, false)
-            }
+        if func.curry_steps.len() == 1 {
+            arg_reprs
+                .return_type
+                .map(|repr| match repr {
+                    BasicTypeEnum::ArrayType(array) => array.fn_type(&real_args, false),
+                    BasicTypeEnum::FloatType(float) => float.fn_type(&real_args, false),
+                    BasicTypeEnum::IntType(int) => int.fn_type(&real_args, false),
+                    BasicTypeEnum::PointerType(ptr) => ptr.fn_type(&real_args, false),
+                    BasicTypeEnum::StructType(a_struct) => a_struct.fn_type(&real_args, false),
+                    BasicTypeEnum::VectorType(vec) => vec.fn_type(&real_args, false),
+                })
+                .unwrap_or_else(|| codegen.context.void_type().fn_type(&real_args, false))
+        } else {
+            arg_reprs
+                .function_object
+                .llvm_repr
+                .unwrap()
+                .ty
+                .ptr_type(AddressSpace::Generic)
+                .fn_type(&real_args, false)
         }
     }
+}
 
-    /// Generates the LLVM type representing this function, then adds the type to the codegen module.
-    pub fn add_llvm_type<'ctx>(
-        &self,
-        codegen: &CodeGenContext<'ctx>,
-        reprs: &mut Representations<'_, 'ctx>,
-        mir: &ProjectMIR,
-    ) {
-        let ty = self.generate_llvm_type(codegen, reprs, mir);
-        codegen.module.add_function(&self.to_string(), ty, None);
-    }
+/// Generates the LLVM type representing this function, then adds the type to the codegen module.
+pub fn add_llvm_type<'ctx>(
+    func: &MonomorphisedFunction,
+    codegen: &CodeGenContext<'ctx>,
+    reprs: &mut Representations<'_, 'ctx>,
+    mir: &ProjectMIR,
+) {
+    let ty = generate_llvm_type(func, codegen, reprs, mir);
+    codegen.module.add_function(&func.to_string(), ty, None);
 }

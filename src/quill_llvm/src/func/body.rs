@@ -13,6 +13,10 @@ use quill_mir::mir::{
     ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Place,
     PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };
+use quill_monomorphise::{
+    monomorphise, MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction,
+    MonomorphisedType,
+};
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
@@ -21,11 +25,7 @@ use crate::{
     codegen::{BodyCreationContext, CodeGenContext},
     func::{
         lifetime::{lifetime_end, lifetime_end_if_moved, lifetime_start},
-        monomorphise::monomorphise,
         rvalue::{get_pointer_to_rvalue, get_pointer_to_rvalue_arg, get_type_of_rvalue},
-    },
-    monomorphisation::{
-        MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
     },
     repr::Representations,
 };
@@ -35,7 +35,7 @@ pub fn create_real_func_body<'ctx>(
     def: &DefinitionM,
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
-    let mut def = monomorphise(context.reprs, &context.func, def);
+    let mut def = monomorphise(&context.func, def);
 
     match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => create_real_func_body_cfg(

@@ -51,17 +51,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-recursion"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7d78656ba01f1b93024b7c3a0467f1608e4be67d725749fdcd7d2c7678fd7a2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -284,27 +273,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 
 [[package]]
-name = "errno"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa68f2fb9cae9d37c9b2b3584aba698a2e97f72d7aef7b9f7aa71d8b54ce46fe"
-dependencies = [
- "errno-dragonfly",
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "errno-dragonfly"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14ca354e36190500e1e1fb267c647932382b54053c50b14970856c0b00a35067"
-dependencies = [
- "gcc",
- "libc",
-]
-
-[[package]]
 name = "file_diff"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -445,12 +413,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gcc"
-version = "0.3.55"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f5f3913fa0bfe7ee1fd8248b6b9f42a5af4b9d65ec2dd2c3c26132b950ecfc2"
-
-[[package]]
 name = "getrandom"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -459,18 +421,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "wasi",
-]
-
-[[package]]
-name = "guess_host_triple"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d8403abc08bf48e8933d09030013569f14890f7ae1259cfec501a616e66dd98"
-dependencies = [
- "errno",
- "libc",
- "log",
- "winapi",
 ]
 
 [[package]]
@@ -996,7 +946,6 @@ dependencies = [
 name = "quill_link"
 version = "0.1.0"
 dependencies = [
- "quill_llvm",
  "quill_target",
 ]
 
@@ -1005,7 +954,6 @@ name = "quill_llvm"
 version = "0.1.0"
 dependencies = [
  "dunce",
- "guess_host_triple",
  "inkwell",
  "quill_borrow_check",
  "quill_common",
@@ -1014,6 +962,7 @@ dependencies = [
  "quill_lexer",
  "quill_link",
  "quill_mir",
+ "quill_monomorphise",
  "quill_parser",
  "quill_source_file",
  "quill_target",
@@ -1058,6 +1007,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill_monomorphise"
+version = "0.1.0"
+dependencies = [
+ "quill_common",
+ "quill_mir",
+ "quill_type",
+ "quill_type_deduce",
+]
+
+[[package]]
 name = "quill_parser"
 version = "0.1.0"
 dependencies = [
@@ -1071,8 +1030,6 @@ dependencies = [
 name = "quill_source_file"
 version = "0.1.0"
 dependencies = [
- "async-recursion",
- "console",
  "quill_common",
 ]
 

@@ -1,0 +1,12 @@
+[package]
+name = "quill_monomorphise"
+version = "0.1.0"
+authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
+edition = "2018"
+description = "Converts polymorphic functions into monomorphic functions"
+
+[dependencies]
+quill_common = { path = "../quill_common" }
+quill_type = { path = "../quill_type" }
+quill_type_deduce = { path = "../quill_type_deduce" }
+quill_mir = { path = "../quill_mir" }

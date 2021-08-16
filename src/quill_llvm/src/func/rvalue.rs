@@ -3,15 +3,12 @@ use std::{collections::BTreeMap, ops::Deref};
 use inkwell::{types::BasicType, values::PointerValue, AddressSpace};
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
 use quill_mir::mir::{LocalVariableInfo, LocalVariableName, PlaceSegment, Rvalue};
+use quill_monomorphise::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
 
-use crate::{
-    codegen::CodeGenContext,
-    monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType},
-    repr::Representations,
-};
+use crate::{codegen::CodeGenContext, repr::Representations};
 
 /// Returns None if the rvalue had no representation.
 pub fn get_pointer_to_rvalue<'ctx>(

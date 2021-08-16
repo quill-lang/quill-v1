@@ -14,11 +14,9 @@ use quill_type::{PrimitiveType, Type};
 use quill_type_deduce::replace_type_variables;
 
 use crate::{
-    codegen::CodeGenContext,
-    debug::source_file_debug_info,
-    monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType},
-    sort_types::MonomorphisedItem,
+    codegen::CodeGenContext, debug::source_file_debug_info, sort_types::MonomorphisedItem,
 };
+use quill_monomorphise::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
 
 use super::{
     any_type::AnyTypeRepresentation, llvm_struct::LLVMStructRepresentation, Representations,

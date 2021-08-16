@@ -7,5 +7,3 @@ description = "Manages contents of file resources while compiling"
 
 [dependencies]
 quill_common = { path = "../quill_common" }
-console = "^0.14"
-async-recursion = "0.3.2"

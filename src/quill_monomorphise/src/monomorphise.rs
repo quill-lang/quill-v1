@@ -1,13 +1,11 @@
-use std::collections::BTreeMap;
-
 use quill_mir::mir::{DefinitionBodyM, DefinitionM, StatementKind};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
-use crate::{monomorphisation::MonomorphisedFunction, repr::Representations};
+use crate::monomorphisation::MonomorphisedFunction;
 
 pub fn monomorphise<'ctx>(
-    reprs: &Representations<'_, 'ctx>,
+    // reprs: &Representations<'_, 'ctx>,
     func: &MonomorphisedFunction,
     def: &DefinitionM,
 ) -> DefinitionM {
@@ -46,6 +44,7 @@ pub fn monomorphise<'ctx>(
             }
         }
 
+        /*
         // Now erase all loads and stores to/from types without a representation.
         let local_reprs = result
             .local_variable_names
@@ -80,6 +79,7 @@ pub fn monomorphise<'ctx>(
             }
             block.statements = stmts;
         }
+        */
     }
 
     result

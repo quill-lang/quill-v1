@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
+use quill_monomorphise::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
-
-use crate::monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MonomorphisedItem {

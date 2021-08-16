@@ -6,6 +6,7 @@ use inkwell::{
     targets::{CodeModel, RelocMode},
 };
 use quill_mir::ProjectMIR;
+use quill_monomorphise::{Monomorphisation, MonomorphisationParameters, MonomorphisedFunction};
 use quill_target::{BuildInfo, TargetTriple};
 use repr::Representations;
 use std::{
@@ -17,9 +18,7 @@ use std::{
     process::Output,
 };
 
-use crate::monomorphisation::{
-    Monomorphisation, MonomorphisationParameters, MonomorphisedFunction,
-};
+use crate::monomorphisation::add_llvm_type;
 
 mod codegen;
 mod debug;
@@ -93,7 +92,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     // Now that we've computed data type representations we can actually compile the functions.
     // First, declare them all.
     for func in &mono.functions {
-        func.add_llvm_type(&codegen, &mut reprs, mir);
+        add_llvm_type(func, &codegen, &mut reprs, mir);
     }
     reprs.create_debug_info();
     codegen.di_builder.finalize();

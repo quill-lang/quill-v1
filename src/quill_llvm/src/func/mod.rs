@@ -5,19 +5,18 @@ use quill_mir::{
     mir::{ArgumentIndex, LocalVariableName},
     ProjectMIR,
 };
+use quill_monomorphise::{FunctionObjectDescriptor, MonomorphisedFunction};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
 use crate::{
     codegen::{BodyCreationContext, CodeGenContext},
     debug::source_file_debug_info,
-    monomorphisation::{FunctionObjectDescriptor, MonomorphisedFunction},
     repr::Representations,
 };
 
 mod body;
 mod lifetime;
-mod monomorphise;
 mod rvalue;
 
 pub fn compile_function<'ctx>(
