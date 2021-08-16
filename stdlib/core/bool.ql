@@ -1,3 +1,8 @@
+def not: Bool -> Bool {
+    not false = true
+    not true = false
+}
+
 def or: Bool -> Bool -> Bool {
     or false false = false
     or _ _ = true

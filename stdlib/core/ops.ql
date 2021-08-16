@@ -1,19 +1,59 @@
+use bool
+
 aspect PartialEq[T] {
     == : T -> T -> Bool
 }
 
-aspect Add[L, R, O] {
-    + : L -> R -> O
+def != [T]: impl PartialEq[T] -> T -> T -> Bool {
+    != the_impl a b = not (@ == the_impl a b)
 }
 
-aspect Sub[L, R, O] {
-    - : L -> R -> O
+enum Ordering = Less {} | Equal {} | Greater {}
+
+aspect Ord[T] {
+    cmp: T -> T -> Ordering
 }
 
-aspect Mul[L, R, O] {
-    * : L -> R -> O
+def > [T]: impl Ord[T] -> T -> T -> Bool {
+    > the_impl x y = match (@cmp the_impl x y) (
+        Greater {} -> true
+        _ -> false
+    )
 }
 
-aspect Div[L, R, O] {
-    / : L -> R -> O
+def < [T]: impl Ord[T] -> T -> T -> Bool {
+    < the_impl x y = match (@cmp the_impl x y) (
+        Less {} -> true
+        _ -> false
+    )
+}
+
+def >= [T]: impl Ord[T] -> T -> T -> Bool {
+    >= the_impl x y = match (@cmp the_impl x y) (
+        Less {} -> false
+        _ -> true
+    )
+}
+
+def <= [T]: impl Ord[T] -> T -> T -> Bool {
+    <= the_impl x y = match (@cmp the_impl x y) (
+        Greater {} -> false
+        _ -> true
+    )
+}
+
+aspect Add[L, R] {
+    + : L -> R -> L
+}
+
+aspect Sub[L, R] {
+    - : L -> R -> L
+}
+
+aspect Mul[L, R] {
+    * : L -> R -> L
+}
+
+aspect Div[L, R] {
+    / : L -> R -> L
 }

@@ -2,6 +2,7 @@ use bool
 use int
 use list
 use option
+use ops
 
 def getchar: Unit -> Int { compiler_intrinsic }
 

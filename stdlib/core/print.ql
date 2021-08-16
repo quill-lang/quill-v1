@@ -3,6 +3,7 @@ use int
 use bool
 use func
 use iter
+use ops
 
 def putchar: Int -> Unit { compiler_intrinsic }
 
