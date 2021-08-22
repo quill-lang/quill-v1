@@ -112,6 +112,7 @@ pub fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
             "zig compiler",
             root.join("compiler-deps").join("zig"),
             None,
+            true,
         );
     } else {
         error("cannot update quill when running from source")
@@ -150,13 +151,13 @@ fn download_text_or_exit(url: &str, request_name: &str) -> String {
 
 /// If a version is provided, this function assumes that the tarball contains a `version.txt` file, and that the version should match the given expected version.
 /// Archive types `tar.gz`, `tar.xz` and `zip` are supported.
-/// If `zip` is provided, we assume that we're downloading the zig compiler, and special-case logic is used to remove the top-level
-/// folder from the archive.
+/// If `unwrap_prefix` is true, we unpack the top level directory from the archive.
 fn download_archive_or_exit(
     url: &str,
     display_name: &str,
     dir: PathBuf,
     expected_version: Option<QuillVersion>,
+    unwrap_prefix: bool,
 ) {
     enum ArchiveType {
         TarGz,
@@ -222,11 +223,19 @@ fn download_archive_or_exit(
     match archive_type {
         ArchiveType::TarGz => {
             let mut archive = Archive::new(GzDecoder::new(bytes.as_slice()));
-            archive.unpack(&dir).unwrap();
+            if unwrap_prefix {
+                unpack_sans_parent(archive, &dir).unwrap();
+            } else {
+                archive.unpack(&dir).unwrap();
+            }
         }
         ArchiveType::TarXz => {
             let mut archive = Archive::new(XzDecoder::new(bytes.as_slice()));
-            archive.unpack(&dir).unwrap();
+            if unwrap_prefix {
+                unpack_sans_parent(archive, &dir).unwrap();
+            } else {
+                archive.unpack(&dir).unwrap();
+            }
         }
         ArchiveType::Zip => {
             let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -250,7 +259,11 @@ fn download_archive_or_exit(
             for i in 0..archive.len() {
                 let mut file = archive.by_index(i).unwrap();
                 let outpath = match file.enclosed_name() {
-                    Some(path) => dir.join(path.strip_prefix(&prefix).unwrap()),
+                    Some(path) => dir.join(if unwrap_prefix {
+                        path.strip_prefix(&prefix).unwrap()
+                    } else {
+                        path
+                    }),
                     None => continue,
                 };
 
@@ -284,6 +297,32 @@ fn download_archive_or_exit(
     progress_bar.finish_with_message(format!("{} done", display_name));
 }
 
+use std::{
+    io::Read,
+    path::{Component::Normal, Path},
+};
+
+/// https://users.rust-lang.org/t/moving-and-renaming-directory/44742/7
+/// This is potentially unsafe because we don't check symlinks and such when extracting, but we only download
+/// trusted archives with this function anyway so it should be ok.
+fn unpack_sans_parent<R, P>(mut archive: Archive<R>, dst: P) -> std::io::Result<()>
+where
+    R: Read,
+    P: AsRef<Path>,
+{
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path: PathBuf = entry
+            .path()?
+            .components()
+            .skip(1) // strip top-level directory
+            .filter(|c| matches!(c, Normal(_))) // prevent traversal attacks
+            .collect();
+        entry.unpack(dst.as_ref().join(path))?;
+    }
+    Ok(())
+}
+
 fn download_self(host: HostType, expected_version: QuillVersion, exe_path: PathBuf) {
     let temp_dir = tempdir::TempDir::new("quill_install").unwrap();
 
@@ -296,6 +335,7 @@ fn download_self(host: HostType, expected_version: QuillVersion, exe_path: PathB
         "quill",
         temp_dir.path().to_owned(),
         Some(expected_version),
+        false,
     );
 
     let temp_path = exe_path.with_extension("old");
@@ -330,6 +370,7 @@ fn download_artifact(
         display_name,
         temp_dir.path().to_owned(),
         expected_version,
+        false,
     );
 
     // Now that we know the unpacking was successful, copy the files from the temp dir into a known install dir.
