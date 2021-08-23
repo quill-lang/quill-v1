@@ -179,7 +179,11 @@ impl Display for LocalVariableDetails {
             writeln!(f, "    name = {}", name)?;
         }
         if let Some(value) = &self.value {
-            writeln!(f, "    value = {}", value)?;
+            writeln!(
+                f,
+                "    value = {}",
+                value.to_string().replace("\n", "\n        ")
+            )?;
         }
         Ok(())
     }
@@ -193,6 +197,18 @@ pub enum KnownValue {
     Instantiate {
         name: QualifiedName,
         type_variables: Vec<Type>,
+    },
+    ConstructData {
+        name: QualifiedName,
+        type_variables: Vec<Type>,
+        /// If this type was an enum, which variant should we create?
+        variant: Option<String>,
+        fields: BTreeMap<String, KnownValue>,
+    },
+    ConstructImpl {
+        aspect: QualifiedName,
+        type_variables: Vec<Type>,
+        definitions: BTreeMap<String, KnownValue>,
     },
 }
 
@@ -212,6 +228,48 @@ impl Display for KnownValue {
                     for ty in type_variables {
                         write!(f, " {}", ty)?;
                     }
+                }
+                Ok(())
+            }
+            KnownValue::ConstructData {
+                name,
+                type_variables,
+                variant,
+                fields,
+            } => {
+                write!(f, "construct {}", name)?;
+                if !type_variables.is_empty() {
+                    write!(f, " with")?;
+                    for ty in type_variables {
+                        write!(f, " {}", ty)?;
+                    }
+                }
+                if let Some(variant) = variant {
+                    write!(f, " variant {}", variant)?;
+                }
+                for (field_name, value) in fields {
+                    writeln!(f)?;
+                    let value_str = value.to_string().replace("\n", "\n    ");
+                    write!(f, "{} = {}", field_name, value_str)?;
+                }
+                Ok(())
+            }
+            KnownValue::ConstructImpl {
+                aspect,
+                type_variables,
+                definitions,
+            } => {
+                write!(f, "construct impl {}", aspect)?;
+                if !type_variables.is_empty() {
+                    write!(f, " with")?;
+                    for ty in type_variables {
+                        write!(f, " {}", ty)?;
+                    }
+                }
+                for (field_name, value) in definitions {
+                    writeln!(f)?;
+                    let value_str = value.to_string().replace("\n", "\n    ");
+                    write!(f, "{} = {}", field_name, value_str)?;
                 }
                 Ok(())
             }

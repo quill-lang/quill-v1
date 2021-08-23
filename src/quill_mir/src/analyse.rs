@@ -16,7 +16,7 @@ pub(crate) fn analyse(def: &mut DefinitionM) {
     };
 
     for block in cfg.basic_blocks.values() {
-        for stmt in &block.statements {
+        'stmt_loop: for stmt in &block.statements {
             match &stmt.kind {
                 StatementKind::Assign { target, source } => {
                     def.local_variable_names
@@ -34,45 +34,91 @@ pub(crate) fn analyse(def: &mut DefinitionM) {
                     name,
                     type_variables,
                     target,
-                } => {}
-                StatementKind::Apply {
-                    argument,
-                    function,
-                    target,
-                } => {}
-                StatementKind::InvokeFunction {
-                    name,
-                    type_variables,
-                    target,
-                    arguments,
-                } => {}
-                StatementKind::ConstructFunctionObject {
-                    name,
-                    type_variables,
-                    target,
-                    curry_steps,
-                    curried_arguments,
-                } => {}
-                StatementKind::InvokeFunctionObject {
-                    func_object,
-                    target,
-                    additional_arguments,
-                } => {}
-                StatementKind::Drop { variable } => {}
-                StatementKind::Free { variable } => {}
+                } => {
+                    def.local_variable_names
+                        .get_mut(target)
+                        .unwrap()
+                        .details
+                        .value = Some(KnownValue::Instantiate {
+                        name: name.clone(),
+                        type_variables: type_variables.clone(),
+                    });
+                }
+                StatementKind::Apply { .. } => {
+                    // In the general case, we can't compute the result of a function call statically.
+                    // TODO: make an effort to find the result somehow if the function call is a default impl or something?
+                }
+                StatementKind::InvokeFunction { .. } => {
+                    // This is inserted by the func_objects pass.
+                    // Currently, analysis doesn't operate after this pass.
+                }
+                StatementKind::ConstructFunctionObject { .. } => {
+                    // This is inserted by the func_objects pass.
+                    // Currently, analysis doesn't operate after this pass.
+                }
+                StatementKind::InvokeFunctionObject { .. } => {
+                    // This is inserted by the func_objects pass.
+                    // Currently, analysis doesn't operate after this pass.
+                }
+                StatementKind::Drop { .. } => {}
+                StatementKind::Free { .. } => {}
                 StatementKind::ConstructData {
                     name,
                     type_variables,
                     variant,
                     fields,
                     target,
-                } => {}
+                } => {
+                    let mut field_values = BTreeMap::new();
+                    for (field_name, field_rvalue) in fields {
+                        if let Some(field_value) =
+                            get_value_of_rvalue(&def.local_variable_names, field_rvalue)
+                        {
+                            field_values.insert(field_name.clone(), field_value);
+                        } else {
+                            continue 'stmt_loop;
+                        }
+                    }
+                    def.local_variable_names
+                        .get_mut(target)
+                        .unwrap()
+                        .details
+                        .value = Some(KnownValue::ConstructData {
+                        name: name.clone(),
+                        type_variables: type_variables.clone(),
+                        variant: variant.clone(),
+                        fields: field_values,
+                    });
+                }
                 StatementKind::ConstructImpl {
                     aspect,
                     type_variables,
                     definitions,
                     target,
-                } => {}
+                } => {
+                    let mut definition_values = BTreeMap::new();
+                    for (definition_name, definition_value) in definitions {
+                        if let Some(definition_value) = def.local_variable_names[definition_value]
+                            .details
+                            .value
+                            .as_ref()
+                        {
+                            definition_values
+                                .insert(definition_name.clone(), definition_value.clone());
+                        } else {
+                            continue 'stmt_loop;
+                        }
+                    }
+                    def.local_variable_names
+                        .get_mut(target)
+                        .unwrap()
+                        .details
+                        .value = Some(KnownValue::ConstructImpl {
+                        aspect: aspect.clone(),
+                        type_variables: type_variables.clone(),
+                        definitions: definition_values,
+                    });
+                }
             }
         }
     }
