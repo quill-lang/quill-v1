@@ -1,6 +1,7 @@
 //! This module contains the mid-level intermediate representation of code.
 //! Much of this code is heavily inspired by the Rust compiler.
 
+mod analyse;
 mod definition;
 mod expr;
 mod impls;
@@ -21,7 +22,10 @@ use quill_index::{DefinitionI, ProjectIndex, TypeParameter};
 use quill_type::Type;
 use quill_type_deduce::hir::SourceFileHIR;
 
-use crate::mir::{BasicBlock, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind};
+use crate::mir::{
+    BasicBlock, LocalVariableDetails, Place, Rvalue, Statement, StatementKind, Terminator,
+    TerminatorKind,
+};
 
 #[derive(Debug)]
 pub struct ProjectMIR {
@@ -100,7 +104,7 @@ pub fn to_mir(
     });
 
     definitions.deny().map(|definitions| {
-        let result = SourceFileMIR { definitions };
+        let mut result = SourceFileMIR { definitions };
         // Uncomment this if the `validate` function itself panics.
         // eprintln!("{}", result);
         if let Err(err) = validate::validate(project_index, source_file, &result) {
@@ -116,6 +120,10 @@ pub fn to_mir(
                 err.message,
                 result
             );
+        }
+        // Now, run static analysis on each definition.
+        for def in result.definitions.values_mut() {
+            analyse::analyse(def);
         }
         result
     })
@@ -152,7 +160,10 @@ fn create_aspect_def_mir(
                     })
                     .collect(),
             },
-            name: Some("the impl".to_string()),
+            details: LocalVariableDetails {
+                name: Some("the impl".to_string()),
+                ..Default::default()
+            },
         },
     );
 
@@ -162,7 +173,10 @@ fn create_aspect_def_mir(
         LocalVariableInfo {
             range,
             ty: def.symbol_type.clone(),
-            name: Some("return value".to_string()),
+            details: LocalVariableDetails {
+                name: Some("return value".to_string()),
+                ..Default::default()
+            },
         },
     );
     let statement = Statement {

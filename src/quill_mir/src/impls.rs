@@ -66,13 +66,13 @@ fn apply_default_impl(
     let mut impl_variable = LocalVariableName::Local(ctx.new_local_variable(LocalVariableInfo {
         range,
         ty: argument_type,
-        name: None,
+        details: Default::default(),
     }));
 
     let result_variable = ctx.new_local_variable(LocalVariableInfo {
         range,
         ty: return_type,
-        name: None,
+        details: Default::default(),
     });
 
     let mut statements = vec![

@@ -24,7 +24,7 @@ impl Location {
 
 impl Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:>3}:{:>3}", self.line + 1, self.col + 1)
+        write!(f, "{:0>3}:{:0>3}", self.line + 1, self.col + 1)
     }
 }
 

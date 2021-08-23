@@ -40,7 +40,10 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
             ctx.new_local_variable(LocalVariableInfo {
                 range: name.range,
                 ty: expr.ty.clone(),
-                name: Some(name.name.clone()),
+                details: LocalVariableDetails {
+                    name: Some(name.name.clone()),
+                    ..Default::default()
+                },
             });
         }
         ExpressionContents::Block { statements, .. } => {
@@ -356,7 +359,7 @@ fn generate_expr_symbol(
     let variable = ctx.new_local_variable(LocalVariableInfo {
         range,
         ty,
-        name: None,
+        details: Default::default(),
     });
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: vec![Statement {
@@ -387,7 +390,7 @@ fn generate_expr_apply(
     let variable = ctx.new_local_variable(LocalVariableInfo {
         range,
         ty,
-        name: None,
+        details: Default::default(),
     });
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: Vec::new(),
@@ -488,7 +491,7 @@ fn generate_expr_lambda(
         let mut variable = ctx.new_local_variable(LocalVariableInfo {
             range,
             ty: curry_types.pop().unwrap(),
-            name: None,
+            details: Default::default(),
         });
         statements.push(Statement {
             range,
@@ -517,7 +520,7 @@ fn generate_expr_lambda(
             let next_variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
                 ty: ty.clone(),
-                name: None,
+                details: Default::default(),
             });
             statements.push(Statement {
                 range,
@@ -556,7 +559,7 @@ fn generate_expr_let(
     let ret = ctx.new_local_variable(LocalVariableInfo {
         range,
         ty: Type::Primitive(PrimitiveType::Unit),
-        name: None,
+        details: Default::default(),
     });
     let variable = ctx.get_name_of_local(&name.name);
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -636,7 +639,7 @@ fn generate_expr_block(
         let variable = ctx.new_local_variable(LocalVariableInfo {
             range,
             ty: Type::Primitive(PrimitiveType::Unit),
-            name: None,
+            details: Default::default(),
         });
 
         // Initialise the variable with an empty value.
@@ -681,7 +684,7 @@ fn generate_expr_construct(
     let variable = ctx.new_local_variable(LocalVariableInfo {
         range,
         ty: ty.clone(),
-        name: None,
+        details: Default::default(),
     });
     let construct_variable = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: vec![],
@@ -738,7 +741,7 @@ fn generate_expr_constant(
     let variable = ctx.new_local_variable(LocalVariableInfo {
         range,
         ty,
-        name: None,
+        details: Default::default(),
     });
     let assign = Statement {
         range,
@@ -771,7 +774,7 @@ fn generate_expr_borrow(
             ty: Box::new(expr.ty.clone()),
             borrow: None,
         },
-        name: None,
+        details: Default::default(),
     });
     let terminator_range = terminator.range;
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -820,7 +823,7 @@ fn generate_expr_copy(
         } else {
             unreachable!()
         },
-        name: None,
+        details: Default::default(),
     });
     let terminator_range = terminator.range;
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -955,7 +958,7 @@ fn generate_expr_impl(
                 let mut variable = ctx.new_local_variable(LocalVariableInfo {
                     range,
                     ty: curry_types.pop().unwrap(),
-                    name: None,
+                    details: Default::default(),
                 });
                 statements.push(Statement {
                     range,
@@ -984,7 +987,7 @@ fn generate_expr_impl(
                     let next_variable = ctx.new_local_variable(LocalVariableInfo {
                         range,
                         ty: ty.clone(),
-                        name: None,
+                        details: Default::default(),
                     });
                     statements.push(Statement {
                         range,
@@ -1014,7 +1017,7 @@ fn generate_expr_impl(
             let variable = ctx.new_local_variable(LocalVariableInfo {
                 range,
                 ty,
-                name: None,
+                details: Default::default(),
             });
 
             statements.push(Statement {
@@ -1090,7 +1093,7 @@ fn generate_expr_match(
     let result = ctx.new_local_variable(LocalVariableInfo {
         range: source_range,
         ty,
-        name: None,
+        details: Default::default(),
     });
     // Create a dummy basic block which all of the other blocks will redirect to after finishing.
     // This final block will drop the contents of the source expression.
@@ -1151,7 +1154,7 @@ fn generate_expr_match(
                     let protected_slot = ctx.new_local_variable(LocalVariableInfo {
                         range: source_range,
                         ty: ctx.locals[&expr_result.variable].ty.clone(),
-                        name: None,
+                        details: Default::default(),
                     });
                     let terminator_statements = &mut ctx
                         .control_flow_graph

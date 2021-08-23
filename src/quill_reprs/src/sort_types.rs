@@ -4,7 +4,9 @@ use quill_index::{ProjectIndex, TypeConstructorI, TypeDeclarationTypeI};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
-use crate::monomorphisation::{MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType};
+use quill_monomorphise::monomorphisation::{
+    MonomorphisationParameters, MonomorphisedAspect, MonomorphisedType,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MonomorphisedItem {
@@ -13,8 +15,8 @@ pub enum MonomorphisedItem {
 }
 
 /// A monomorphised type, where some of its fields may have a layer of heap indirection.
-#[derive(Debug)]
-pub(crate) struct IndirectedMonomorphisedType {
+#[derive(Debug, Clone)]
+pub struct IndirectedMonomorphisedType {
     pub ty: MonomorphisedItem,
     /// The list of types that, when included as a field inside this type, require a level of heap indirection.
     pub indirected: Vec<MonomorphisedItem>,
