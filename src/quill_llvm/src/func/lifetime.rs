@@ -25,7 +25,7 @@ pub fn lifetime_start<'ctx>(
 
     let info = local_variable_names[variable].clone();
     let repr = ctx.reprs.repr(info.ty.clone()).unwrap();
-    let name = info.name.unwrap_or_else(|| variable.to_string());
+    let name = info.details.name.unwrap_or_else(|| variable.to_string());
 
     // Initialise debug info for the variable.
     // TODO: make the scope be the actual scope of the variable.

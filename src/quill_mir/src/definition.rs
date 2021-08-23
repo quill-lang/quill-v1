@@ -47,7 +47,7 @@ impl DefinitionTranslationContext<'_> {
     pub fn new_local_variable(&mut self, info: LocalVariableInfo) -> LocalVariableId {
         let id = self.next_local_variable_id;
         self.next_local_variable_id.0 += 1;
-        if let Some(name) = info.name.clone() {
+        if let Some(name) = info.details.name.clone() {
             self.local_name_map
                 .insert(name, LocalVariableName::Local(id));
         }
@@ -87,7 +87,6 @@ pub(crate) fn to_mir_def(
             LocalVariableInfo {
                 range,
                 ty: ty.clone(),
-                name: None,
                 details: Default::default(),
             },
         );
@@ -215,8 +214,10 @@ fn create_cfg(
                 let protected_return_value = ctx.new_local_variable(LocalVariableInfo {
                     range: ctx.locals[&func.variable].range,
                     ty: ctx.locals[&func.variable].ty.clone(),
-                    name: Some("return value".to_string()),
-                    details: Default::default(),
+                    details: LocalVariableDetails {
+                        name: Some("return value".to_string()),
+                        ..Default::default()
+                    },
                 });
                 // Move the return value into this protected slot.
                 let return_block = ctx

@@ -22,7 +22,10 @@ use quill_index::{DefinitionI, ProjectIndex, TypeParameter};
 use quill_type::Type;
 use quill_type_deduce::hir::SourceFileHIR;
 
-use crate::mir::{BasicBlock, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind};
+use crate::mir::{
+    BasicBlock, LocalVariableDetails, Place, Rvalue, Statement, StatementKind, Terminator,
+    TerminatorKind,
+};
 
 #[derive(Debug)]
 pub struct ProjectMIR {
@@ -157,8 +160,10 @@ fn create_aspect_def_mir(
                     })
                     .collect(),
             },
-            name: Some("the impl".to_string()),
-            details: Default::default(),
+            details: LocalVariableDetails {
+                name: Some("the impl".to_string()),
+                ..Default::default()
+            },
         },
     );
 
@@ -168,8 +173,10 @@ fn create_aspect_def_mir(
         LocalVariableInfo {
             range,
             ty: def.symbol_type.clone(),
-            name: Some("return value".to_string()),
-            details: Default::default(),
+            details: LocalVariableDetails {
+                name: Some("return value".to_string()),
+                ..Default::default()
+            },
         },
     );
     let statement = Statement {

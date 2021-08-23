@@ -153,8 +153,6 @@ pub struct LocalVariableInfo {
     pub range: Range,
     /// What is the exact type of this variable?
     pub ty: Type,
-    /// If this variable had a name, what was it?
-    pub name: Option<String>,
     /// Do we know any information about this local variable from static analysis?
     pub details: LocalVariableDetails,
 }
@@ -162,9 +160,6 @@ pub struct LocalVariableInfo {
 impl Display for LocalVariableInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.ty)?;
-        if let Some(name) = &self.name {
-            write!(f, " named {}", name)?;
-        }
         write!(f, "\n{}", self.details)?;
         Ok(())
     }
@@ -172,12 +167,17 @@ impl Display for LocalVariableInfo {
 
 #[derive(Debug, Default, Clone)]
 pub struct LocalVariableDetails {
+    /// If this variable had a name, what was it?
+    pub name: Option<String>,
     /// Do we know the value of the local variable statically?
     pub value: Option<KnownValue>,
 }
 
 impl Display for LocalVariableDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = &self.name {
+            writeln!(f, "    name = {}", name)?;
+        }
         if let Some(value) = &self.value {
             writeln!(f, "    value = {}", value)?;
         }
