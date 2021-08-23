@@ -41,6 +41,7 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
                 range: name.range,
                 ty: expr.ty.clone(),
                 name: Some(name.name.clone()),
+                details: Default::default(),
             });
         }
         ExpressionContents::Block { statements, .. } => {
@@ -357,6 +358,7 @@ fn generate_expr_symbol(
         range,
         ty,
         name: None,
+        details: Default::default(),
     });
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: vec![Statement {
@@ -388,6 +390,7 @@ fn generate_expr_apply(
         range,
         ty,
         name: None,
+        details: Default::default(),
     });
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: Vec::new(),
@@ -489,6 +492,7 @@ fn generate_expr_lambda(
             range,
             ty: curry_types.pop().unwrap(),
             name: None,
+            details: Default::default(),
         });
         statements.push(Statement {
             range,
@@ -518,6 +522,7 @@ fn generate_expr_lambda(
                 range,
                 ty: ty.clone(),
                 name: None,
+                details: Default::default(),
             });
             statements.push(Statement {
                 range,
@@ -557,6 +562,7 @@ fn generate_expr_let(
         range,
         ty: Type::Primitive(PrimitiveType::Unit),
         name: None,
+        details: Default::default(),
     });
     let variable = ctx.get_name_of_local(&name.name);
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -637,6 +643,7 @@ fn generate_expr_block(
             range,
             ty: Type::Primitive(PrimitiveType::Unit),
             name: None,
+            details: Default::default(),
         });
 
         // Initialise the variable with an empty value.
@@ -682,6 +689,7 @@ fn generate_expr_construct(
         range,
         ty: ty.clone(),
         name: None,
+        details: Default::default(),
     });
     let construct_variable = ctx.control_flow_graph.new_basic_block(BasicBlock {
         statements: vec![],
@@ -739,6 +747,7 @@ fn generate_expr_constant(
         range,
         ty,
         name: None,
+        details: Default::default(),
     });
     let assign = Statement {
         range,
@@ -772,6 +781,7 @@ fn generate_expr_borrow(
             borrow: None,
         },
         name: None,
+        details: Default::default(),
     });
     let terminator_range = terminator.range;
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -821,6 +831,7 @@ fn generate_expr_copy(
             unreachable!()
         },
         name: None,
+        details: Default::default(),
     });
     let terminator_range = terminator.range;
     let block = ctx.control_flow_graph.new_basic_block(BasicBlock {
@@ -956,6 +967,7 @@ fn generate_expr_impl(
                     range,
                     ty: curry_types.pop().unwrap(),
                     name: None,
+                    details: Default::default(),
                 });
                 statements.push(Statement {
                     range,
@@ -985,6 +997,7 @@ fn generate_expr_impl(
                         range,
                         ty: ty.clone(),
                         name: None,
+                        details: Default::default(),
                     });
                     statements.push(Statement {
                         range,
@@ -1015,6 +1028,7 @@ fn generate_expr_impl(
                 range,
                 ty,
                 name: None,
+                details: Default::default(),
             });
 
             statements.push(Statement {
@@ -1091,6 +1105,7 @@ fn generate_expr_match(
         range: source_range,
         ty,
         name: None,
+        details: Default::default(),
     });
     // Create a dummy basic block which all of the other blocks will redirect to after finishing.
     // This final block will drop the contents of the source expression.
@@ -1152,6 +1167,7 @@ fn generate_expr_match(
                         range: source_range,
                         ty: ctx.locals[&expr_result.variable].ty.clone(),
                         name: None,
+                        details: Default::default(),
                     });
                     let terminator_statements = &mut ctx
                         .control_flow_graph

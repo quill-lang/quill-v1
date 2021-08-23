@@ -670,6 +670,7 @@ pub(crate) fn bind_pattern_variables(
                     ty
                 },
                 name: Some(name.name.clone()),
+                details: Default::default(),
             });
 
             // Initialise this local variable with the supplied value.
@@ -785,6 +786,7 @@ pub(crate) fn bind_pattern_variables(
                     ty
                 },
                 name: None,
+                details: Default::default(),
             });
             let move_stmt = Statement {
                 range,

@@ -155,6 +155,8 @@ pub struct LocalVariableInfo {
     pub ty: Type,
     /// If this variable had a name, what was it?
     pub name: Option<String>,
+    /// Do we know any information about this local variable from static analysis?
+    pub details: LocalVariableDetails,
 }
 
 impl Display for LocalVariableInfo {
@@ -163,10 +165,64 @@ impl Display for LocalVariableInfo {
         if let Some(name) = &self.name {
             write!(f, " named {}", name)?;
         }
+        write!(f, "\n{}", self.details)?;
         Ok(())
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct LocalVariableDetails {
+    /// Do we know the value of the local variable statically?
+    pub value: Option<KnownValue>,
+}
+
+impl Display for LocalVariableDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(value) = &self.value {
+            writeln!(f, "    value = {}", value)?;
+        }
+        Ok(())
+    }
+}
+
+/// A value that we know at compile time.
+/// Useful for inlining.
+#[derive(Debug, Clone)]
+pub enum KnownValue {
+    Constant(ConstantValue),
+    Instantiate {
+        name: QualifiedName,
+        type_variables: Vec<Type>,
+    },
+}
+
+impl Display for KnownValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KnownValue::Constant(constant) => {
+                write!(f, "const {}", constant)
+            }
+            KnownValue::Instantiate {
+                name,
+                type_variables,
+            } => {
+                write!(f, "instantiate {}", name)?;
+                if !type_variables.is_empty() {
+                    write!(f, " with")?;
+                    for ty in type_variables {
+                        write!(f, " {}", ty)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// After validation, the control flow graph must be in a topologically sorted order:
+/// we jump only from lower-indexed basic blocks to higher-indexed basic blocks.
+/// This means that, to trace control flow, ensuring that each variable is initialised before used,
+/// you can just iterate in order over the list of basic blocks.
 #[derive(Debug, Clone)]
 pub struct ControlFlowGraph {
     next_block_id: BasicBlockId,
@@ -341,6 +397,9 @@ impl Display for Statement {
     }
 }
 
+/// In MIR, the program is in static single assignment form:
+/// each variable is assigned once only. A variable called `target` is
+/// typically where we store the result of a statement.
 #[derive(Debug, Clone)]
 pub enum StatementKind {
     /// Moves an rvalue into a local variable.

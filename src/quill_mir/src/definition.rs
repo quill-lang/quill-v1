@@ -88,6 +88,7 @@ pub(crate) fn to_mir_def(
                 range,
                 ty: ty.clone(),
                 name: None,
+                details: Default::default(),
             },
         );
     }
@@ -215,6 +216,7 @@ fn create_cfg(
                     range: ctx.locals[&func.variable].range,
                     ty: ctx.locals[&func.variable].ty.clone(),
                     name: Some("return value".to_string()),
+                    details: Default::default(),
                 });
                 // Move the return value into this protected slot.
                 let return_block = ctx
