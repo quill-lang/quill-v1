@@ -289,6 +289,8 @@ pub struct ControlFlowGraph {
     pub basic_blocks: BTreeMap<BasicBlockId, BasicBlock>,
     /// Which basic block should be entered to invoke the function?
     pub entry_point: BasicBlockId,
+    /// If we know the return value statically, it is given here.
+    pub return_value: Option<KnownValue>,
 }
 
 impl ControlFlowGraph {
@@ -298,12 +300,16 @@ impl ControlFlowGraph {
             next_block_id: BasicBlockId(0),
             entry_point: BasicBlockId(0),
             basic_blocks: BTreeMap::new(),
+            return_value: None,
         }
     }
 }
 
 impl Display for ControlFlowGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(val) = &self.return_value {
+            writeln!(f, "returns {}", val)?;
+        }
         writeln!(f, "entry point: {}", self.entry_point)?;
 
         for (block_id, block) in &self.basic_blocks {

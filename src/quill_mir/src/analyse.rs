@@ -5,16 +5,18 @@ use std::collections::BTreeMap;
 
 use crate::mir::{
     DefinitionBodyM, DefinitionM, KnownValue, LocalVariableInfo, LocalVariableName, Place, Rvalue,
-    StatementKind,
+    StatementKind, TerminatorKind,
 };
 
 /// Work out what value each variable holds, if known at compile time.
 pub fn analyse_values(def: &mut DefinitionM) {
     // Run through the control flow graph and work out what value each variable might hold.
-    let cfg = match &def.body {
+    let cfg = match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => cfg,
         DefinitionBodyM::CompilerIntrinsic => return,
     };
+
+    let mut possible_return_values = Vec::new();
 
     for block in cfg.basic_blocks.values() {
         'stmt_loop: for stmt in &block.statements {
@@ -137,6 +139,15 @@ pub fn analyse_values(def: &mut DefinitionM) {
                 }
             }
         }
+
+        if let TerminatorKind::Return { value } = &block.terminator.kind {
+            possible_return_values.push(def.local_variable_names[value].details.value.clone());
+        }
+    }
+
+    // If the return value is known, store it.
+    if possible_return_values.len() == 1 {
+        cfg.return_value = possible_return_values.pop().unwrap();
     }
 }
 
