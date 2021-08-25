@@ -31,36 +31,51 @@ pub fn analyse_values(def: &mut DefinitionM) {
                     // unless there was really only one case.
                     // TODO: detect if there was only one case
                 }
-                StatementKind::InstanceSymbol {
-                    name,
-                    type_variables,
-                    target,
-                } => {
-                    def.local_variable_names
-                        .get_mut(target)
-                        .unwrap()
-                        .details
-                        .value = Some(KnownValue::Instantiate {
-                        name: name.clone(),
-                        type_variables: type_variables.clone(),
-                    });
+                StatementKind::InstanceSymbol { .. } => {
+                    // This is removed by the func_objects pass.
+                    // This analysis step happens after func_objects.
+                    panic!("func objects has not been run yet");
                 }
                 StatementKind::Apply { .. } => {
                     // In the general case, we can't compute the result of a function call statically.
                     // TODO: make an effort to find the result somehow if the function call is a default impl or something?
                 }
-                StatementKind::InvokeFunction { .. } => {
-                    // This is inserted by the func_objects pass.
-                    // Currently, analysis doesn't operate after this pass.
+                StatementKind::InvokeFunction {
+                    name,
+                    type_variables,
+                    target,
+                    arguments,
+                } => {
+                    if arguments.is_empty() {
+                        def.local_variable_names
+                            .get_mut(target)
+                            .unwrap()
+                            .details
+                            .value = Some(KnownValue::Instantiate {
+                            name: name.clone(),
+                            type_variables: type_variables.clone(),
+                        });
+                    }
                 }
-                StatementKind::ConstructFunctionObject { .. } => {
-                    // This is inserted by the func_objects pass.
-                    // Currently, analysis doesn't operate after this pass.
+                StatementKind::ConstructFunctionObject {
+                    name,
+                    type_variables,
+                    target,
+                    curried_arguments,
+                    ..
+                } => {
+                    if curried_arguments.is_empty() {
+                        def.local_variable_names
+                            .get_mut(target)
+                            .unwrap()
+                            .details
+                            .value = Some(KnownValue::Instantiate {
+                            name: name.clone(),
+                            type_variables: type_variables.clone(),
+                        });
+                    }
                 }
-                StatementKind::InvokeFunctionObject { .. } => {
-                    // This is inserted by the func_objects pass.
-                    // Currently, analysis doesn't operate after this pass.
-                }
+                StatementKind::InvokeFunctionObject { .. } => {}
                 StatementKind::Drop { .. } => {}
                 StatementKind::Free { .. } => {}
                 StatementKind::ConstructData {
