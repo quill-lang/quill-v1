@@ -94,6 +94,20 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
     let reprs = Representations::new(&mir.index, mono.types, mono.aspects);
     let mono_mir = MonomorphisedMIR::new(mir, &mono.functions, |ty| reprs.has_repr(ty));
 
+    // Output the project MIR.
+    if build_info.emit_project_mir {
+        println!("status emitting monomorphised mir");
+        use std::io::Write;
+        let mir_path = build_info
+            .build_folder
+            .join(path.with_extension("mono.mir"));
+        let f = File::create(mir_path).unwrap();
+        let mut f = BufWriter::new(f);
+        writeln!(f, "{}", mono_mir).unwrap();
+    }
+
+    println!("status computing llvm reprs");
+
     let mut reprs = LLVMRepresentations::new(&mono_mir.index, &codegen, reprs);
     for func in &mono.functions {
         add_llvm_type(func, &codegen, &mut reprs, &mono_mir);

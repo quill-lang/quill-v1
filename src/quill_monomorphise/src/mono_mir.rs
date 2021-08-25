@@ -5,11 +5,11 @@ use std::{
 
 use quill_common::{location::SourceFileIdentifier, name::QualifiedName};
 use quill_index::ProjectIndex;
-use quill_mir::{mir::DefinitionM, ProjectMIR, SourceFileMIR};
+use quill_mir::{mir::DefinitionM, ProjectMIR};
 use quill_type::Type;
 
 use crate::{
-    monomorphisation::{Monomorphisation, MonomorphisationParameters, MonomorphisedFunction},
+    monomorphisation::{MonomorphisationParameters, MonomorphisedFunction},
     monomorphise::monomorphise,
 };
 
