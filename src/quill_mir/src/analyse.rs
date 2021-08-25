@@ -8,7 +8,8 @@ use crate::mir::{
     StatementKind,
 };
 
-pub(crate) fn analyse(def: &mut DefinitionM) {
+/// Work out what value each variable holds, if known at compile time.
+pub fn analyse_values(def: &mut DefinitionM) {
     // Run through the control flow graph and work out what value each variable might hold.
     let cfg = match &def.body {
         DefinitionBodyM::PatternMatch(cfg) => cfg,

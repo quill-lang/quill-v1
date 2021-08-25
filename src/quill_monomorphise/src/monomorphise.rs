@@ -35,7 +35,8 @@ pub fn monomorphise(
                         }
                     }
 
-                    StatementKind::ConstructData { type_variables, .. } => {
+                    StatementKind::ConstructData { type_variables, .. }
+                    | StatementKind::ConstructImpl { type_variables, .. } => {
                         for var in type_variables {
                             mono(var);
                         }

@@ -83,4 +83,15 @@ impl MonomorphisedMIR {
             index: mir.index,
         }
     }
+
+    pub fn analyse(&mut self) {
+        // Now, run static analysis on each definition.
+        for file in self.files.values_mut() {
+            for defs in file.definitions.values_mut() {
+                for def in defs.values_mut() {
+                    quill_mir::analyse::analyse_values(def);
+                }
+            }
+        }
+    }
 }

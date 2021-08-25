@@ -92,7 +92,10 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
 
     let mono = Monomorphisation::new(&mir);
     let reprs = Representations::new(&mir.index, mono.types, mono.aspects);
-    let mono_mir = MonomorphisedMIR::new(mir, &mono.functions, |ty| reprs.has_repr(ty));
+    let mut mono_mir = MonomorphisedMIR::new(mir, &mono.functions, |ty| reprs.has_repr(ty));
+
+    // Run static analysis on the monomorphised MIR.
+    mono_mir.analyse();
 
     // Output the project MIR.
     if build_info.emit_project_mir {
