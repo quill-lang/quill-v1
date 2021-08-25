@@ -8,6 +8,8 @@ use quill_mir::{
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
+/// The monomorphisation of a project is a list of all the types, functions, and aspects that
+/// were used throughout the project, with type parameters filled in to their actual values.
 #[derive(Debug)]
 pub struct Monomorphisation {
     pub types: BTreeSet<MonomorphisedType>,
@@ -172,6 +174,20 @@ impl Monomorphisation {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisationParameters {
     type_parameters: Vec<Type>,
+}
+
+impl Display for MonomorphisationParameters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        for (i, ty) in self.type_parameters.iter().enumerate() {
+            if i == 0 {
+                write!(f, "{}", ty)?;
+            } else {
+                write!(f, ", {}", ty)?;
+            }
+        }
+        write!(f, "]")
+    }
 }
 
 impl MonomorphisationParameters {

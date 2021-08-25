@@ -6,6 +6,7 @@ use inkwell::{
     targets::{CodeModel, RelocMode},
 };
 use quill_mir::ProjectMIR;
+use quill_monomorphise::mono_mir::MonomorphisedMIR;
 use quill_monomorphise::monomorphisation::{
     Monomorphisation, MonomorphisationParameters, MonomorphisedFunction,
 };
@@ -59,7 +60,7 @@ fn convert_triple(triple: TargetTriple) -> inkwell::targets::TargetTriple {
 }
 
 /// Builds an LLVM module for the given input source file, outputting it in the given directory.
-pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
+pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
     let target_triple = convert_triple(build_info.target_triple);
 
     let _ = std::fs::create_dir_all(&build_info.build_folder);
@@ -89,11 +90,13 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
 
     println!("status monomorphising");
 
-    let mono = Monomorphisation::new(mir);
+    let mono = Monomorphisation::new(&mir);
     let reprs = Representations::new(&mir.index, mono.types, mono.aspects);
-    let mut reprs = LLVMRepresentations::new(&mir.index, &codegen, reprs);
+    let mono_mir = MonomorphisedMIR::new(mir, &mono.functions, |ty| reprs.has_repr(ty));
+
+    let mut reprs = LLVMRepresentations::new(&mono_mir.index, &codegen, reprs);
     for func in &mono.functions {
-        add_llvm_type(func, &codegen, &mut reprs, mir);
+        add_llvm_type(func, &codegen, &mut reprs, &mono_mir);
     }
     reprs.create_debug_info();
     codegen.di_builder.finalize();
@@ -102,7 +105,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
     println!("status compiling functions");
 
     for func in &mono.functions {
-        func::compile_function(&codegen, &reprs, mir, func.clone());
+        func::compile_function(&codegen, &reprs, &mono_mir, func.clone());
     }
 
     println!("status compiling glue");
@@ -119,7 +122,7 @@ pub fn build(project_name: &str, mir: &ProjectMIR, build_info: BuildInfo) {
             .module
             .get_function(
                 &MonomorphisedFunction {
-                    func: mir.entry_point.clone(),
+                    func: mono_mir.entry_point.clone(),
                     curry_steps: Vec::new(),
                     mono: MonomorphisationParameters::new(Vec::new()),
                     direct: true,

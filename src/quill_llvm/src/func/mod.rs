@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use inkwell::{debug_info::AsDIScope, values::FunctionValue, AddressSpace};
-use quill_mir::{
-    mir::{ArgumentIndex, LocalVariableName},
-    ProjectMIR,
+use quill_mir::mir::{ArgumentIndex, LocalVariableName};
+use quill_monomorphise::{
+    mono_mir::MonomorphisedMIR,
+    monomorphisation::{FunctionObjectDescriptor, MonomorphisedFunction},
 };
-use quill_monomorphise::monomorphisation::{FunctionObjectDescriptor, MonomorphisedFunction};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
@@ -22,11 +22,11 @@ mod rvalue;
 pub fn compile_function<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &LLVMRepresentations<'_, 'ctx>,
-    mir: &ProjectMIR,
+    mir: &MonomorphisedMIR,
     func: MonomorphisedFunction,
 ) {
     // println!("func {}", func);
-    let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
+    let def = &mir.files[&func.func.source_file].definitions[&func.func.name][&func.mono];
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
     let func_object_descriptor = func.function_object_descriptor();
 

@@ -10,11 +10,8 @@ use inkwell::{
     types::{BasicTypeEnum, FunctionType},
     AddressSpace,
 };
-use quill_mir::{
-    mir::{ArgumentIndex, LocalVariableName},
-    ProjectMIR,
-};
-use quill_monomorphise::monomorphisation::MonomorphisedFunction;
+use quill_mir::mir::{ArgumentIndex, LocalVariableName};
+use quill_monomorphise::{mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisedFunction};
 use quill_reprs::data::FieldIndex;
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
@@ -37,9 +34,9 @@ fn generate_arg_reprs<'ctx>(
     func: &MonomorphisedFunction,
     codegen: &CodeGenContext<'ctx>,
     reprs: &mut LLVMRepresentations<'_, 'ctx>,
-    mir: &ProjectMIR,
+    mir: &MonomorphisedMIR,
 ) -> LLVMArgReprs<'ctx> {
-    let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
+    let def = &mir.files[&func.func.source_file].definitions[&func.func.name][&func.mono];
 
     let args_options = (0..def.arity)
         .map(|i| {
@@ -320,7 +317,7 @@ fn generate_llvm_type<'ctx>(
     func: &MonomorphisedFunction,
     codegen: &CodeGenContext<'ctx>,
     reprs: &mut LLVMRepresentations<'_, 'ctx>,
-    mir: &ProjectMIR,
+    mir: &MonomorphisedMIR,
 ) -> FunctionType<'ctx> {
     let arg_reprs = generate_arg_reprs(func, codegen, reprs, mir);
 
@@ -409,7 +406,7 @@ pub fn add_llvm_type<'ctx>(
     func: &MonomorphisedFunction,
     codegen: &CodeGenContext<'ctx>,
     reprs: &mut LLVMRepresentations<'_, 'ctx>,
-    mir: &ProjectMIR,
+    mir: &MonomorphisedMIR,
 ) {
     let ty = generate_llvm_type(func, codegen, reprs, mir);
     codegen.module.add_function(&func.to_string(), ty, None);
