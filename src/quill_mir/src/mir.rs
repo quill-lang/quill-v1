@@ -308,7 +308,7 @@ impl ControlFlowGraph {
 impl Display for ControlFlowGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(val) = &self.return_value {
-            writeln!(f, "returns {}", val)?;
+            writeln!(f, "returns {}", val.to_string().replace("\n", "\n    "))?;
         }
         writeln!(f, "entry point: {}", self.entry_point)?;
 

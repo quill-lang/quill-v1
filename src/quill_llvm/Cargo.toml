@@ -15,6 +15,7 @@ quill_mir = { path = "../quill_mir" }
 quill_target = { path = "../quill_target" }
 quill_monomorphise = { path = "../quill_monomorphise" }
 quill_reprs = { path = "../quill_reprs" }
+quill_analyse = { path = "../quill_analyse" }
 dunce = "1.0.1"
 
 [dev-dependencies]

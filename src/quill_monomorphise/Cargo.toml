@@ -10,4 +10,3 @@ quill_type = { path = "../quill_type" }
 quill_type_deduce = { path = "../quill_type_deduce" }
 quill_common = { path = "../quill_common" }
 quill_mir = { path = "../quill_mir" }
-quill_analyse = { path = "../quill_analyse" }

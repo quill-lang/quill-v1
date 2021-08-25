@@ -1,15 +1,101 @@
 //! Perform basic static analysis on the MIR to deduce what value
 //! each local variable holds, if knowable at compile time.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Debug,
+};
 
+use quill_common::{location::Location, name::QualifiedName};
 use quill_mir::mir::{
     DefinitionBodyM, DefinitionM, KnownValue, LocalVariableInfo, LocalVariableName, Place, Rvalue,
     StatementKind, TerminatorKind,
 };
+use quill_monomorphise::{
+    mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisationParameters,
+};
+
+pub fn analyse_values(mir: &mut MonomorphisedMIR) {
+    // Work out which functions depend on which other functions.
+    let function_dependencies = analyse_function_dependencies(mir);
+    eprintln!("deps: {:#?}", function_dependencies);
+
+    // Run static analysis on each definition.
+    for file in mir.files.values_mut() {
+        for defs in file.definitions.values_mut() {
+            for def in defs.values_mut() {
+                analyse_values_def(def);
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct FunctionDescriptor {
+    name: QualifiedName,
+    params: MonomorphisationParameters,
+}
+
+impl Debug for FunctionDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.name, self.params)
+    }
+}
+
+/// If a function A calls another function B,
+/// then the return value contains a mapping B -> A.
+/// This means that when info about B is deduced, we can find all A that depend on this new info.
+fn analyse_function_dependencies(
+    mir: &MonomorphisedMIR,
+) -> BTreeMap<FunctionDescriptor, BTreeSet<FunctionDescriptor>> {
+    let mut result = BTreeMap::<FunctionDescriptor, BTreeSet<FunctionDescriptor>>::new();
+    for (file_name, file) in &mir.files {
+        for (def_name, defs) in &file.definitions {
+            for (def_mono, def) in defs {
+                if let DefinitionBodyM::PatternMatch(cfg) = &def.body {
+                    for block in cfg.basic_blocks.values() {
+                        for stmt in &block.statements {
+                            match &stmt.kind {
+                                StatementKind::InvokeFunction {
+                                    name,
+                                    type_variables,
+                                    ..
+                                }
+                                | StatementKind::ConstructFunctionObject {
+                                    name,
+                                    type_variables,
+                                    ..
+                                } => {
+                                    result
+                                        .entry(FunctionDescriptor {
+                                            name: name.clone(),
+                                            params: MonomorphisationParameters {
+                                                type_parameters: type_variables.clone(),
+                                            },
+                                        })
+                                        .or_default()
+                                        .insert(FunctionDescriptor {
+                                            name: QualifiedName {
+                                                source_file: file_name.clone(),
+                                                name: def_name.clone(),
+                                                range: Location { line: 0, col: 0 }.into(),
+                                            },
+                                            params: def_mono.clone(),
+                                        });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    result
+}
 
 /// Work out what value each variable holds, if known at compile time.
-pub fn analyse_values(def: &mut DefinitionM) {
+pub fn analyse_values_def(def: &mut DefinitionM) {
     // Run through the control flow graph and work out what value each variable might hold.
     let cfg = match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => cfg,

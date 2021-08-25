@@ -95,7 +95,8 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
     let mut mono_mir = MonomorphisedMIR::new(mir, &mono.functions, |ty| reprs.has_repr(ty));
 
     // Run static analysis on the monomorphised MIR.
-    mono_mir.analyse();
+    println!("status mir static analysis");
+    quill_analyse::analyse_values(&mut mono_mir);
 
     // Output the project MIR.
     if build_info.emit_project_mir {

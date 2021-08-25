@@ -863,7 +863,9 @@ dependencies = [
 name = "quill_analyse"
 version = "0.1.0"
 dependencies = [
+ "quill_common",
  "quill_mir",
+ "quill_monomorphise",
 ]
 
 [[package]]
@@ -962,6 +964,7 @@ version = "0.1.0"
 dependencies = [
  "dunce",
  "inkwell",
+ "quill_analyse",
  "quill_borrow_check",
  "quill_common",
  "quill_func_objects",
@@ -1018,7 +1021,6 @@ dependencies = [
 name = "quill_monomorphise"
 version = "0.1.0"
 dependencies = [
- "quill_analyse",
  "quill_common",
  "quill_index",
  "quill_mir",

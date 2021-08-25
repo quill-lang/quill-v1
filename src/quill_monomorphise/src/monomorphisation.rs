@@ -173,7 +173,7 @@ impl Monomorphisation {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisationParameters {
-    type_parameters: Vec<Type>,
+    pub type_parameters: Vec<Type>,
 }
 
 impl Display for MonomorphisationParameters {
