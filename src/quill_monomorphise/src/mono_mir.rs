@@ -89,7 +89,7 @@ impl MonomorphisedMIR {
         for file in self.files.values_mut() {
             for defs in file.definitions.values_mut() {
                 for def in defs.values_mut() {
-                    quill_mir::analyse::analyse_values(def);
+                    quill_analyse::analyse_values(def);
                 }
             }
         }

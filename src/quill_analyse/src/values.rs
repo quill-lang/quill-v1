@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::mir::{
+use quill_mir::mir::{
     DefinitionBodyM, DefinitionM, KnownValue, LocalVariableInfo, LocalVariableName, Place, Rvalue,
     StatementKind, TerminatorKind,
 };

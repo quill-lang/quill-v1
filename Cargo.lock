@@ -860,6 +860,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill_analyse"
+version = "0.1.0"
+dependencies = [
+ "quill_mir",
+]
+
+[[package]]
 name = "quill_borrow_check"
 version = "0.1.0"
 dependencies = [
@@ -1011,6 +1018,7 @@ dependencies = [
 name = "quill_monomorphise"
 version = "0.1.0"
 dependencies = [
+ "quill_analyse",
  "quill_common",
  "quill_index",
  "quill_mir",

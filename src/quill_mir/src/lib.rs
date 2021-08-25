@@ -1,7 +1,6 @@
 //! This module contains the mid-level intermediate representation of code.
 //! Much of this code is heavily inspired by the Rust compiler.
 
-pub mod analyse;
 mod definition;
 mod expr;
 mod impls;
