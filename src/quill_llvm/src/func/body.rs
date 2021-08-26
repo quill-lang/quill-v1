@@ -165,12 +165,14 @@ fn create_real_func_body_cfg<'ctx>(
                 StatementKind::InvokeFunction {
                     name,
                     type_variables,
+                    special_case_arguments,
                     target,
                     arguments,
                 } => {
                     let mono_func = MonomorphisedFunction {
                         func: name.clone(),
-                        mono: MonomorphisationParameters::new(type_variables.clone()),
+                        mono: MonomorphisationParameters::new(type_variables.clone())
+                            .with_args(special_case_arguments.iter().cloned()),
                         curry_steps: Vec::new(),
                         direct: true,
                     };
@@ -229,13 +231,15 @@ fn create_real_func_body_cfg<'ctx>(
                 StatementKind::ConstructFunctionObject {
                     name,
                     type_variables,
+                    special_case_arguments,
                     target,
                     curry_steps,
                     curried_arguments,
                 } => {
                     let mono_func = MonomorphisedFunction {
                         func: name.clone(),
-                        mono: MonomorphisationParameters::new(type_variables.clone()),
+                        mono: MonomorphisationParameters::new(type_variables.clone())
+                            .with_args(special_case_arguments.iter().cloned()),
                         curry_steps: curry_steps.clone(),
                         direct: true,
                     };

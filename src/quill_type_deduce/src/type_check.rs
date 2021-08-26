@@ -1341,7 +1341,7 @@ fn collect_bound_vars(
 
 /// Treating this symbol as a function, what are its arguments' types and the result type?
 /// If this is not a function, then it is treated as a zero-argument function.
-fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
+pub fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
     match symbol_type {
         Type::Function(left, right) => {
             let (mut args, out) = get_args_of_type(right);
@@ -1357,7 +1357,7 @@ fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
 ///
 /// This enforces that the function is treated as a `num_args`-argument function,
 /// by currying arguments until the required arity is achieved.
-fn get_args_of_type_arity(symbol_type: &Type, num_args: usize) -> (Vec<Type>, Type) {
+pub fn get_args_of_type_arity(symbol_type: &Type, num_args: usize) -> (Vec<Type>, Type) {
     let (mut symbol_args, mut result) = get_args_of_type(symbol_type);
 
     // Now, let's edit the `symbol_args` and `result` type to match the number of arguments we supplied.

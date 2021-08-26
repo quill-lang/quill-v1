@@ -864,6 +864,7 @@ name = "quill_analyse"
 version = "0.1.0"
 dependencies = [
  "quill_common",
+ "quill_index",
  "quill_mir",
  "quill_monomorphise",
 ]

@@ -89,7 +89,6 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
     );
 
     println!("status monomorphising");
-
     let mono = Monomorphisation::new(&mir);
     let reprs = Representations::new(&mir.index, mono.types, mono.aspects);
     let mut mono_mir = MonomorphisedMIR::new(mir, &mono.functions, |ty| reprs.has_repr(ty));

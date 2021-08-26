@@ -6,12 +6,15 @@ use std::{
 };
 
 use quill_common::{
-    location::{Range, Ranged},
+    location::{Location, Range, Ranged},
     name::QualifiedName,
 };
 use quill_index::TypeParameter;
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
+use quill_type_deduce::type_check::get_args_of_type_arity;
+
+use crate::validate::type_of_value;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct ArgumentIndex(pub u64);
@@ -349,6 +352,185 @@ impl KnownValue {
             }
         }
     }
+
+    /// Generate MIR instructions to construct this known value.
+    /// We are allowed to create new local variables with IDs greater than or equal to next_local_id.
+    /// This function is responsible for creating a new entry in locals for the new variable.
+    pub fn generate<'a>(
+        &self,
+        target: LocalVariableName,
+        mut next_local_id: u64,
+        locals: &mut BTreeMap<LocalVariableName, LocalVariableInfo>,
+        definition_infos: impl Clone + Fn(&QualifiedName, &[Type], &[KnownValue]) -> &'a DefinitionM,
+    ) -> GenerationResult {
+        let range = Location { line: 0, col: 0 }.into();
+        match self {
+            KnownValue::Constant(value) => {
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        ty: Type::Primitive(type_of_value(*value)),
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements: vec![Statement {
+                        range,
+                        kind: StatementKind::Assign {
+                            target,
+                            source: Rvalue::Constant(*value),
+                        },
+                    }],
+                    next_local_id,
+                }
+            }
+            KnownValue::Instantiate {
+                name,
+                type_variables,
+                special_case_arguments,
+            } => {
+                let mir_def = definition_infos(name, type_variables, special_case_arguments);
+                let arity = mir_def.arity;
+                let real_arity = arity - special_case_arguments.len() as u64;
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        ty: get_args_of_type_arity(
+                            &mir_def.symbol_type(),
+                            special_case_arguments.len(),
+                        )
+                        .1,
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements: vec![Statement {
+                        range,
+                        kind: if real_arity == 0 {
+                            StatementKind::InvokeFunction {
+                                name: name.clone(),
+                                type_variables: type_variables.clone(),
+                                special_case_arguments: special_case_arguments.clone(),
+                                target,
+                                arguments: Vec::new(),
+                            }
+                        } else {
+                            StatementKind::ConstructFunctionObject {
+                                name: name.clone(),
+                                type_variables: type_variables.clone(),
+                                special_case_arguments: special_case_arguments.clone(),
+                                target,
+                                curry_steps: std::iter::repeat(1)
+                                    .take(real_arity as usize)
+                                    .collect(),
+                                curried_arguments: Vec::new(),
+                            }
+                        },
+                    }],
+                    next_local_id,
+                }
+            }
+            KnownValue::ConstructData {
+                name,
+                type_variables,
+                variant,
+                fields,
+            } => {
+                let mut statements = Vec::new();
+                let mut field_entries = BTreeMap::new();
+                for (field_name, field_value) in fields {
+                    let field_local = LocalVariableName::Local(LocalVariableId(next_local_id));
+                    next_local_id += 1;
+                    let inner_result = field_value.generate(
+                        field_local,
+                        next_local_id,
+                        locals,
+                        definition_infos.clone(),
+                    );
+                    next_local_id = inner_result.next_local_id;
+                    statements.extend(inner_result.statements);
+                    field_entries.insert(field_name.clone(), Rvalue::Move(Place::new(field_local)));
+                }
+                statements.push(Statement {
+                    range,
+                    kind: StatementKind::ConstructData {
+                        name: name.clone(),
+                        type_variables: type_variables.clone(),
+                        variant: variant.clone(),
+                        fields: field_entries,
+                        target,
+                    },
+                });
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        ty: Type::Named {
+                            name: name.clone(),
+                            parameters: type_variables.clone(),
+                        },
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements,
+                    next_local_id,
+                }
+            }
+            KnownValue::ConstructImpl {
+                aspect,
+                type_variables,
+                definitions,
+            } => {
+                let mut statements = Vec::new();
+                let mut field_entries = BTreeMap::new();
+                for (field_name, field_value) in definitions {
+                    let field_local = LocalVariableName::Local(LocalVariableId(next_local_id));
+                    next_local_id += 1;
+                    let inner_result = field_value.generate(
+                        field_local,
+                        next_local_id,
+                        locals,
+                        definition_infos.clone(),
+                    );
+                    next_local_id = inner_result.next_local_id;
+                    statements.extend(inner_result.statements);
+                    field_entries.insert(field_name.clone(), field_local);
+                }
+                statements.push(Statement {
+                    range,
+                    kind: StatementKind::ConstructImpl {
+                        aspect: aspect.clone(),
+                        type_variables: type_variables.clone(),
+                        definitions: field_entries,
+                        target,
+                    },
+                });
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        ty: Type::Impl {
+                            name: aspect.clone(),
+                            parameters: type_variables.clone(),
+                        },
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements,
+                    next_local_id,
+                }
+            }
+        }
+    }
+}
+
+pub struct GenerationResult {
+    pub statements: Vec<Statement>,
+    pub next_local_id: u64,
 }
 
 /// After validation, the control flow graph must be in a topologically sorted order:
@@ -512,6 +694,115 @@ impl ControlFlowGraph {
 
         self.entry_point = block_id_map[&self.entry_point];
     }
+
+    /// Replaces the uses of the given variable with the replacement.
+    pub fn replace_uses(&mut self, original: LocalVariableName, replacement: LocalVariableName) {
+        let replace_local = |local: &mut LocalVariableName| {
+            if *local == original {
+                *local = replacement;
+            }
+        };
+        let replace_place = |place: &mut Place| replace_local(&mut place.local);
+        let replace_rvalue = |rvalue: &mut Rvalue| match rvalue {
+            Rvalue::Move(place) => replace_place(place),
+            Rvalue::Borrow(local) | Rvalue::Copy(local) => replace_local(local),
+            Rvalue::Constant(_) => {}
+        };
+
+        for block in self.basic_blocks.values_mut() {
+            for stmt in &mut block.statements {
+                match &mut stmt.kind {
+                    StatementKind::Assign { target, source } => {
+                        replace_local(target);
+                        replace_rvalue(source)
+                    }
+                    StatementKind::AssignPhi { target, phi_cases } => {
+                        replace_local(target);
+                        for (_block, source) in phi_cases.iter_mut() {
+                            replace_local(source);
+                        }
+                    }
+                    StatementKind::InstanceSymbol { target, .. } => {
+                        replace_local(target);
+                    }
+                    StatementKind::Apply {
+                        argument,
+                        function,
+                        target,
+                    } => {
+                        replace_rvalue(argument);
+                        replace_rvalue(function);
+                        replace_local(target);
+                    }
+                    StatementKind::InvokeFunction {
+                        target, arguments, ..
+                    } => {
+                        replace_local(target);
+                        for arg in arguments {
+                            replace_rvalue(arg);
+                        }
+                    }
+                    StatementKind::ConstructFunctionObject {
+                        target,
+                        curried_arguments,
+                        ..
+                    } => {
+                        replace_local(target);
+                        for arg in curried_arguments {
+                            replace_rvalue(arg);
+                        }
+                    }
+                    StatementKind::InvokeFunctionObject {
+                        func_object,
+                        target,
+                        additional_arguments,
+                    } => {
+                        replace_rvalue(func_object);
+                        replace_local(target);
+                        for arg in additional_arguments {
+                            replace_rvalue(arg);
+                        }
+                    }
+                    StatementKind::Drop { variable } => {
+                        replace_local(variable);
+                    }
+                    StatementKind::Free { variable } => {
+                        replace_local(variable);
+                    }
+                    StatementKind::ConstructData { fields, target, .. } => {
+                        for rvalue in fields.values_mut() {
+                            replace_rvalue(rvalue);
+                        }
+                        replace_local(target);
+                    }
+                    StatementKind::ConstructImpl {
+                        definitions,
+                        target,
+                        ..
+                    } => {
+                        for value in definitions.values_mut() {
+                            replace_local(value);
+                        }
+                        replace_local(target);
+                    }
+                }
+            }
+
+            match &mut block.terminator.kind {
+                TerminatorKind::Goto(_) => {}
+                TerminatorKind::SwitchDiscriminant { enum_place, .. } => {
+                    replace_place(enum_place);
+                }
+                TerminatorKind::SwitchConstant { place, .. } => {
+                    replace_place(place);
+                }
+                TerminatorKind::Invalid => panic!("invalid terminator found"),
+                TerminatorKind::Return { value } => {
+                    replace_local(value);
+                }
+            }
+        }
+    }
 }
 
 /// A basic block is a block of code that can be executed, and may manipulate values.
@@ -575,6 +866,7 @@ pub enum StatementKind {
     InvokeFunction {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        special_case_arguments: Vec<KnownValue>,
         target: LocalVariableName,
         arguments: Vec<Rvalue>,
     },
@@ -589,6 +881,7 @@ pub enum StatementKind {
     ConstructFunctionObject {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        special_case_arguments: Vec<KnownValue>,
         target: LocalVariableName,
         curry_steps: Vec<u64>,
         curried_arguments: Vec<Rvalue>,
@@ -666,10 +959,14 @@ impl Display for StatementKind {
             StatementKind::InvokeFunction {
                 name,
                 type_variables,
+                special_case_arguments,
                 target,
                 arguments,
             } => {
                 write!(f, "{} = invoke {} ( ", target, name)?;
+                for arg in special_case_arguments {
+                    write!(f, "sc {}, ", arg.display_in_mono())?;
+                }
                 for arg in arguments {
                     write!(f, "{}, ", arg)?;
                 }
@@ -685,11 +982,15 @@ impl Display for StatementKind {
             StatementKind::ConstructFunctionObject {
                 name,
                 type_variables,
+                special_case_arguments,
                 target,
                 curry_steps,
                 curried_arguments,
             } => {
                 write!(f, "{} = fobj {} ( ", target, name)?;
+                for arg in special_case_arguments {
+                    write!(f, "sc {}, ", arg.display_in_mono())?;
+                }
                 for arg in curried_arguments {
                     write!(f, "{}, ", arg)?;
                 }

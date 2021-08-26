@@ -65,6 +65,7 @@ fn convert_stmt(stmt: Statement, arities: &BTreeMap<QualifiedName, u64>) -> Vec<
                     kind: StatementKind::InvokeFunction {
                         name,
                         type_variables,
+                        special_case_arguments: Vec::new(),
                         target,
                         arguments: Vec::new(),
                     },
@@ -76,6 +77,7 @@ fn convert_stmt(stmt: Statement, arities: &BTreeMap<QualifiedName, u64>) -> Vec<
                     kind: StatementKind::ConstructFunctionObject {
                         name,
                         type_variables,
+                        special_case_arguments: Vec::new(),
                         target,
                         curry_steps: std::iter::repeat(1).take(arity as usize).collect(),
                         curried_arguments: Vec::new(),

@@ -212,6 +212,12 @@ impl MonomorphisationParameters {
         self
     }
 
+    /// Add special-case arguments.
+    pub fn with_args(mut self, args: impl IntoIterator<Item = KnownValue>) -> Self {
+        self.special_case_arguments.extend(args);
+        self
+    }
+
     /// Get a reference to the type parameters.
     pub fn type_parameters(&self) -> &[Type] {
         self.type_parameters.as_slice()

@@ -9,8 +9,9 @@ use std::{
 
 use quill_common::{location::Location, name::QualifiedName};
 use quill_mir::mir::{
-    DefinitionBodyM, DefinitionM, KnownValue, LocalVariableInfo, LocalVariableName, Place, Rvalue,
-    StatementKind, TerminatorKind,
+    ArgumentIndex, BasicBlockId, DefinitionBodyM, DefinitionM, KnownValue, LocalVariableDetails,
+    LocalVariableId, LocalVariableInfo, LocalVariableName, Place, Rvalue, StatementKind,
+    TerminatorKind,
 };
 use quill_monomorphise::{
     mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisationParameters,
@@ -40,6 +41,8 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
         })
         .flatten()
         .collect::<VecDeque<_>>();
+    // The set of functions that have appeared in the analysis queue at least once before.
+    let mut analysed_functions = analysis_queue.iter().cloned().collect::<BTreeSet<_>>();
 
     // If a function A calls another function B,
     // then the return value contains a mapping B -> A.
@@ -50,22 +53,56 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
     let mut known_return_values = BTreeMap::new();
 
     while let Some(desc) = analysis_queue.pop_front() {
-        let def = mir
+        let defs = mir
             .files
             .get_mut(&desc.name.source_file)
             .unwrap()
             .definitions
             .get_mut(&desc.name.name)
-            .unwrap()
-            .get_mut(&desc.params)
             .unwrap();
+        let def = if let Some(def) = defs.get_mut(&desc.params) {
+            def
+        } else {
+            // We're creating a special case definition.
+            // Get the equivalent non-special-case definition and create a special case definition based upon it.
+            let original = defs
+                .get(&MonomorphisationParameters::new(
+                    desc.params.type_parameters().to_vec(),
+                ))
+                .unwrap();
+
+            // Convert the definition into a special case.
+            let special_case = convert_special_case(
+                original.clone(),
+                desc.params.special_case_arguments().to_vec(),
+                mir,
+            );
+
+            // Reborrow defs.
+            let defs = mir
+                .files
+                .get_mut(&desc.name.source_file)
+                .unwrap()
+                .definitions
+                .get_mut(&desc.name.name)
+                .unwrap();
+
+            // Insert it into the definitions set and retrieve a reference to it.
+            defs.insert(desc.params.clone(), special_case);
+            defs.get_mut(&desc.params).unwrap()
+        };
 
         let result = analyse_values_def(def, &known_return_values);
+        analysed_functions.insert(desc.clone());
+
         for dep_def in result.defs_required {
             function_dependencies
-                .entry(dep_def)
+                .entry(dep_def.clone())
                 .or_default()
                 .insert(desc.clone());
+            if analysed_functions.insert(dep_def.clone()) {
+                analysis_queue.push_back(dep_def)
+            }
         }
 
         if let Some(return_value) = result.return_value {
@@ -103,6 +140,107 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
             }
         }
     }
+}
+
+/// Convert a definition into a special case definition.
+/// Removes the first few arguments, replacing them with the new special case arguments.
+fn convert_special_case(
+    mut def: DefinitionM,
+    special_case_arguments: Vec<KnownValue>,
+    mir: &MonomorphisedMIR,
+) -> DefinitionM {
+    let cfg = if let DefinitionBodyM::PatternMatch(cfg) = &mut def.body {
+        cfg
+    } else {
+        return def;
+    };
+
+    let mut next_local_id = def
+        .local_variable_names
+        .iter()
+        .fold(0, |num, (local_name, _)| {
+            if let LocalVariableName::Local(LocalVariableId(n)) = local_name {
+                std::cmp::max(num, *n)
+            } else {
+                num
+            }
+        })
+        + 1;
+    // The local variable id for special case argument `i` is `special_case_base_id + i`.
+    let special_case_base_id = next_local_id;
+
+    for (i, value) in special_case_arguments.iter().enumerate() {
+        // Create a new local variable with this value.
+        def.local_variable_names.insert(
+            LocalVariableName::Local(LocalVariableId(next_local_id)),
+            LocalVariableInfo {
+                range: Location { line: 0, col: 0 }.into(),
+                ty: def.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(i as u64))]
+                    .ty
+                    .clone(),
+                details: LocalVariableDetails {
+                    name: Some("special case argument".to_string()),
+                    value: Some(value.clone()),
+                },
+            },
+        );
+        next_local_id += 1;
+    }
+
+    // Now that we've created the locals, let's replace all uses of arguments with these locals.
+    for (i, _) in special_case_arguments.iter().enumerate() {
+        cfg.replace_uses(
+            LocalVariableName::Argument(ArgumentIndex(i as u64)),
+            LocalVariableName::Local(LocalVariableId(special_case_base_id + i as u64)),
+        );
+    }
+
+    // Now initialise the new locals with their known values.
+    for (i, value) in special_case_arguments.iter().enumerate() {
+        let gen_result = value.generate(
+            LocalVariableName::Local(LocalVariableId(special_case_base_id + i as u64)),
+            next_local_id,
+            &mut def.local_variable_names,
+            |name, type_variables, special_case_arguments| {
+                &mir.files[&name.source_file].definitions[&name.name]
+                    [&MonomorphisationParameters::new(type_variables.to_vec())
+                        .with_args(special_case_arguments.to_vec())]
+            },
+        );
+
+        // Add the statements initialising the variable to the start of the control flow graph.
+        cfg.basic_blocks
+            .get_mut(&BasicBlockId(0))
+            .unwrap()
+            .statements
+            .splice(0..0, gen_result.statements);
+        next_local_id = gen_result.next_local_id;
+    }
+
+    // Move all the arguments to the function along.
+    for i in (special_case_arguments.len() as u64..def.arity).rev() {
+        cfg.replace_uses(
+            LocalVariableName::Argument(ArgumentIndex(i)),
+            LocalVariableName::Argument(ArgumentIndex(i - special_case_arguments.len() as u64)),
+        );
+        let value = def
+            .local_variable_names
+            .remove(&LocalVariableName::Argument(ArgumentIndex(i)))
+            .unwrap();
+        def.local_variable_names.insert(
+            LocalVariableName::Argument(ArgumentIndex(i - special_case_arguments.len() as u64)),
+            value,
+        );
+    }
+    // Remove redundant locals from the local variables list.
+    for i in (def.arity - special_case_arguments.len() as u64)..def.arity {
+        def.local_variable_names
+            .remove(&LocalVariableName::Argument(ArgumentIndex(i)));
+    }
+    def.arity -= special_case_arguments.len() as u64;
+    // TODO: we should protect against supplying more args than the arity of the function
+
+    def
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -184,6 +322,7 @@ fn analyse_values_def(
                 StatementKind::InvokeFunction {
                     name,
                     type_variables,
+                    special_case_arguments,
                     target,
                     arguments,
                 } => {
@@ -193,7 +332,8 @@ fn analyse_values_def(
 
                     let known_value = type_of_def(FunctionDescriptor {
                         name: name.clone(),
-                        params: MonomorphisationParameters::new(type_variables.clone()),
+                        params: MonomorphisationParameters::new(type_variables.clone())
+                            .with_args(special_case_arguments.clone()),
                     });
 
                     def.local_variable_names
@@ -257,15 +397,17 @@ fn analyse_values_def(
                         }
                     }
 
+                    let value = type_of_def(FunctionDescriptor {
+                        name,
+                        params: MonomorphisationParameters::new(type_variables)
+                            .with_args(special_case_arguments),
+                    });
+
                     def.local_variable_names
                         .get_mut(target)
                         .unwrap()
                         .details
-                        .value = Some(KnownValue::Instantiate {
-                        name,
-                        type_variables,
-                        special_case_arguments,
-                    });
+                        .value = Some(value);
                 }
                 StatementKind::Drop { .. } => {}
                 StatementKind::Free { .. } => {}
