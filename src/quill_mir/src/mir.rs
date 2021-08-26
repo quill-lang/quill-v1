@@ -191,12 +191,15 @@ impl Display for LocalVariableDetails {
 
 /// A value that we know at compile time.
 /// Useful for inlining.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KnownValue {
     Constant(ConstantValue),
     Instantiate {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        /// In certain cases, we may already know the value of some initial arguments
+        /// (typically impls). These are stored here.
+        special_case_arguments: Vec<KnownValue>,
     },
     ConstructData {
         name: QualifiedName,
@@ -221,12 +224,19 @@ impl Display for KnownValue {
             KnownValue::Instantiate {
                 name,
                 type_variables,
+                special_case_arguments,
             } => {
                 write!(f, "instantiate {}", name)?;
                 if !type_variables.is_empty() {
                     write!(f, " with")?;
                     for ty in type_variables {
                         write!(f, " {}", ty)?;
+                    }
+                }
+                if !special_case_arguments.is_empty() {
+                    writeln!(f, " special case")?;
+                    for arg in special_case_arguments {
+                        write!(f, "{}", arg.to_string().replace("\n", "\n    "))?;
                     }
                 }
                 Ok(())

@@ -1,8 +1,9 @@
 //! Perform basic static analysis on the MIR to deduce what value
 //! each local variable holds, if knowable at compile time.
+//! This will add special-case functions where impl parameters are known at compile time.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet, VecDeque},
     fmt::Debug,
 };
 
@@ -18,13 +19,53 @@ use quill_monomorphise::{
 pub fn analyse_values(mir: &mut MonomorphisedMIR) {
     // Work out which functions depend on which other functions.
     let function_dependencies = analyse_function_dependencies(mir);
-    eprintln!("deps: {:#?}", function_dependencies);
+    // eprintln!("deps: {:#?}", function_dependencies);
 
     // Run static analysis on each definition.
-    for file in mir.files.values_mut() {
-        for defs in file.definitions.values_mut() {
-            for def in defs.values_mut() {
-                analyse_values_def(def);
+    let mut analysis_queue = function_dependencies
+        .keys()
+        .cloned()
+        .collect::<VecDeque<_>>();
+
+    let mut known_return_values = BTreeMap::new();
+
+    while let Some(desc) = analysis_queue.pop_front() {
+        let def = mir
+            .files
+            .get_mut(&desc.name.source_file)
+            .unwrap()
+            .definitions
+            .get_mut(&desc.name.name)
+            .unwrap()
+            .get_mut(&desc.params)
+            .unwrap();
+
+        let result = analyse_values_def(def, &known_return_values);
+        if let Some(return_value) = result.return_value {
+            // The return value might have changed.
+            let return_value_changed = match known_return_values.entry(desc.clone()) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(return_value);
+                    true
+                }
+                Entry::Occupied(mut occupied) => {
+                    if *occupied.get() == return_value {
+                        false
+                    } else {
+                        occupied.insert(return_value);
+                        true
+                    }
+                }
+            };
+
+            if return_value_changed {
+                // The return value actually changed.
+                // Re-analyse definitions that depend on this one.
+                // FIXME: This could enter an infinite loop for (mutually) recursive functions.
+                // TODO: This might add a function into the analysis queue multiple times -
+                // this could be a problem making the queue very large.
+                // We should optimise this once the time taken to compute this step becomes large.
+                analysis_queue.extend(function_dependencies[&desc].iter().cloned());
             }
         }
     }
@@ -94,12 +135,19 @@ fn analyse_function_dependencies(
     result
 }
 
+struct AnalysisResult {
+    return_value: Option<KnownValue>,
+}
+
 /// Work out what value each variable holds, if known at compile time.
-pub fn analyse_values_def(def: &mut DefinitionM) {
+fn analyse_values_def(
+    def: &mut DefinitionM,
+    known_return_values: &BTreeMap<FunctionDescriptor, KnownValue>,
+) -> AnalysisResult {
     // Run through the control flow graph and work out what value each variable might hold.
     let cfg = match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => cfg,
-        DefinitionBodyM::CompilerIntrinsic => return,
+        DefinitionBodyM::CompilerIntrinsic => return AnalysisResult { return_value: None },
     };
 
     let mut possible_return_values = Vec::new();
@@ -125,8 +173,7 @@ pub fn analyse_values_def(def: &mut DefinitionM) {
                     panic!("func objects has not been run yet");
                 }
                 StatementKind::Apply { .. } => {
-                    // In the general case, we can't compute the result of a function call statically.
-                    // TODO: make an effort to find the result somehow if the function call is a default impl or something?
+                    panic!("func objects has not been run yet")
                 }
                 StatementKind::InvokeFunction {
                     name,
@@ -134,16 +181,34 @@ pub fn analyse_values_def(def: &mut DefinitionM) {
                     target,
                     arguments,
                 } => {
-                    if arguments.is_empty() {
-                        def.local_variable_names
-                            .get_mut(target)
-                            .unwrap()
-                            .details
-                            .value = Some(KnownValue::Instantiate {
+                    if !arguments.is_empty() {
+                        panic!("arguments not supported");
+                    }
+
+                    // TODO: Extract this into an external function to unify with the ConstructFunctionObject block`
+                    // Check if the value of the function is known.
+                    let known_value = known_return_values.get(&FunctionDescriptor {
+                        name: name.clone(),
+                        params: MonomorphisationParameters {
+                            type_parameters: type_variables.clone(),
+                        },
+                    });
+
+                    let value = if let Some(known_value) = known_value {
+                        known_value.clone()
+                    } else {
+                        KnownValue::Instantiate {
                             name: name.clone(),
                             type_variables: type_variables.clone(),
-                        });
-                    }
+                            special_case_arguments: Vec::new(),
+                        }
+                    };
+
+                    def.local_variable_names
+                        .get_mut(target)
+                        .unwrap()
+                        .details
+                        .value = Some(value);
                 }
                 StatementKind::ConstructFunctionObject {
                     name,
@@ -152,18 +217,77 @@ pub fn analyse_values_def(def: &mut DefinitionM) {
                     curried_arguments,
                     ..
                 } => {
-                    if curried_arguments.is_empty() {
-                        def.local_variable_names
-                            .get_mut(target)
-                            .unwrap()
-                            .details
-                            .value = Some(KnownValue::Instantiate {
+                    if !curried_arguments.is_empty() {
+                        panic!("arguments not supported");
+                    }
+
+                    // Check if the value of the function is known.
+                    let known_value = known_return_values.get(&FunctionDescriptor {
+                        name: name.clone(),
+                        params: MonomorphisationParameters {
+                            type_parameters: type_variables.clone(),
+                        },
+                    });
+
+                    let value = if let Some(known_value) = known_value {
+                        known_value.clone()
+                    } else {
+                        KnownValue::Instantiate {
                             name: name.clone(),
                             type_variables: type_variables.clone(),
-                        });
-                    }
+                            special_case_arguments: Vec::new(),
+                        }
+                    };
+
+                    def.local_variable_names
+                        .get_mut(target)
+                        .unwrap()
+                        .details
+                        .value = Some(value);
                 }
-                StatementKind::InvokeFunctionObject { .. } => {}
+                StatementKind::InvokeFunctionObject {
+                    func_object,
+                    target,
+                    additional_arguments,
+                } => {
+                    // In the general case, we can't compute the result of a function call statically.
+                    // However, if the argument is an impl, and the function is known, we can make a special case function
+                    // for this specific case.
+                    let (name, type_variables, mut special_case_arguments) =
+                        if let Some(KnownValue::Instantiate {
+                            name,
+                            type_variables,
+                            special_case_arguments,
+                        }) = get_value_of_rvalue(&def.local_variable_names, func_object)
+                        {
+                            (name, type_variables, special_case_arguments)
+                        } else {
+                            continue 'stmt_loop;
+                        };
+
+                    for argument in additional_arguments {
+                        // For each argument, check if it's an impl.
+                        // If all arguments are impls, their values are stored in the list of special case arguments.
+                        if let Some(the_impl @ KnownValue::ConstructImpl { .. }) =
+                            get_value_of_rvalue(&def.local_variable_names, argument)
+                        {
+                            // We can make a special case function where the impl is known.
+                            special_case_arguments.push(the_impl);
+                        } else {
+                            continue 'stmt_loop;
+                        }
+                    }
+
+                    def.local_variable_names
+                        .get_mut(target)
+                        .unwrap()
+                        .details
+                        .value = Some(KnownValue::Instantiate {
+                        name,
+                        type_variables,
+                        special_case_arguments,
+                    });
+                }
                 StatementKind::Drop { .. } => {}
                 StatementKind::Free { .. } => {}
                 StatementKind::ConstructData {
@@ -232,9 +356,13 @@ pub fn analyse_values_def(def: &mut DefinitionM) {
     }
 
     // If the return value is known, store it.
-    if possible_return_values.len() == 1 {
-        cfg.return_value = possible_return_values.pop().unwrap();
-    }
+    let return_value = if possible_return_values.len() == 1 {
+        possible_return_values.pop().unwrap()
+    } else {
+        None
+    };
+
+    AnalysisResult { return_value }
 }
 
 /// Gets the value of this rvalue, if it is statically known.
