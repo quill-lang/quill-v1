@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, fmt::Display};
 
 use quill_common::name::QualifiedName;
 use quill_mir::{
-    mir::{DefinitionBodyM, StatementKind},
+    mir::{DefinitionBodyM, KnownValue, StatementKind},
     ProjectMIR,
 };
 use quill_type::Type;
@@ -33,9 +33,7 @@ impl Monomorphisation {
         mono.track_def(
             mir,
             mir.entry_point.clone(),
-            MonomorphisationParameters {
-                type_parameters: Vec::new(),
-            },
+            MonomorphisationParameters::new(Vec::new()),
             true,
             Vec::new(),
         );
@@ -84,8 +82,8 @@ impl Monomorphisation {
                                 self.track_def(
                                     mir,
                                     name.clone(),
-                                    MonomorphisationParameters {
-                                        type_parameters: type_variables
+                                    MonomorphisationParameters::new(
+                                        type_variables
                                             .iter()
                                             .cloned()
                                             .map(|ty| {
@@ -96,7 +94,7 @@ impl Monomorphisation {
                                                 )
                                             })
                                             .collect(),
-                                    },
+                                    ),
                                     true,
                                     Vec::new(),
                                 );
@@ -110,8 +108,8 @@ impl Monomorphisation {
                                 self.track_def(
                                     mir,
                                     name.clone(),
-                                    MonomorphisationParameters {
-                                        type_parameters: type_variables
+                                    MonomorphisationParameters::new(
+                                        type_variables
                                             .iter()
                                             .cloned()
                                             .map(|ty| {
@@ -122,7 +120,7 @@ impl Monomorphisation {
                                                 )
                                             })
                                             .collect(),
-                                    },
+                                    ),
                                     true,
                                     curry_steps.clone(),
                                 );
@@ -153,17 +151,13 @@ impl Monomorphisation {
             Type::Named { name, parameters } => {
                 self.types.insert(MonomorphisedType {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 });
             }
             Type::Impl { name, parameters } => {
                 self.aspects.insert(MonomorphisedAspect {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 });
             }
             _ => {}
@@ -173,7 +167,8 @@ impl Monomorphisation {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisationParameters {
-    pub type_parameters: Vec<Type>,
+    type_parameters: Vec<Type>,
+    special_case_arguments: Vec<KnownValue>,
 }
 
 impl Display for MonomorphisationParameters {
@@ -186,7 +181,17 @@ impl Display for MonomorphisationParameters {
                 write!(f, ", {}", ty)?;
             }
         }
-        write!(f, "]")
+        write!(f, "]")?;
+        write!(f, "(")?;
+        for (i, val) in self.special_case_arguments.iter().enumerate() {
+            let val_str = val.display_in_mono();
+            if i == 0 {
+                write!(f, "{}", val_str)?;
+            } else {
+                write!(f, ", {}", val_str)?;
+            }
+        }
+        write!(f, ")")
     }
 }
 
@@ -197,12 +202,24 @@ impl MonomorphisationParameters {
                 .into_iter()
                 .map(Type::anonymise_borrows)
                 .collect(),
+            special_case_arguments: Vec::new(),
         }
+    }
+
+    /// Add a special-case argument.
+    pub fn with_arg(mut self, arg: KnownValue) -> Self {
+        self.special_case_arguments.push(arg);
+        self
     }
 
     /// Get a reference to the type parameters.
     pub fn type_parameters(&self) -> &[Type] {
         self.type_parameters.as_slice()
+    }
+
+    /// Get a reference to the monomorphisation parameters's special case arguments.
+    pub fn special_case_arguments(&self) -> &[KnownValue] {
+        self.special_case_arguments.as_slice()
     }
 }
 

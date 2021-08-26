@@ -191,7 +191,7 @@ impl Display for LocalVariableDetails {
 
 /// A value that we know at compile time.
 /// Useful for inlining.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KnownValue {
     Constant(ConstantValue),
     Instantiate {
@@ -282,6 +282,70 @@ impl Display for KnownValue {
                     write!(f, "{} = {}", field_name, value_str)?;
                 }
                 Ok(())
+            }
+        }
+    }
+}
+
+impl KnownValue {
+    /// A display impl for creating a function signature, not for displaying in MIR.
+    pub fn display_in_mono(&self) -> String {
+        match self {
+            KnownValue::Constant(value) => value.to_string(),
+            KnownValue::Instantiate {
+                name,
+                type_variables,
+                special_case_arguments,
+            } => {
+                let mut result = name.to_string();
+                for ty in type_variables {
+                    result += "[";
+                    result += &ty.to_string();
+                    result += "]";
+                }
+                for arg in special_case_arguments {
+                    result += "(";
+                    result += &arg.to_string();
+                    result += ")";
+                }
+                result
+            }
+            KnownValue::ConstructData {
+                name,
+                type_variables,
+                variant,
+                fields,
+            } => {
+                let mut result = name.to_string();
+                if let Some(variant) = variant {
+                    result += "~";
+                    result += variant;
+                }
+                for ty in type_variables {
+                    result += "[";
+                    result += &ty.to_string();
+                    result += "]";
+                }
+                for (field_name, value) in fields {
+                    result += &format!("({}={})", field_name, value);
+                }
+                result
+            }
+            KnownValue::ConstructImpl {
+                aspect,
+                type_variables,
+                definitions,
+            } => {
+                let mut result = "impl ".to_string() + &aspect.to_string();
+                for ty in type_variables {
+                    result += "[";
+                    result += &ty.to_string();
+                    result += "]";
+                }
+                for (field_name, value) in definitions {
+                    result += &format!("({}={})", field_name, value);
+                }
+                result
             }
         }
     }

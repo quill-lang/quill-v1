@@ -16,16 +16,36 @@ use quill_monomorphise::{
     mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisationParameters,
 };
 
+/// Must be called after the func_objects pass,
+/// and before special cases are generated.
 pub fn analyse_values(mir: &mut MonomorphisedMIR) {
-    // Work out which functions depend on which other functions.
-    let function_dependencies = analyse_function_dependencies(mir);
-    // eprintln!("deps: {:#?}", function_dependencies);
-
     // Run static analysis on each definition.
-    let mut analysis_queue = function_dependencies
-        .keys()
-        .cloned()
+    let mut analysis_queue = mir
+        .files
+        .iter()
+        .map(|(file_name, file)| {
+            file.definitions
+                .iter()
+                .map(move |(name, defs)| {
+                    defs.keys().map(move |params| FunctionDescriptor {
+                        name: QualifiedName {
+                            source_file: file_name.clone(),
+                            name: name.clone(),
+                            range: Location { line: 0, col: 0 }.into(),
+                        },
+                        params: params.clone(),
+                    })
+                })
+                .flatten()
+        })
+        .flatten()
         .collect::<VecDeque<_>>();
+
+    // If a function A calls another function B,
+    // then the return value contains a mapping B -> A.
+    // This means that when info about B is deduced, we can find all A that depend on this new info.
+    let mut function_dependencies =
+        BTreeMap::<FunctionDescriptor, BTreeSet<FunctionDescriptor>>::new();
 
     let mut known_return_values = BTreeMap::new();
 
@@ -41,6 +61,13 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
             .unwrap();
 
         let result = analyse_values_def(def, &known_return_values);
+        for dep_def in result.defs_required {
+            function_dependencies
+                .entry(dep_def)
+                .or_default()
+                .insert(desc.clone());
+        }
+
         if let Some(return_value) = result.return_value {
             // The return value might have changed.
             let return_value_changed = match known_return_values.entry(desc.clone()) {
@@ -65,7 +92,14 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
                 // TODO: This might add a function into the analysis queue multiple times -
                 // this could be a problem making the queue very large.
                 // We should optimise this once the time taken to compute this step becomes large.
-                analysis_queue.extend(function_dependencies[&desc].iter().cloned());
+                analysis_queue.extend(
+                    function_dependencies
+                        .get(&desc)
+                        .map(|val| val.iter())
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
             }
         }
     }
@@ -83,60 +117,13 @@ impl Debug for FunctionDescriptor {
     }
 }
 
-/// If a function A calls another function B,
-/// then the return value contains a mapping B -> A.
-/// This means that when info about B is deduced, we can find all A that depend on this new info.
-fn analyse_function_dependencies(
-    mir: &MonomorphisedMIR,
-) -> BTreeMap<FunctionDescriptor, BTreeSet<FunctionDescriptor>> {
-    let mut result = BTreeMap::<FunctionDescriptor, BTreeSet<FunctionDescriptor>>::new();
-    for (file_name, file) in &mir.files {
-        for (def_name, defs) in &file.definitions {
-            for (def_mono, def) in defs {
-                if let DefinitionBodyM::PatternMatch(cfg) = &def.body {
-                    for block in cfg.basic_blocks.values() {
-                        for stmt in &block.statements {
-                            match &stmt.kind {
-                                StatementKind::InvokeFunction {
-                                    name,
-                                    type_variables,
-                                    ..
-                                }
-                                | StatementKind::ConstructFunctionObject {
-                                    name,
-                                    type_variables,
-                                    ..
-                                } => {
-                                    result
-                                        .entry(FunctionDescriptor {
-                                            name: name.clone(),
-                                            params: MonomorphisationParameters {
-                                                type_parameters: type_variables.clone(),
-                                            },
-                                        })
-                                        .or_default()
-                                        .insert(FunctionDescriptor {
-                                            name: QualifiedName {
-                                                source_file: file_name.clone(),
-                                                name: def_name.clone(),
-                                                range: Location { line: 0, col: 0 }.into(),
-                                            },
-                                            params: def_mono.clone(),
-                                        });
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    result
-}
-
 struct AnalysisResult {
     return_value: Option<KnownValue>,
+    /// When analysing, we might depend on other definitions.
+    /// Their descriptors are stored here.
+    /// If a descriptor is a special case, the caller is responsible for *creating* the special case definition
+    /// if it does not yet exist.
+    defs_required: BTreeSet<FunctionDescriptor>,
 }
 
 /// Work out what value each variable holds, if known at compile time.
@@ -147,8 +134,27 @@ fn analyse_values_def(
     // Run through the control flow graph and work out what value each variable might hold.
     let cfg = match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => cfg,
-        DefinitionBodyM::CompilerIntrinsic => return AnalysisResult { return_value: None },
+        DefinitionBodyM::CompilerIntrinsic => {
+            return AnalysisResult {
+                return_value: None,
+                defs_required: BTreeSet::new(),
+            }
+        }
     };
+
+    let mut defs_required = BTreeSet::new();
+    let mut type_of_def =
+        |desc: FunctionDescriptor| -> KnownValue {
+            let ty = known_return_values.get(&desc).cloned().unwrap_or_else(|| {
+                KnownValue::Instantiate {
+                    name: desc.name.clone(),
+                    type_variables: desc.params.type_parameters().to_vec(),
+                    special_case_arguments: desc.params.special_case_arguments().to_vec(),
+                }
+            });
+            defs_required.insert(desc);
+            ty
+        };
 
     let mut possible_return_values = Vec::new();
 
@@ -185,30 +191,16 @@ fn analyse_values_def(
                         panic!("arguments not supported");
                     }
 
-                    // TODO: Extract this into an external function to unify with the ConstructFunctionObject block`
-                    // Check if the value of the function is known.
-                    let known_value = known_return_values.get(&FunctionDescriptor {
+                    let known_value = type_of_def(FunctionDescriptor {
                         name: name.clone(),
-                        params: MonomorphisationParameters {
-                            type_parameters: type_variables.clone(),
-                        },
+                        params: MonomorphisationParameters::new(type_variables.clone()),
                     });
-
-                    let value = if let Some(known_value) = known_value {
-                        known_value.clone()
-                    } else {
-                        KnownValue::Instantiate {
-                            name: name.clone(),
-                            type_variables: type_variables.clone(),
-                            special_case_arguments: Vec::new(),
-                        }
-                    };
 
                     def.local_variable_names
                         .get_mut(target)
                         .unwrap()
                         .details
-                        .value = Some(value);
+                        .value = Some(known_value);
                 }
                 StatementKind::ConstructFunctionObject {
                     name,
@@ -221,29 +213,16 @@ fn analyse_values_def(
                         panic!("arguments not supported");
                     }
 
-                    // Check if the value of the function is known.
-                    let known_value = known_return_values.get(&FunctionDescriptor {
+                    let known_value = type_of_def(FunctionDescriptor {
                         name: name.clone(),
-                        params: MonomorphisationParameters {
-                            type_parameters: type_variables.clone(),
-                        },
+                        params: MonomorphisationParameters::new(type_variables.clone()),
                     });
-
-                    let value = if let Some(known_value) = known_value {
-                        known_value.clone()
-                    } else {
-                        KnownValue::Instantiate {
-                            name: name.clone(),
-                            type_variables: type_variables.clone(),
-                            special_case_arguments: Vec::new(),
-                        }
-                    };
 
                     def.local_variable_names
                         .get_mut(target)
                         .unwrap()
                         .details
-                        .value = Some(value);
+                        .value = Some(known_value);
                 }
                 StatementKind::InvokeFunctionObject {
                     func_object,
@@ -362,7 +341,10 @@ fn analyse_values_def(
         None
     };
 
-    AnalysisResult { return_value }
+    AnalysisResult {
+        return_value,
+        defs_required,
+    }
 }
 
 /// Gets the value of this rvalue, if it is statically known.
