@@ -34,14 +34,13 @@ def default show_list: impl Show[List[Int]] {
 def default show_int: impl Show[Int] {
     show_int = impl {
         show n = (
-            let n2 = copy &n
             match ((copy &n) >= 10) (
                 true -> (
                     let quot = (copy &n) / 10
                     let rem = n - (copy &quot) * 10
                     concat (show quot) (show rem)
                 )
-                false -> (n2 + 48) :- empty
+                false -> (n + 48) :- empty
             )
         )
     }
