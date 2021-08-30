@@ -867,6 +867,7 @@ dependencies = [
  "quill_index",
  "quill_mir",
  "quill_monomorphise",
+ "quill_type",
 ]
 
 [[package]]

@@ -355,13 +355,13 @@ impl KnownValue {
 
     /// Generate MIR instructions to construct this known value.
     /// We are allowed to create new local variables with IDs greater than or equal to next_local_id.
-    /// This function is responsible for creating a new entry in locals for the new variable.
+    /// This function will also create a new entry in locals for the new variable.
     pub fn generate<'a>(
         &self,
         target: LocalVariableName,
         mut next_local_id: u64,
         locals: &mut BTreeMap<LocalVariableName, LocalVariableInfo>,
-        definition_infos: impl Clone + Fn(&QualifiedName, &[Type], &[KnownValue]) -> &'a DefinitionM,
+        definition_infos: impl Clone + Fn(&QualifiedName, &[Type], &[KnownValue]) -> DefinitionInfo,
     ) -> GenerationResult {
         let range = Location { line: 0, col: 0 }.into();
         match self {
@@ -392,13 +392,12 @@ impl KnownValue {
             } => {
                 let mir_def = definition_infos(name, type_variables, special_case_arguments);
                 let arity = mir_def.arity;
-                let real_arity = arity - special_case_arguments.len() as u64;
                 locals.insert(
                     target,
                     LocalVariableInfo {
                         range,
                         ty: get_args_of_type_arity(
-                            &mir_def.symbol_type(),
+                            &mir_def.symbol_type,
                             special_case_arguments.len(),
                         )
                         .1,
@@ -408,7 +407,7 @@ impl KnownValue {
                 GenerationResult {
                     statements: vec![Statement {
                         range,
-                        kind: if real_arity == 0 {
+                        kind: if arity == 0 {
                             StatementKind::InvokeFunction {
                                 name: name.clone(),
                                 type_variables: type_variables.clone(),
@@ -422,9 +421,7 @@ impl KnownValue {
                                 type_variables: type_variables.clone(),
                                 special_case_arguments: special_case_arguments.clone(),
                                 target,
-                                curry_steps: std::iter::repeat(1)
-                                    .take(real_arity as usize)
-                                    .collect(),
+                                curry_steps: std::iter::repeat(1).take(arity as usize).collect(),
                                 curried_arguments: Vec::new(),
                             }
                         },
@@ -526,6 +523,12 @@ impl KnownValue {
             }
         }
     }
+}
+
+#[derive(Clone)]
+pub struct DefinitionInfo {
+    pub arity: u64,
+    pub symbol_type: Type,
 }
 
 pub struct GenerationResult {

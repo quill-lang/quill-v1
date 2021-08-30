@@ -8,5 +8,6 @@ description = "Static analysis on MIR"
 [dependencies]
 quill_common = { path = "../quill_common" }
 quill_index = { path = "../quill_index" }
+quill_type = { path = "../quill_type" }
 quill_mir = { path = "../quill_mir" }
 quill_monomorphise = { path = "../quill_monomorphise" }

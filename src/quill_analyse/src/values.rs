@@ -9,13 +9,14 @@ use std::{
 
 use quill_common::{location::Location, name::QualifiedName};
 use quill_mir::mir::{
-    ArgumentIndex, BasicBlockId, DefinitionBodyM, DefinitionM, KnownValue, LocalVariableDetails,
-    LocalVariableId, LocalVariableInfo, LocalVariableName, Place, Rvalue, StatementKind,
-    TerminatorKind,
+    ArgumentIndex, BasicBlockId, DefinitionBodyM, DefinitionInfo, DefinitionM, KnownValue,
+    LocalVariableDetails, LocalVariableId, LocalVariableInfo, LocalVariableName, Place, Rvalue,
+    StatementKind, TerminatorKind,
 };
 use quill_monomorphise::{
     mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisationParameters,
 };
+use quill_type::Type;
 
 /// Must be called after the func_objects pass,
 /// and before special cases are generated.
@@ -140,6 +141,118 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
             }
         }
     }
+
+    // Cache the definition info so that we can borrow it immutably
+    // while mutably editing the analysed functions.
+    let definition_info_cache = mir
+        .files
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                v.definitions
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            v.iter()
+                                .map(|(k, v)| {
+                                    (
+                                        k.clone(),
+                                        DefinitionInfo {
+                                            arity: v.arity,
+                                            symbol_type: v.symbol_type(),
+                                        },
+                                    )
+                                })
+                                .collect::<BTreeMap<_, _>>(),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    // Now that values are known, replace the MIR of each assignment with
+    // new MIR that initialises each runtime value to the compile-time known value.
+    // This will inevitably introduce dead code, which will need to be eliminated later.
+    for analysed_function in analysed_functions {
+        let defs = mir
+            .files
+            .get_mut(&analysed_function.name.source_file)
+            .unwrap()
+            .definitions
+            .get_mut(&analysed_function.name.name)
+            .unwrap();
+        let def = defs.get_mut(&analysed_function.params).unwrap();
+        propagate_known_values(def, |name, tys, vals| {
+            definition_info_cache[&name.source_file][&name.name]
+                [&MonomorphisationParameters::new(tys.to_vec()).with_args(vals.iter().cloned())]
+                .clone()
+        });
+    }
+}
+
+/// Convert variables known values into MIR which generates the known value.
+/// This will inevitably introduce dead code, which will need to be eliminated later.
+fn propagate_known_values(
+    def: &mut DefinitionM,
+    definition_infos: impl Clone + Fn(&QualifiedName, &[Type], &[KnownValue]) -> DefinitionInfo,
+) {
+    let cfg = if let DefinitionBodyM::PatternMatch(cfg) = &mut def.body {
+        cfg
+    } else {
+        return;
+    };
+
+    let mut next_local_id = def
+        .local_variable_names
+        .iter()
+        .fold(0, |num, (local_name, _)| {
+            if let LocalVariableName::Local(LocalVariableId(n)) = local_name {
+                std::cmp::max(num, *n)
+            } else {
+                num
+            }
+        })
+        + 1;
+
+    for block in cfg.basic_blocks.values_mut() {
+        let mut new_statements = Vec::new();
+        for stmt in std::mem::take(&mut block.statements) {
+            match &stmt.kind {
+                StatementKind::Assign { target, .. }
+                | StatementKind::AssignPhi { target, .. }
+                | StatementKind::InstanceSymbol { target, .. }
+                | StatementKind::Apply { target, .. }
+                | StatementKind::InvokeFunction { target, .. }
+                | StatementKind::ConstructFunctionObject { target, .. }
+                | StatementKind::InvokeFunctionObject { target, .. }
+                | StatementKind::ConstructData { target, .. }
+                | StatementKind::ConstructImpl { target, .. } => {
+                    // If the target is known, replace this statement with code that
+                    // instantiates the known value.
+                    if let Some(known_value) = &def.local_variable_names[target].details.value {
+                        let result = known_value.clone().generate(
+                            *target,
+                            next_local_id,
+                            &mut def.local_variable_names,
+                            definition_infos.clone(),
+                        );
+                        new_statements.extend(result.statements);
+                        next_local_id = result.next_local_id;
+                    } else {
+                        new_statements.push(stmt);
+                    }
+                }
+
+                StatementKind::Drop { .. } | StatementKind::Free { .. } => {
+                    new_statements.push(stmt);
+                }
+            }
+        }
+        block.statements = new_statements;
+    }
 }
 
 /// Convert a definition into a special case definition.
@@ -202,9 +315,13 @@ fn convert_special_case(
             next_local_id,
             &mut def.local_variable_names,
             |name, type_variables, special_case_arguments| {
-                &mir.files[&name.source_file].definitions[&name.name]
+                let def = &mir.files[&name.source_file].definitions[&name.name]
                     [&MonomorphisationParameters::new(type_variables.to_vec())
-                        .with_args(special_case_arguments.to_vec())]
+                        .with_args(special_case_arguments.to_vec())];
+                DefinitionInfo {
+                    arity: def.arity,
+                    symbol_type: def.symbol_type(),
+                }
             },
         );
 
@@ -218,18 +335,18 @@ fn convert_special_case(
     }
 
     // Move all the arguments to the function along.
-    for i in (special_case_arguments.len() as u64..def.arity).rev() {
+    for i in special_case_arguments.len() as u64..def.arity {
         cfg.replace_uses(
             LocalVariableName::Argument(ArgumentIndex(i)),
             LocalVariableName::Argument(ArgumentIndex(i - special_case_arguments.len() as u64)),
         );
-        let value = def
+        let info = def
             .local_variable_names
             .remove(&LocalVariableName::Argument(ArgumentIndex(i)))
             .unwrap();
         def.local_variable_names.insert(
             LocalVariableName::Argument(ArgumentIndex(i - special_case_arguments.len() as u64)),
-            value,
+            info,
         );
     }
     // Remove redundant locals from the local variables list.
