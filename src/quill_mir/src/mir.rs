@@ -391,7 +391,6 @@ impl KnownValue {
                 special_case_arguments,
             } => {
                 let mir_def = definition_infos(name, type_variables, special_case_arguments);
-                let arity = mir_def.arity;
                 locals.insert(
                     target,
                     LocalVariableInfo {
@@ -407,23 +406,11 @@ impl KnownValue {
                 GenerationResult {
                     statements: vec![Statement {
                         range,
-                        kind: if arity == 0 {
-                            StatementKind::InvokeFunction {
-                                name: name.clone(),
-                                type_variables: type_variables.clone(),
-                                special_case_arguments: special_case_arguments.clone(),
-                                target,
-                                arguments: Vec::new(),
-                            }
-                        } else {
-                            StatementKind::ConstructFunctionObject {
-                                name: name.clone(),
-                                type_variables: type_variables.clone(),
-                                special_case_arguments: special_case_arguments.clone(),
-                                target,
-                                curry_steps: std::iter::repeat(1).take(arity as usize).collect(),
-                                curried_arguments: Vec::new(),
-                            }
+                        kind: StatementKind::InstanceSymbol {
+                            name: name.clone(),
+                            type_variables: type_variables.clone(),
+                            special_case_arguments: special_case_arguments.clone(),
+                            target,
                         },
                     }],
                     next_local_id,
@@ -527,6 +514,7 @@ impl KnownValue {
 
 #[derive(Clone)]
 pub struct DefinitionInfo {
+    // TODO: use arity information to avoid adding an amount of special case arguments exceeding the function's arity
     pub arity: u64,
     pub symbol_type: Type,
 }

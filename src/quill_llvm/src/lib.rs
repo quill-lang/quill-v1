@@ -98,7 +98,7 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
 
     // Run static analysis on the monomorphised MIR.
     println!("status mir static analysis");
-    //quill_analyse::analyse_values(&mut mono_mir);
+    quill_analyse::analyse_values(&mut mono_mir);
 
     println!("status mir func objects");
     quill_func_objects::convert_func_objects(&mut mono_mir);
