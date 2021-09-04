@@ -30,7 +30,7 @@
             "name": "(Windows) Launch core",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/stdlib/core/build/core.exe",
+            "program": "${workspaceFolder}/stdlib/core/build/x86_64-pc-windows-gnu/core.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -41,7 +41,7 @@
             "name": "(Linux) Launch core",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/stdlib/core/build/core",
+            "program": "${workspaceFolder}/stdlib/core/build/x86_64-unknown-linux-gnu/core",
             "args": [],
         },
         {
