@@ -7,11 +7,11 @@ use option
 use ops
 
 def main: Unit {
-    main = add_ints
+    main = add_ints unit
 }
 
-def add_ints: Unit {
-    add_ints = (
+def add_ints: Unit -> Unit {
+    add_ints unit = (
         // Print "Type two integers to add.\n"
         print (84 :- 121 :- 112 :- 101 :- 32 :- 116 :- 119 :- 111 :- 32 :- 105 :- 110 :- 116 :- 101 :- 103 :- 101 :- 114 :- 115 :- 32 :- 116 :- 111 :- 32 :- 97 :- 100 :- 100 :- 46 :- 10 :- empty)
         match (get_int unit) (

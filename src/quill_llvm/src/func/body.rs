@@ -38,14 +38,7 @@ pub fn create_real_func_body<'ctx>(
     def: &DefinitionM,
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
-    // TODO: Should this monomorphisation step even be relevant?
-    // Surely monomorphisation already occured in the MonomorphisedMIR step?
-    let mut def = monomorphise(
-        |ty| context.reprs.repr(ty).is_some(),
-        &context.func.func,
-        def,
-    );
-
+    let mut def = def.clone();
     match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => create_real_func_body_cfg(
             context,
