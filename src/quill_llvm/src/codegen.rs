@@ -12,7 +12,7 @@ use inkwell::{
 };
 use quill_index::ProjectIndex;
 use quill_mir::mir::LocalVariableName;
-use quill_monomorphise::monomorphisation::{MonomorphisedCurriedFunction};
+use quill_monomorphise::monomorphisation::MonomorphisedCurriedFunction;
 use quill_target::{TargetArchitecture, TargetTriple};
 
 use crate::repr::LLVMRepresentations;

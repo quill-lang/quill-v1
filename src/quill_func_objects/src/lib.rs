@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quill_common::{location::Location, name::QualifiedName};
-use quill_mir::{
-    mir::{DefinitionBodyM, DefinitionM, Statement, StatementKind},
-};
+use quill_mir::mir::{DefinitionBodyM, DefinitionM, Statement, StatementKind};
 use quill_monomorphise::{
     mono_mir::MonomorphisedMIR,
     monomorphisation::{CurryStatus, MonomorphisationParameters},
