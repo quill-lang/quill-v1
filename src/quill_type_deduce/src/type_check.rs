@@ -1357,7 +1357,7 @@ pub fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
 ///
 /// This enforces that the function is treated as a `num_args`-argument function,
 /// by currying arguments until the required arity is achieved.
-pub fn get_args_of_type_arity(symbol_type: &Type, num_args: usize) -> (Vec<Type>, Type) {
+fn get_args_of_type_arity(symbol_type: &Type, num_args: usize) -> (Vec<Type>, Type) {
     let (mut symbol_args, mut result) = get_args_of_type(symbol_type);
 
     // Now, let's edit the `symbol_args` and `result` type to match the number of arguments we supplied.

@@ -12,7 +12,6 @@ use quill_common::{
 use quill_index::TypeParameter;
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
-use quill_type_deduce::type_check::get_args_of_type_arity;
 
 use crate::validate::type_of_value;
 
@@ -395,11 +394,9 @@ impl KnownValue {
                     target,
                     LocalVariableInfo {
                         range,
-                        ty: get_args_of_type_arity(
-                            &mir_def.symbol_type,
-                            special_case_arguments.len(),
-                        )
-                        .1,
+                        // Since the mir_def is a special case function, we do not actually pass the special case arguments in manually.
+                        // This means the symbol type doesn't need to be changed depending on `special_case_arguments.len()`.
+                        ty: mir_def.symbol_type,
                         details: Default::default(),
                     },
                 );

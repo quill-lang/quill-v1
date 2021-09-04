@@ -251,21 +251,13 @@ impl Display for CurryStatus {
 
 impl Display for MonomorphisedFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.func)?;
-        if !self.mono.type_parameters.is_empty() {
-            write!(f, "[")?;
-            for ty_param in &self.mono.type_parameters {
-                write!(f, "{},", ty_param)?;
-            }
-            write!(f, "]")?;
-        }
-        Ok(())
+        write!(f, "{}{}", self.func, self.mono)
     }
 }
 
 impl Display for MonomorphisedCurriedFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.func, self.curry)
+        write!(f, "{}{}", self.func, self.curry)
     }
 }
 
