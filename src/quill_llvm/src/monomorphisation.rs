@@ -10,14 +10,9 @@ use inkwell::{
     types::{BasicTypeEnum, FunctionType},
     AddressSpace,
 };
-use quill_common::name::QualifiedName;
 use quill_mir::mir::{ArgumentIndex, LocalVariableName};
 use quill_monomorphise::{
-    mono_mir::{MonomorphisedDefinition, MonomorphisedMIR},
-    monomorphisation::{
-        CurryStatus, MonomorphisationParameters, MonomorphisedCurriedFunction,
-        MonomorphisedFunction,
-    },
+    mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisedCurriedFunction,
 };
 use quill_reprs::data::FieldIndex;
 use quill_type::Type;
@@ -417,6 +412,6 @@ pub fn add_llvm_type<'ctx>(
     reprs: &mut LLVMRepresentations<'_, 'ctx>,
     mir: &MonomorphisedMIR,
 ) {
-    let ty = generate_llvm_type(&func, codegen, reprs, mir);
+    let ty = generate_llvm_type(func, codegen, reprs, mir);
     codegen.module.add_function(&func.to_string(), ty, None);
 }

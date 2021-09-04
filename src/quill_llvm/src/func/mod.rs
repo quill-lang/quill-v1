@@ -4,9 +4,7 @@ use inkwell::{debug_info::AsDIScope, values::FunctionValue, AddressSpace};
 use quill_mir::mir::{ArgumentIndex, LocalVariableName};
 use quill_monomorphise::{
     mono_mir::MonomorphisedMIR,
-    monomorphisation::{
-        FunctionObjectDescriptor, MonomorphisedCurriedFunction, MonomorphisedFunction,
-    },
+    monomorphisation::{FunctionObjectDescriptor, MonomorphisedCurriedFunction},
 };
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;

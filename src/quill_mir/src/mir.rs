@@ -356,7 +356,7 @@ impl KnownValue {
     /// Generate MIR instructions to construct this known value.
     /// We are allowed to create new local variables with IDs greater than or equal to next_local_id.
     /// This function will also create a new entry in locals for the new variable.
-    pub fn generate<'a>(
+    pub fn generate(
         &self,
         target: LocalVariableName,
         mut next_local_id: u64,

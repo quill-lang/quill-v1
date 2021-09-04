@@ -13,12 +13,9 @@ use quill_mir::mir::{
     ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Place,
     PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };
-use quill_monomorphise::{
-    monomorphisation::{
-        CurryStatus, MonomorphisationParameters, MonomorphisedAspect, MonomorphisedCurriedFunction,
-        MonomorphisedFunction, MonomorphisedType,
-    },
-    monomorphise::monomorphise,
+use quill_monomorphise::monomorphisation::{
+    CurryStatus, MonomorphisationParameters, MonomorphisedAspect, MonomorphisedCurriedFunction,
+    MonomorphisedFunction, MonomorphisedType,
 };
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
@@ -255,7 +252,7 @@ fn create_real_func_body_cfg<'ctx>(
                     let func = ctx
                         .codegen
                         .module
-                        .get_function(dbg!(&mono_func.to_string()))
+                        .get_function(&mono_func.to_string())
                         .unwrap();
                     let args = curried_arguments
                         .iter()

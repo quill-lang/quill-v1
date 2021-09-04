@@ -67,31 +67,29 @@ impl Monomorphisation {
             if let DefinitionBodyM::PatternMatch(cfg) = &def.body {
                 for block in cfg.basic_blocks.values() {
                     for stmt in &block.statements {
-                        match &stmt.kind {
-                            StatementKind::InstanceSymbol {
-                                name,
-                                type_variables,
-                                ..
-                            } => {
-                                self.track_def(
-                                    mir,
-                                    name.clone(),
-                                    MonomorphisationParameters::new(
-                                        type_variables
-                                            .iter()
-                                            .cloned()
-                                            .map(|ty| {
-                                                replace_type_variables(
-                                                    ty,
-                                                    &def.type_variables,
-                                                    &mono.type_parameters,
-                                                )
-                                            })
-                                            .collect(),
-                                    ),
-                                );
-                            }
-                            _ => {}
+                        if let StatementKind::InstanceSymbol {
+                            name,
+                            type_variables,
+                            ..
+                        } = &stmt.kind
+                        {
+                            self.track_def(
+                                mir,
+                                name.clone(),
+                                MonomorphisationParameters::new(
+                                    type_variables
+                                        .iter()
+                                        .cloned()
+                                        .map(|ty| {
+                                            replace_type_variables(
+                                                ty,
+                                                &def.type_variables,
+                                                &mono.type_parameters,
+                                            )
+                                        })
+                                        .collect(),
+                                ),
+                            );
                         }
                     }
                 }

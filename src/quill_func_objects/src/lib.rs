@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use quill_common::{location::Location, name::QualifiedName};
 use quill_mir::{
     mir::{DefinitionBodyM, DefinitionM, Statement, StatementKind},
-    ProjectMIR,
 };
 use quill_monomorphise::{
     mono_mir::MonomorphisedMIR,

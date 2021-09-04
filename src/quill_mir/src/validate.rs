@@ -327,8 +327,8 @@ fn validate_stmt(
         StatementKind::InstanceSymbol {
             name,
             type_variables,
-            special_case_arguments,
             target,
+            ..
         } => {
             // The symbol could be a lambda defined in this source file.
             // In this case, its type is not stored in the project index.
