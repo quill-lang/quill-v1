@@ -82,6 +82,7 @@ fn apply_default_impl(
             kind: StatementKind::InstanceSymbol {
                 name: default_impl.def_name,
                 type_variables: default_impl.type_params,
+                special_case_arguments: Vec::new(),
                 target: impl_variable,
             },
         },

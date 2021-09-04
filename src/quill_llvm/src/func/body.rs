@@ -15,7 +15,8 @@ use quill_mir::mir::{
 };
 use quill_monomorphise::{
     monomorphisation::{
-        MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
+        CurryStatus, MonomorphisationParameters, MonomorphisedAspect, MonomorphisedCurriedFunction,
+        MonomorphisedFunction, MonomorphisedType,
     },
     monomorphise::monomorphise,
 };
@@ -37,7 +38,13 @@ pub fn create_real_func_body<'ctx>(
     def: &DefinitionM,
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
-    let mut def = monomorphise(|ty| context.reprs.repr(ty).is_some(), &context.func, def);
+    // TODO: Should this monomorphisation step even be relevant?
+    // Surely monomorphisation already occured in the MonomorphisedMIR step?
+    let mut def = monomorphise(
+        |ty| context.reprs.repr(ty).is_some(),
+        &context.func.func,
+        def,
+    );
 
     match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => create_real_func_body_cfg(
@@ -169,12 +176,16 @@ fn create_real_func_body_cfg<'ctx>(
                     target,
                     arguments,
                 } => {
-                    let mono_func = MonomorphisedFunction {
-                        func: name.clone(),
-                        mono: MonomorphisationParameters::new(type_variables.clone())
-                            .with_args(special_case_arguments.iter().cloned()),
-                        curry_steps: Vec::new(),
-                        direct: true,
+                    let mono_func = MonomorphisedCurriedFunction {
+                        func: MonomorphisedFunction {
+                            func: name.clone(),
+                            mono: MonomorphisationParameters::new(type_variables.clone())
+                                .with_args(special_case_arguments.iter().cloned()),
+                        },
+                        curry: CurryStatus {
+                            curry_steps: Vec::new(),
+                            direct: true,
+                        },
                     };
                     let func = ctx
                         .codegen
@@ -236,17 +247,22 @@ fn create_real_func_body_cfg<'ctx>(
                     curry_steps,
                     curried_arguments,
                 } => {
-                    let mono_func = MonomorphisedFunction {
-                        func: name.clone(),
-                        mono: MonomorphisationParameters::new(type_variables.clone())
-                            .with_args(special_case_arguments.iter().cloned()),
-                        curry_steps: curry_steps.clone(),
-                        direct: true,
+                    let mono_func = MonomorphisedCurriedFunction {
+                        func: MonomorphisedFunction {
+                            func: name.clone(),
+                            mono: MonomorphisationParameters::new(type_variables.clone())
+                                .with_args(special_case_arguments.iter().cloned()),
+                        },
+                        curry: CurryStatus {
+                            curry_steps: curry_steps.clone(),
+                            direct: true,
+                        },
                     };
+
                     let func = ctx
                         .codegen
                         .module
-                        .get_function(&mono_func.to_string())
+                        .get_function(dbg!(&mono_func.to_string()))
                         .unwrap();
                     let args = curried_arguments
                         .iter()
@@ -633,7 +649,7 @@ fn create_real_func_body_cfg<'ctx>(
                                     replace_type_variables(
                                         ty.clone(),
                                         type_variables,
-                                        ctx.func.mono.type_parameters(),
+                                        ctx.func.func.mono.type_parameters(),
                                     )
                                 })
                                 .collect(),

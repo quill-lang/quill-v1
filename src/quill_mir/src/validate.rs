@@ -327,6 +327,7 @@ fn validate_stmt(
         StatementKind::InstanceSymbol {
             name,
             type_variables,
+            special_case_arguments,
             target,
         } => {
             // The symbol could be a lambda defined in this source file.

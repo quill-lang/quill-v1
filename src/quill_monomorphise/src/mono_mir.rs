@@ -9,7 +9,7 @@ use quill_mir::{mir::DefinitionM, ProjectMIR};
 use quill_type::Type;
 
 use crate::{
-    monomorphisation::{MonomorphisationParameters, MonomorphisedFunction},
+    monomorphisation::{CurryStatus, MonomorphisationParameters, MonomorphisedFunction},
     monomorphise::monomorphise,
 };
 
@@ -35,7 +35,8 @@ impl Display for MonomorphisedMIR {
 
 #[derive(Debug, Default)]
 pub struct MonomorphisedSourceFile {
-    pub definitions: BTreeMap<String, BTreeMap<MonomorphisationParameters, DefinitionM>>,
+    pub definitions:
+        BTreeMap<String, BTreeMap<MonomorphisationParameters, MonomorphisedDefinition>>,
 }
 
 impl Display for MonomorphisedSourceFile {
@@ -47,6 +48,23 @@ impl Display for MonomorphisedSourceFile {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct MonomorphisedDefinition {
+    pub def: DefinitionM,
+    /// After the func_objects pass, this will contain the set of used curry statuses.
+    /// The code generator should create a function in machine code for each used curry status in this list.
+    pub curry_possibilities: BTreeSet<CurryStatus>,
+}
+
+impl Display for MonomorphisedDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for possibility in &self.curry_possibilities {
+            writeln!(f, "curried {}", possibility)?;
+        }
+        write!(f, "{}", self.def)
     }
 }
 
@@ -74,7 +92,10 @@ impl MonomorphisedMIR {
                     func,
                     &mir.files[&func.func.source_file].definitions[&func.func.name],
                 );
-                entry.insert(mono_func);
+                entry.insert(MonomorphisedDefinition {
+                    def: mono_func,
+                    curry_possibilities: BTreeSet::new(),
+                });
             }
         }
         Self {

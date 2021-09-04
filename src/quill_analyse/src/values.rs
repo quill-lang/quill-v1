@@ -14,11 +14,12 @@ use quill_mir::mir::{
     StatementKind, TerminatorKind,
 };
 use quill_monomorphise::{
-    mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisationParameters,
+    mono_mir::{MonomorphisedDefinition, MonomorphisedMIR},
+    monomorphisation::MonomorphisationParameters,
 };
 use quill_type::Type;
 
-/// Must be called after the func_objects pass,
+/// Must be called before the func_objects pass,
 /// and before special cases are generated.
 pub fn analyse_values(mir: &mut MonomorphisedMIR) {
     // Run static analysis on each definition.
@@ -74,7 +75,7 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
 
             // Convert the definition into a special case.
             let special_case = convert_special_case(
-                original.clone(),
+                original.def.clone(),
                 desc.params.special_case_arguments().to_vec(),
                 mir,
             );
@@ -89,11 +90,17 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
                 .unwrap();
 
             // Insert it into the definitions set and retrieve a reference to it.
-            defs.insert(desc.params.clone(), special_case);
+            defs.insert(
+                desc.params.clone(),
+                MonomorphisedDefinition {
+                    def: special_case,
+                    curry_possibilities: BTreeSet::new(),
+                },
+            );
             defs.get_mut(&desc.params).unwrap()
         };
 
-        let result = analyse_values_def(def, &known_return_values);
+        let result = analyse_values_def(&mut def.def, &known_return_values);
         analysed_functions.insert(desc.clone());
 
         for dep_def in result.defs_required {
@@ -160,8 +167,8 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
                                     (
                                         k.clone(),
                                         DefinitionInfo {
-                                            arity: v.arity,
-                                            symbol_type: v.symbol_type(),
+                                            arity: v.def.arity,
+                                            symbol_type: v.def.symbol_type(),
                                         },
                                     )
                                 })
@@ -185,7 +192,7 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
             .get_mut(&analysed_function.name.name)
             .unwrap();
         let def = defs.get_mut(&analysed_function.params).unwrap();
-        propagate_known_values(def, |name, tys, vals| {
+        propagate_known_values(&mut def.def, |name, tys, vals| {
             definition_info_cache[&name.source_file][&name.name]
                 [&MonomorphisationParameters::new(tys.to_vec()).with_args(vals.iter().cloned())]
                 .clone()
@@ -319,8 +326,8 @@ fn convert_special_case(
                     [&MonomorphisationParameters::new(type_variables.to_vec())
                         .with_args(special_case_arguments.to_vec())];
                 DefinitionInfo {
-                    arity: def.arity,
-                    symbol_type: def.symbol_type(),
+                    arity: def.def.arity,
+                    symbol_type: def.def.symbol_type(),
                 }
             },
         );
@@ -428,25 +435,12 @@ fn analyse_values_def(
                     // unless there was really only one case.
                     // TODO: detect if there was only one case
                 }
-                StatementKind::InstanceSymbol { .. } => {
-                    // This is removed by the func_objects pass.
-                    // This analysis step happens after func_objects.
-                    panic!("func objects has not been run yet");
-                }
-                StatementKind::Apply { .. } => {
-                    panic!("func objects has not been run yet")
-                }
-                StatementKind::InvokeFunction {
+                StatementKind::InstanceSymbol {
                     name,
                     type_variables,
                     special_case_arguments,
                     target,
-                    arguments,
                 } => {
-                    if !arguments.is_empty() {
-                        panic!("arguments not supported");
-                    }
-
                     let known_value = type_of_def(FunctionDescriptor {
                         name: name.clone(),
                         params: MonomorphisationParameters::new(type_variables.clone())
@@ -459,32 +453,10 @@ fn analyse_values_def(
                         .details
                         .value = Some(known_value);
                 }
-                StatementKind::ConstructFunctionObject {
-                    name,
-                    type_variables,
+                StatementKind::Apply {
+                    argument,
+                    function,
                     target,
-                    curried_arguments,
-                    ..
-                } => {
-                    if !curried_arguments.is_empty() {
-                        panic!("arguments not supported");
-                    }
-
-                    let known_value = type_of_def(FunctionDescriptor {
-                        name: name.clone(),
-                        params: MonomorphisationParameters::new(type_variables.clone()),
-                    });
-
-                    def.local_variable_names
-                        .get_mut(target)
-                        .unwrap()
-                        .details
-                        .value = Some(known_value);
-                }
-                StatementKind::InvokeFunctionObject {
-                    func_object,
-                    target,
-                    additional_arguments,
                 } => {
                     // In the general case, we can't compute the result of a function call statically.
                     // However, if the argument is an impl, and the function is known, we can make a special case function
@@ -494,24 +466,22 @@ fn analyse_values_def(
                             name,
                             type_variables,
                             special_case_arguments,
-                        }) = get_value_of_rvalue(&def.local_variable_names, func_object)
+                        }) = get_value_of_rvalue(&def.local_variable_names, &*function)
                         {
                             (name, type_variables, special_case_arguments)
                         } else {
                             continue 'stmt_loop;
                         };
 
-                    for argument in additional_arguments {
-                        // For each argument, check if it's an impl.
-                        // If all arguments are impls, their values are stored in the list of special case arguments.
-                        if let Some(the_impl @ KnownValue::ConstructImpl { .. }) =
-                            get_value_of_rvalue(&def.local_variable_names, argument)
-                        {
-                            // We can make a special case function where the impl is known.
-                            special_case_arguments.push(the_impl);
-                        } else {
-                            continue 'stmt_loop;
-                        }
+                    // For each argument, check if it's an impl.
+                    // If all arguments are impls, their values are stored in the list of special case arguments.
+                    if let Some(the_impl @ KnownValue::ConstructImpl { .. }) =
+                        get_value_of_rvalue(&def.local_variable_names, argument)
+                    {
+                        // We can make a special case function where the impl is known.
+                        special_case_arguments.push(the_impl);
+                    } else {
+                        continue 'stmt_loop;
                     }
 
                     let value = type_of_def(FunctionDescriptor {
@@ -525,6 +495,17 @@ fn analyse_values_def(
                         .unwrap()
                         .details
                         .value = Some(value);
+                }
+                StatementKind::InvokeFunction { .. } => {
+                    // This is created by the func_objects pass.
+                    // This analysis step happens before func_objects.
+                    panic!("func objects has already been run");
+                }
+                StatementKind::ConstructFunctionObject { .. } => {
+                    panic!("func objects has already been run");
+                }
+                StatementKind::InvokeFunctionObject { .. } => {
+                    panic!("func objects has already been run");
                 }
                 StatementKind::Drop { .. } => {}
                 StatementKind::Free { .. } => {}

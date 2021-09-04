@@ -15,7 +15,6 @@ quill_type = { path = "../quill_type" }
 quill_type_deduce = { path = "../quill_type_deduce" }
 quill_mir = { path = "../quill_mir" }
 quill_borrow_check = { path = "../quill_borrow_check" }
-quill_func_objects = { path = "../quill_func_objects" }
 quill_llvm = { path = "../quill_llvm" }
 quill_link = { path = "../quill_link" }
 quill_target = { path = "../quill_target" }

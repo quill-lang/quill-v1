@@ -5,10 +5,13 @@ use inkwell::{
     passes::PassManager,
     targets::{CodeModel, RelocMode},
 };
+use quill_common::location::Location;
+use quill_common::name::QualifiedName;
 use quill_mir::ProjectMIR;
 use quill_monomorphise::mono_mir::MonomorphisedMIR;
 use quill_monomorphise::monomorphisation::{
-    Monomorphisation, MonomorphisationParameters, MonomorphisedFunction,
+    CurryStatus, Monomorphisation, MonomorphisationParameters, MonomorphisedCurriedFunction,
+    MonomorphisedFunction,
 };
 use quill_reprs::Representations;
 use quill_target::{BuildInfo, TargetTriple};
@@ -95,7 +98,10 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
 
     // Run static analysis on the monomorphised MIR.
     println!("status mir static analysis");
-    quill_analyse::analyse_values(&mut mono_mir);
+    //quill_analyse::analyse_values(&mut mono_mir);
+
+    println!("status mir func objects");
+    quill_func_objects::convert_func_objects(&mut mono_mir);
 
     // Output the project MIR.
     if build_info.emit_project_mir {
@@ -112,8 +118,29 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
     println!("status computing llvm reprs");
 
     let mut reprs = LLVMRepresentations::new(&mono_mir.index, &codegen, reprs);
-    for func in &mono.functions {
-        add_llvm_type(func, &codegen, &mut reprs, &mono_mir);
+    for (fname, file) in &mono_mir.files {
+        for (def_name, defs) in &file.definitions {
+            for (params, def) in defs {
+                for curry in &def.curry_possibilities {
+                    add_llvm_type(
+                        &MonomorphisedCurriedFunction {
+                            func: MonomorphisedFunction {
+                                func: QualifiedName {
+                                    source_file: fname.clone(),
+                                    name: def_name.clone(),
+                                    range: Location { line: 0, col: 0 }.into(),
+                                },
+                                mono: params.clone(),
+                            },
+                            curry: curry.clone(),
+                        },
+                        &codegen,
+                        &mut reprs,
+                        &mono_mir,
+                    );
+                }
+            }
+        }
     }
     reprs.create_debug_info();
     codegen.di_builder.finalize();
@@ -121,8 +148,29 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
     // Now that we've computed data type representations we can actually compile the functions.
     println!("status compiling functions");
 
-    for func in &mono.functions {
-        func::compile_function(&codegen, &reprs, &mono_mir, func.clone());
+    for (fname, file) in &mono_mir.files {
+        for (def_name, defs) in &file.definitions {
+            for (params, def) in defs {
+                for curry in &def.curry_possibilities {
+                    func::compile_function(
+                        &codegen,
+                        &reprs,
+                        &mono_mir,
+                        MonomorphisedCurriedFunction {
+                            func: MonomorphisedFunction {
+                                func: QualifiedName {
+                                    source_file: fname.clone(),
+                                    name: def_name.clone(),
+                                    range: Location { line: 0, col: 0 }.into(),
+                                },
+                                mono: params.clone(),
+                            },
+                            curry: curry.clone(),
+                        },
+                    );
+                }
+            }
+        }
     }
 
     println!("status compiling glue");
@@ -138,11 +186,15 @@ pub fn build(project_name: &str, mir: ProjectMIR, build_info: BuildInfo) {
         codegen
             .module
             .get_function(
-                &MonomorphisedFunction {
-                    func: mono_mir.entry_point.clone(),
-                    curry_steps: Vec::new(),
-                    mono: MonomorphisationParameters::new(Vec::new()),
-                    direct: true,
+                &MonomorphisedCurriedFunction {
+                    func: MonomorphisedFunction {
+                        func: mono_mir.entry_point.clone(),
+                        mono: MonomorphisationParameters::new(Vec::new()),
+                    },
+                    curry: CurryStatus {
+                        curry_steps: Vec::new(),
+                        direct: true,
+                    },
                 }
                 .to_string(),
             )

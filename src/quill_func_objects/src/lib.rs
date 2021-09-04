@@ -1,37 +1,49 @@
 use std::collections::BTreeMap;
 
-use quill_common::name::QualifiedName;
+use quill_common::{location::Location, name::QualifiedName};
 use quill_mir::{
     mir::{DefinitionBodyM, DefinitionM, Statement, StatementKind},
     ProjectMIR,
 };
+use quill_monomorphise::{
+    mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisationParameters,
+};
 
 /// Converts curried functions and partial application of functions into more LLVM-friendly representations.
-pub fn convert_func_objects(project: &mut ProjectMIR) {
+pub fn convert_func_objects(project: &mut MonomorphisedMIR) {
     // First, cache the arities of each function.
     // We need to know exactly how many arguments a function "really" has, and how many are coalesced into the result type of the function.
     let mut arities = BTreeMap::new();
     for (fname, file) in &project.files {
-        for (def_name, def) in &file.definitions {
+        for (def_name, defs) in &file.definitions {
             arities.insert(
                 QualifiedName {
                     source_file: fname.clone(),
                     name: def_name.clone(),
-                    range: def.range,
+                    range: Location { line: 0, col: 0 }.into(),
                 },
-                def.arity,
+                defs.iter()
+                    .map(|(params, def)| (params.clone(), def.def.arity))
+                    .collect::<BTreeMap<_, _>>(),
             );
         }
     }
 
     for file in project.files.values_mut() {
-        for def in file.definitions.values_mut() {
-            convert_def(def, &arities);
+        for defs in file.definitions.values_mut() {
+            for (params, def) in defs {
+                convert_def(&mut def.def, &arities);
+            }
         }
     }
+
+    // TODO: work out curry steps used for each function call
 }
 
-fn convert_def(def: &mut DefinitionM, arities: &BTreeMap<QualifiedName, u64>) {
+fn convert_def(
+    def: &mut DefinitionM,
+    arities: &BTreeMap<QualifiedName, BTreeMap<MonomorphisationParameters, u64>>,
+) {
     if let DefinitionBodyM::PatternMatch(cfg) = &mut def.body {
         for block in cfg.basic_blocks.values_mut() {
             block.statements = block
@@ -46,14 +58,25 @@ fn convert_def(def: &mut DefinitionM, arities: &BTreeMap<QualifiedName, u64>) {
 
 /// Converts functional statements (InstanceSymbol, Apply) to imperative statements (ConstructFunctionObject, InvokeFunction, etc.)
 /// In this step, all function objects are considered to be unary. A later optimisation step will construct n-ary functions.
-fn convert_stmt(stmt: Statement, arities: &BTreeMap<QualifiedName, u64>) -> Vec<Statement> {
+fn convert_stmt(
+    stmt: Statement,
+    arities: &BTreeMap<QualifiedName, BTreeMap<MonomorphisationParameters, u64>>,
+) -> Vec<Statement> {
     match stmt.kind {
         StatementKind::InstanceSymbol {
             name,
             type_variables,
+            special_case_arguments,
             target,
         } => {
-            let arity = *arities.get(&name).expect("function did not exist");
+            let arity = *arities
+                .get(&name)
+                .expect("function did not exist")
+                .get(
+                    &MonomorphisationParameters::new(type_variables.clone())
+                        .with_args(special_case_arguments.iter().cloned()),
+                )
+                .expect("function had incorrect monomorphisation parameters");
             // Store the fact that the target is a function object.
             // new_infos.insert(target, v)
 
@@ -65,7 +88,7 @@ fn convert_stmt(stmt: Statement, arities: &BTreeMap<QualifiedName, u64>) -> Vec<
                     kind: StatementKind::InvokeFunction {
                         name,
                         type_variables,
-                        special_case_arguments: Vec::new(),
+                        special_case_arguments,
                         target,
                         arguments: Vec::new(),
                     },
@@ -77,7 +100,7 @@ fn convert_stmt(stmt: Statement, arities: &BTreeMap<QualifiedName, u64>) -> Vec<
                     kind: StatementKind::ConstructFunctionObject {
                         name,
                         type_variables,
-                        special_case_arguments: Vec::new(),
+                        special_case_arguments,
                         target,
                         curry_steps: std::iter::repeat(1).take(arity as usize).collect(),
                         curried_arguments: Vec::new(),

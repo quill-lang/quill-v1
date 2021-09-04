@@ -10,8 +10,15 @@ use inkwell::{
     types::{BasicTypeEnum, FunctionType},
     AddressSpace,
 };
+use quill_common::name::QualifiedName;
 use quill_mir::mir::{ArgumentIndex, LocalVariableName};
-use quill_monomorphise::{mono_mir::MonomorphisedMIR, monomorphisation::MonomorphisedFunction};
+use quill_monomorphise::{
+    mono_mir::{MonomorphisedDefinition, MonomorphisedMIR},
+    monomorphisation::{
+        CurryStatus, MonomorphisationParameters, MonomorphisedCurriedFunction,
+        MonomorphisedFunction,
+    },
+};
 use quill_reprs::data::FieldIndex;
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
@@ -31,12 +38,14 @@ struct LLVMArgReprs<'ctx> {
 // We allow the `fields` vec to be pushed one-by-one because it's more legible this way.
 #[allow(clippy::vec_init_then_push)]
 fn generate_arg_reprs<'ctx>(
-    func: &MonomorphisedFunction,
+    func: &MonomorphisedCurriedFunction,
     codegen: &CodeGenContext<'ctx>,
     reprs: &mut LLVMRepresentations<'_, 'ctx>,
     mir: &MonomorphisedMIR,
 ) -> LLVMArgReprs<'ctx> {
-    let def = &mir.files[&func.func.source_file].definitions[&func.func.name][&func.mono];
+    let def = &mir.files[&func.func.func.source_file].definitions[&func.func.func.name]
+        [&func.func.mono]
+        .def;
 
     let args_options = (0..def.arity)
         .map(|i| {
@@ -47,7 +56,7 @@ fn generate_arg_reprs<'ctx>(
             let ty = replace_type_variables(
                 info.ty.clone(),
                 &def.type_variables,
-                func.mono.type_parameters(),
+                func.func.mono.type_parameters(),
             );
             reprs.repr(ty.clone()).map(|repr| (repr, ty))
         })
@@ -62,7 +71,7 @@ fn generate_arg_reprs<'ctx>(
     let return_type = replace_type_variables(
         def.return_type.clone(),
         &def.type_variables,
-        func.mono.type_parameters(),
+        func.func.mono.type_parameters(),
     );
 
     let descriptor = func.function_object_descriptor();
@@ -114,7 +123,7 @@ fn generate_arg_reprs<'ctx>(
             None,
         ));
         // Add only the arguments not pertaining to the last currying step.
-        for i in 0..def.arity - func.curry_steps.last().copied().unwrap_or(0) {
+        for i in 0..def.arity - func.curry.curry_steps.last().copied().unwrap_or(0) {
             if let Some((repr, ty)) =
                 arg_repr_indices[i as usize].map(|i| args_with_reprs[i].clone())
             {
@@ -128,7 +137,7 @@ fn generate_arg_reprs<'ctx>(
             .collect::<Vec<_>>();
         let llvm_repr = reprs.codegen.context.struct_type(&llvm_field_types, false);
 
-        let di_file = source_file_debug_info(reprs.codegen, &func.func.source_file);
+        let di_file = source_file_debug_info(reprs.codegen, &func.func.func.source_file);
 
         let di_type = unsafe {
             reprs
@@ -145,7 +154,7 @@ fn generate_arg_reprs<'ctx>(
             di_type,
             di_file,
             range: def.range,
-            name: func.func.name.clone(),
+            name: func.func.func.name.clone(),
             field_indices: fields
                 .iter()
                 .enumerate()
@@ -161,7 +170,7 @@ fn generate_arg_reprs<'ctx>(
 
         // Now, define all the relevant copy and drop functions for this function object.
         // We need to make a copy/drop function for every possible amount of fields stored in this function object.
-        for fields_stored in 0..=def.arity - func.curry_steps.last().copied().unwrap_or(0) {
+        for fields_stored in 0..=def.arity - func.curry.curry_steps.last().copied().unwrap_or(0) {
             // Unlike the drop/copy functions for known types,
             // function object drop/copy functions take/return pointers, not raw values.
 
@@ -314,21 +323,21 @@ fn generate_arg_reprs<'ctx>(
 }
 
 fn generate_llvm_type<'ctx>(
-    func: &MonomorphisedFunction,
+    func: &MonomorphisedCurriedFunction,
     codegen: &CodeGenContext<'ctx>,
     reprs: &mut LLVMRepresentations<'_, 'ctx>,
     mir: &MonomorphisedMIR,
 ) -> FunctionType<'ctx> {
     let arg_reprs = generate_arg_reprs(func, codegen, reprs, mir);
 
-    let curry_steps_amount = func.curry_steps.iter().sum::<u64>() as usize;
+    let curry_steps_amount = func.curry.curry_steps.iter().sum::<u64>() as usize;
 
     // Check to see if this function is direct or indirect.
-    if func.direct {
+    if func.curry.direct {
         // The parameters to this function are exactly the first n arguments, where n = arity - sum(curry_steps).
         // But some of these args may not have representations, so we'll need to be careful.
         let real_args = (0..arg_reprs.arity as usize
-            - func.curry_steps.iter().sum::<u64>() as usize)
+            - func.curry.curry_steps.iter().sum::<u64>() as usize)
             .filter_map(|idx| {
                 arg_reprs.arg_repr_indices[idx]
                     .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
@@ -370,14 +379,14 @@ fn generate_llvm_type<'ctx>(
             .into()];
         let args_already_calculated = arg_reprs.arity as usize - curry_steps_amount;
         real_args.extend(
-            (args_already_calculated..args_already_calculated + func.curry_steps[0] as usize)
+            (args_already_calculated..args_already_calculated + func.curry.curry_steps[0] as usize)
                 .filter_map(|idx| {
                     arg_reprs.arg_repr_indices[idx]
                         .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
                 }),
         );
 
-        if func.curry_steps.len() == 1 {
+        if func.curry.curry_steps.len() == 1 {
             arg_reprs
                 .return_type
                 .map(|repr| match repr {
@@ -403,11 +412,11 @@ fn generate_llvm_type<'ctx>(
 
 /// Generates the LLVM type representing this function, then adds the type to the codegen module.
 pub fn add_llvm_type<'ctx>(
-    func: &MonomorphisedFunction,
+    func: &MonomorphisedCurriedFunction,
     codegen: &CodeGenContext<'ctx>,
     reprs: &mut LLVMRepresentations<'_, 'ctx>,
     mir: &MonomorphisedMIR,
 ) {
-    let ty = generate_llvm_type(func, codegen, reprs, mir);
+    let ty = generate_llvm_type(&func, codegen, reprs, mir);
     codegen.module.add_function(&func.to_string(), ty, None);
 }

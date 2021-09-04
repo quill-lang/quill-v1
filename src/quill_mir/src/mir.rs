@@ -854,6 +854,7 @@ pub enum StatementKind {
     InstanceSymbol {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        special_case_arguments: Vec<KnownValue>,
         target: LocalVariableName,
     },
     /// Applies one argument to a function, and stores the result in a variable.
@@ -948,6 +949,7 @@ impl Display for StatementKind {
             StatementKind::InstanceSymbol {
                 name,
                 type_variables,
+                special_case_arguments,
                 target,
             } => {
                 write!(f, "{} = instance {}", target, name)?;
@@ -955,6 +957,12 @@ impl Display for StatementKind {
                     write!(f, " with")?;
                     for ty_var in type_variables {
                         write!(f, " {}", ty_var)?;
+                    }
+                }
+                if !special_case_arguments.is_empty() {
+                    write!(f, " special case")?;
+                    for val in special_case_arguments {
+                        write!(f, " {}", val)?;
                     }
                 }
                 Ok(())
