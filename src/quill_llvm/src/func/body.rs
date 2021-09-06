@@ -59,6 +59,7 @@ fn create_real_func_body_cfg<'ctx>(
     type_variables: &[TypeParameter],
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
+    // eprintln!("cfg: {}", cfg);
     // Create new LLVM basic blocks for each MIR basic block.
     let blocks = cfg
         .basic_blocks

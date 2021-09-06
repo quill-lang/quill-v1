@@ -52,6 +52,28 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
     let mut function_dependencies =
         BTreeMap::<FunctionDescriptor, BTreeSet<FunctionDescriptor>>::new();
 
+    // The arities of each function are stored here.
+    // Known return values are only used if we're calling a 0-ary function, since otherwise we won't actually get the return value when we call it -
+    // just a curried function object.
+    // Arities of special case functions are deduced by subtracting the number of special case arguments from the arity of the base function.
+    let arities = mir
+        .files
+        .iter()
+        .map(|(file_name, file)| {
+            file.definitions.iter().map(move |(name, defs)| {
+                (
+                    QualifiedName {
+                        source_file: file_name.clone(),
+                        name: name.clone(),
+                        range: Location { line: 0, col: 0 }.into(),
+                    },
+                    defs.iter().next().unwrap().1.def.arity,
+                )
+            })
+        })
+        .flatten()
+        .collect::<BTreeMap<_, _>>();
+
     let mut known_return_values = BTreeMap::new();
 
     while let Some(desc) = analysis_queue.pop_front() {
@@ -100,7 +122,7 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
             defs.get_mut(&desc.params).unwrap()
         };
 
-        let result = analyse_values_def(&mut def.def, &known_return_values);
+        let result = analyse_values_def(&mut def.def, &arities, &known_return_values);
         analysed_functions.insert(desc.clone());
 
         for dep_def in result.defs_required {
@@ -391,6 +413,7 @@ struct AnalysisResult {
 /// Work out what value each variable holds, if known at compile time.
 fn analyse_values_def(
     def: &mut DefinitionM,
+    arities: &BTreeMap<QualifiedName, u64>,
     known_return_values: &BTreeMap<FunctionDescriptor, KnownValue>,
 ) -> AnalysisResult {
     // Run through the control flow graph and work out what value each variable might hold.
@@ -405,18 +428,29 @@ fn analyse_values_def(
     };
 
     let mut defs_required = BTreeSet::new();
-    let mut type_of_def =
-        |desc: FunctionDescriptor| -> KnownValue {
-            let ty = known_return_values.get(&desc).cloned().unwrap_or_else(|| {
-                KnownValue::Instantiate {
-                    name: desc.name.clone(),
-                    type_variables: desc.params.type_parameters().to_vec(),
-                    special_case_arguments: desc.params.special_case_arguments().to_vec(),
-                }
-            });
-            defs_required.insert(desc);
-            ty
-        };
+    let mut type_of_def = |desc: FunctionDescriptor| -> KnownValue {
+        match arities
+            .get(&desc.name)
+            .map(|x| x - desc.params.special_case_arguments().len() as u64)
+        {
+            Some(0) => {
+                let ty = known_return_values.get(&desc).cloned().unwrap_or_else(|| {
+                    KnownValue::Instantiate {
+                        name: desc.name.clone(),
+                        type_variables: desc.params.type_parameters().to_vec(),
+                        special_case_arguments: desc.params.special_case_arguments().to_vec(),
+                    }
+                });
+                defs_required.insert(desc);
+                ty
+            }
+            _ => KnownValue::Instantiate {
+                name: desc.name.clone(),
+                type_variables: desc.params.type_parameters().to_vec(),
+                special_case_arguments: desc.params.special_case_arguments().to_vec(),
+            },
+        }
+    };
 
     let mut possible_return_values = Vec::new();
 

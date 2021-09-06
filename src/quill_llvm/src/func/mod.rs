@@ -26,6 +26,7 @@ pub fn compile_function<'ctx>(
     func: MonomorphisedCurriedFunction,
 ) {
     // eprintln!("func {}", func);
+    // eprintln!("mir {}", mir);
     let def = &mir.files[&func.func.func.source_file].definitions[&func.func.func.name]
         [&func.func.mono]
         .def;
