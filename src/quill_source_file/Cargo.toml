@@ -2,7 +2,7 @@
 name = "quill_source_file"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "Manages contents of file resources while compiling"
 
 [dependencies]

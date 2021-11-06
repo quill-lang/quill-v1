@@ -2,7 +2,7 @@
 name = "quill_lsp"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "A language server protocol implementation for Quill"
 
 [dependencies]
