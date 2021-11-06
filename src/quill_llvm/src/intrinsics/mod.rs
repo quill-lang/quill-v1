@@ -25,7 +25,7 @@ pub(crate) fn create_real_func_body_intrinsic<'ctx>(
         .append_basic_block(ctx.func_value, "intrinsic");
     ctx.codegen.builder.position_at_end(block);
 
-    match ctx.func.func.name.as_str() {
+    match ctx.func.func.func.name.as_str() {
         "putchar" => {
             putchar(&ctx);
         }

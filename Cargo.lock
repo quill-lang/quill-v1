@@ -860,6 +860,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill_analyse"
+version = "0.1.0"
+dependencies = [
+ "quill_common",
+ "quill_index",
+ "quill_mir",
+ "quill_monomorphise",
+ "quill_type",
+]
+
+[[package]]
 name = "quill_borrow_check"
 version = "0.1.0"
 dependencies = [
@@ -900,6 +911,7 @@ dependencies = [
  "quill_index",
  "quill_lexer",
  "quill_mir",
+ "quill_monomorphise",
  "quill_parser",
  "quill_source_file",
  "quill_type",
@@ -955,6 +967,7 @@ version = "0.1.0"
 dependencies = [
  "dunce",
  "inkwell",
+ "quill_analyse",
  "quill_borrow_check",
  "quill_common",
  "quill_func_objects",
@@ -1082,7 +1095,6 @@ dependencies = [
  "fs_extra",
  "quill_borrow_check",
  "quill_common",
- "quill_func_objects",
  "quill_index",
  "quill_lexer",
  "quill_link",

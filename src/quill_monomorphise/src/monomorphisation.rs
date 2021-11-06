@@ -2,12 +2,14 @@ use std::{collections::BTreeSet, fmt::Display};
 
 use quill_common::name::QualifiedName;
 use quill_mir::{
-    mir::{DefinitionBodyM, StatementKind},
+    mir::{DefinitionBodyM, KnownValue, StatementKind},
     ProjectMIR,
 };
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
+/// The monomorphisation of a project is a list of all the types, functions, and aspects that
+/// were used throughout the project, with type parameters filled in to their actual values.
 #[derive(Debug)]
 pub struct Monomorphisation {
     pub types: BTreeSet<MonomorphisedType>,
@@ -31,11 +33,7 @@ impl Monomorphisation {
         mono.track_def(
             mir,
             mir.entry_point.clone(),
-            MonomorphisationParameters {
-                type_parameters: Vec::new(),
-            },
-            true,
-            Vec::new(),
+            MonomorphisationParameters::new(Vec::new()),
         );
 
         // println!("Mono: {:#?}", mono);
@@ -50,15 +48,11 @@ impl Monomorphisation {
         mir: &ProjectMIR,
         func: QualifiedName,
         mono: MonomorphisationParameters,
-        direct: bool,
-        curry_steps: Vec<u64>,
     ) {
         let def = &mir.files[&func.source_file].definitions[&func.name];
         if self.functions.insert(MonomorphisedFunction {
             func: func.clone(),
             mono: mono.clone(),
-            curry_steps: curry_steps.clone(),
-            direct,
         }) {
             // Work out what functions are called (and what types are referenced) by this function.
             for info in def.local_variable_names.values() {
@@ -73,75 +67,32 @@ impl Monomorphisation {
             if let DefinitionBodyM::PatternMatch(cfg) = &def.body {
                 for block in cfg.basic_blocks.values() {
                     for stmt in &block.statements {
-                        match &stmt.kind {
-                            StatementKind::InvokeFunction {
-                                name,
-                                type_variables,
-                                ..
-                            } => {
-                                self.track_def(
-                                    mir,
-                                    name.clone(),
-                                    MonomorphisationParameters {
-                                        type_parameters: type_variables
-                                            .iter()
-                                            .cloned()
-                                            .map(|ty| {
-                                                replace_type_variables(
-                                                    ty,
-                                                    &def.type_variables,
-                                                    &mono.type_parameters,
-                                                )
-                                            })
-                                            .collect(),
-                                    },
-                                    true,
-                                    Vec::new(),
-                                );
-                            }
-                            StatementKind::ConstructFunctionObject {
-                                name,
-                                type_variables,
-                                curry_steps,
-                                ..
-                            } => {
-                                self.track_def(
-                                    mir,
-                                    name.clone(),
-                                    MonomorphisationParameters {
-                                        type_parameters: type_variables
-                                            .iter()
-                                            .cloned()
-                                            .map(|ty| {
-                                                replace_type_variables(
-                                                    ty,
-                                                    &def.type_variables,
-                                                    &mono.type_parameters,
-                                                )
-                                            })
-                                            .collect(),
-                                    },
-                                    true,
-                                    curry_steps.clone(),
-                                );
-                            }
-                            _ => {}
+                        if let StatementKind::InstanceSymbol {
+                            name,
+                            type_variables,
+                            ..
+                        } = &stmt.kind
+                        {
+                            self.track_def(
+                                mir,
+                                name.clone(),
+                                MonomorphisationParameters::new(
+                                    type_variables
+                                        .iter()
+                                        .cloned()
+                                        .map(|ty| {
+                                            replace_type_variables(
+                                                ty,
+                                                &def.type_variables,
+                                                &mono.type_parameters,
+                                            )
+                                        })
+                                        .collect(),
+                                ),
+                            );
                         }
                     }
                 }
-            }
-
-            // Add all functions that are generated by partially applying this one.
-            let mut next_curry_steps = curry_steps;
-            while !next_curry_steps.is_empty() {
-                self.track_def(
-                    mir,
-                    func.clone(),
-                    mono.clone(),
-                    false,
-                    next_curry_steps.clone(),
-                );
-                next_curry_steps.remove(0);
             }
         }
     }
@@ -151,17 +102,13 @@ impl Monomorphisation {
             Type::Named { name, parameters } => {
                 self.types.insert(MonomorphisedType {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 });
             }
             Type::Impl { name, parameters } => {
                 self.aspects.insert(MonomorphisedAspect {
                     name,
-                    mono: MonomorphisationParameters {
-                        type_parameters: parameters,
-                    },
+                    mono: MonomorphisationParameters::new(parameters),
                 });
             }
             _ => {}
@@ -172,6 +119,31 @@ impl Monomorphisation {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonomorphisationParameters {
     type_parameters: Vec<Type>,
+    special_case_arguments: Vec<KnownValue>,
+}
+
+impl Display for MonomorphisationParameters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        for (i, ty) in self.type_parameters.iter().enumerate() {
+            if i == 0 {
+                write!(f, "{}", ty)?;
+            } else {
+                write!(f, ", {}", ty)?;
+            }
+        }
+        write!(f, "]")?;
+        write!(f, "(")?;
+        for (i, val) in self.special_case_arguments.iter().enumerate() {
+            let val_str = val.display_in_mono();
+            if i == 0 {
+                write!(f, "{}", val_str)?;
+            } else {
+                write!(f, ", {}", val_str)?;
+            }
+        }
+        write!(f, ")")
+    }
 }
 
 impl MonomorphisationParameters {
@@ -181,12 +153,30 @@ impl MonomorphisationParameters {
                 .into_iter()
                 .map(Type::anonymise_borrows)
                 .collect(),
+            special_case_arguments: Vec::new(),
         }
+    }
+
+    /// Add a special-case argument.
+    pub fn with_arg(mut self, arg: KnownValue) -> Self {
+        self.special_case_arguments.push(arg);
+        self
+    }
+
+    /// Add special-case arguments.
+    pub fn with_args(mut self, args: impl IntoIterator<Item = KnownValue>) -> Self {
+        self.special_case_arguments.extend(args);
+        self
     }
 
     /// Get a reference to the type parameters.
     pub fn type_parameters(&self) -> &[Type] {
         self.type_parameters.as_slice()
+    }
+
+    /// Get a reference to the monomorphisation parameters's special case arguments.
+    pub fn special_case_arguments(&self) -> &[KnownValue] {
+        self.special_case_arguments.as_slice()
     }
 }
 
@@ -214,6 +204,17 @@ impl Display for MonomorphisedType {
 pub struct MonomorphisedFunction {
     pub func: QualifiedName,
     pub mono: MonomorphisationParameters,
+}
+
+/// A monomorphisation of a function, but specialised to a specific amount of supplied arguments, and directness.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MonomorphisedCurriedFunction {
+    pub func: MonomorphisedFunction,
+    pub curry: CurryStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CurryStatus {
     /// Must never contain a zero.
     pub curry_steps: Vec<u64>,
     /// If this is true, the function will be monomorphised as a "direct" function; no function pointer is supplied and
@@ -237,22 +238,26 @@ pub struct MonomorphisedFunction {
     pub direct: bool,
 }
 
-impl Display for MonomorphisedFunction {
+impl Display for CurryStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.func)?;
-        if !self.mono.type_parameters.is_empty() {
-            write!(f, "[")?;
-            for ty_param in &self.mono.type_parameters {
-                write!(f, "{},", ty_param)?;
-            }
-            write!(f, "]")?;
-        }
-        write!(f, "/{:?}", self.curry_steps)?;
+        write!(f, "{:?}", self.curry_steps)?;
         if self.direct {
             write!(f, "d")
         } else {
             write!(f, "i")
         }
+    }
+}
+
+impl Display for MonomorphisedFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.func, self.mono)
+    }
+}
+
+impl Display for MonomorphisedCurriedFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.func, self.curry)
     }
 }
 
@@ -278,8 +283,7 @@ impl Display for MonomorphisedAspect {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FunctionObjectDescriptor {
-    pub func: QualifiedName,
-    pub mono: MonomorphisationParameters,
+    pub func: MonomorphisedFunction,
     /// If this monomorphisation of this function requires a currying step,
     /// this contains the amount of parameters applied in the *last* such step.
     pub last_curry_step: Option<u64>,
@@ -288,13 +292,6 @@ pub struct FunctionObjectDescriptor {
 impl Display for FunctionObjectDescriptor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "o/{}", self.func)?;
-        if !self.mono.type_parameters.is_empty() {
-            write!(f, "[")?;
-            for ty_param in &self.mono.type_parameters {
-                write!(f, "{},", ty_param)?;
-            }
-            write!(f, "]")?;
-        }
         if let Some(last) = self.last_curry_step {
             write!(f, "/{}", last)?;
         }
@@ -302,12 +299,11 @@ impl Display for FunctionObjectDescriptor {
     }
 }
 
-impl MonomorphisedFunction {
+impl MonomorphisedCurriedFunction {
     pub fn function_object_descriptor(&self) -> FunctionObjectDescriptor {
         FunctionObjectDescriptor {
             func: self.func.clone(),
-            mono: self.mono.clone(),
-            last_curry_step: self.curry_steps.last().copied(),
+            last_curry_step: self.curry.curry_steps.last().copied(),
         }
     }
 }

@@ -6,12 +6,14 @@ use std::{
 };
 
 use quill_common::{
-    location::{Range, Ranged},
+    location::{Location, Range, Ranged},
     name::QualifiedName,
 };
 use quill_index::TypeParameter;
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
+
+use crate::validate::type_of_value;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct ArgumentIndex(pub u64);
@@ -191,12 +193,15 @@ impl Display for LocalVariableDetails {
 
 /// A value that we know at compile time.
 /// Useful for inlining.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KnownValue {
     Constant(ConstantValue),
     Instantiate {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        /// In certain cases, we may already know the value of some initial arguments
+        /// (typically impls). These are stored here.
+        special_case_arguments: Vec<KnownValue>,
     },
     ConstructData {
         name: QualifiedName,
@@ -221,12 +226,19 @@ impl Display for KnownValue {
             KnownValue::Instantiate {
                 name,
                 type_variables,
+                special_case_arguments,
             } => {
                 write!(f, "instantiate {}", name)?;
                 if !type_variables.is_empty() {
                     write!(f, " with")?;
                     for ty in type_variables {
                         write!(f, " {}", ty)?;
+                    }
+                }
+                if !special_case_arguments.is_empty() {
+                    writeln!(f, " special case")?;
+                    for arg in special_case_arguments {
+                        write!(f, "{}", arg.to_string().replace("\n", "\n    "))?;
                     }
                 }
                 Ok(())
@@ -277,6 +289,238 @@ impl Display for KnownValue {
     }
 }
 
+impl KnownValue {
+    /// A display impl for creating a function signature, not for displaying in MIR.
+    pub fn display_in_mono(&self) -> String {
+        match self {
+            KnownValue::Constant(value) => value.to_string(),
+            KnownValue::Instantiate {
+                name,
+                type_variables,
+                special_case_arguments,
+            } => {
+                let mut result = name.to_string();
+                for ty in type_variables {
+                    result += "[";
+                    result += &ty.to_string();
+                    result += "]";
+                }
+                for arg in special_case_arguments {
+                    result += "(";
+                    result += &arg.to_string();
+                    result += ")";
+                }
+                result
+            }
+            KnownValue::ConstructData {
+                name,
+                type_variables,
+                variant,
+                fields,
+            } => {
+                let mut result = name.to_string();
+                if let Some(variant) = variant {
+                    result += "~";
+                    result += variant;
+                }
+                for ty in type_variables {
+                    result += "[";
+                    result += &ty.to_string();
+                    result += "]";
+                }
+                for (field_name, value) in fields {
+                    result += &format!("({}={})", field_name, value);
+                }
+                result
+            }
+            KnownValue::ConstructImpl {
+                aspect,
+                type_variables,
+                definitions,
+            } => {
+                let mut result = "impl ".to_string() + &aspect.to_string();
+                for ty in type_variables {
+                    result += "[";
+                    result += &ty.to_string();
+                    result += "]";
+                }
+                for (field_name, value) in definitions {
+                    result += &format!("({}={})", field_name, value);
+                }
+                result
+            }
+        }
+    }
+
+    /// Generate MIR instructions to construct this known value.
+    /// We are allowed to create new local variables with IDs greater than or equal to next_local_id.
+    /// This function will also create a new entry in locals for the new variable.
+    pub fn generate(
+        &self,
+        target: LocalVariableName,
+        mut next_local_id: u64,
+        locals: &mut BTreeMap<LocalVariableName, LocalVariableInfo>,
+        definition_infos: impl Clone + Fn(&QualifiedName, &[Type], &[KnownValue]) -> DefinitionInfo,
+    ) -> GenerationResult {
+        let range = Location { line: 0, col: 0 }.into();
+        match self {
+            KnownValue::Constant(value) => {
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        ty: Type::Primitive(type_of_value(*value)),
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements: vec![Statement {
+                        range,
+                        kind: StatementKind::Assign {
+                            target,
+                            source: Rvalue::Constant(*value),
+                        },
+                    }],
+                    next_local_id,
+                }
+            }
+            KnownValue::Instantiate {
+                name,
+                type_variables,
+                special_case_arguments,
+            } => {
+                let mir_def = definition_infos(name, type_variables, special_case_arguments);
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        // Since the mir_def is a special case function, we do not actually pass the special case arguments in manually.
+                        // This means the symbol type doesn't need to be changed depending on `special_case_arguments.len()`.
+                        ty: mir_def.symbol_type,
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements: vec![Statement {
+                        range,
+                        kind: StatementKind::InstanceSymbol {
+                            name: name.clone(),
+                            type_variables: type_variables.clone(),
+                            special_case_arguments: special_case_arguments.clone(),
+                            target,
+                        },
+                    }],
+                    next_local_id,
+                }
+            }
+            KnownValue::ConstructData {
+                name,
+                type_variables,
+                variant,
+                fields,
+            } => {
+                let mut statements = Vec::new();
+                let mut field_entries = BTreeMap::new();
+                for (field_name, field_value) in fields {
+                    let field_local = LocalVariableName::Local(LocalVariableId(next_local_id));
+                    next_local_id += 1;
+                    let inner_result = field_value.generate(
+                        field_local,
+                        next_local_id,
+                        locals,
+                        definition_infos.clone(),
+                    );
+                    next_local_id = inner_result.next_local_id;
+                    statements.extend(inner_result.statements);
+                    field_entries.insert(field_name.clone(), Rvalue::Move(Place::new(field_local)));
+                }
+                statements.push(Statement {
+                    range,
+                    kind: StatementKind::ConstructData {
+                        name: name.clone(),
+                        type_variables: type_variables.clone(),
+                        variant: variant.clone(),
+                        fields: field_entries,
+                        target,
+                    },
+                });
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        ty: Type::Named {
+                            name: name.clone(),
+                            parameters: type_variables.clone(),
+                        },
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements,
+                    next_local_id,
+                }
+            }
+            KnownValue::ConstructImpl {
+                aspect,
+                type_variables,
+                definitions,
+            } => {
+                let mut statements = Vec::new();
+                let mut field_entries = BTreeMap::new();
+                for (field_name, field_value) in definitions {
+                    let field_local = LocalVariableName::Local(LocalVariableId(next_local_id));
+                    next_local_id += 1;
+                    let inner_result = field_value.generate(
+                        field_local,
+                        next_local_id,
+                        locals,
+                        definition_infos.clone(),
+                    );
+                    next_local_id = inner_result.next_local_id;
+                    statements.extend(inner_result.statements);
+                    field_entries.insert(field_name.clone(), field_local);
+                }
+                statements.push(Statement {
+                    range,
+                    kind: StatementKind::ConstructImpl {
+                        aspect: aspect.clone(),
+                        type_variables: type_variables.clone(),
+                        definitions: field_entries,
+                        target,
+                    },
+                });
+                locals.insert(
+                    target,
+                    LocalVariableInfo {
+                        range,
+                        ty: Type::Impl {
+                            name: aspect.clone(),
+                            parameters: type_variables.clone(),
+                        },
+                        details: Default::default(),
+                    },
+                );
+                GenerationResult {
+                    statements,
+                    next_local_id,
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DefinitionInfo {
+    // TODO: use arity information to avoid adding an amount of special case arguments exceeding the function's arity
+    pub arity: u64,
+    pub symbol_type: Type,
+}
+
+pub struct GenerationResult {
+    pub statements: Vec<Statement>,
+    pub next_local_id: u64,
+}
+
 /// After validation, the control flow graph must be in a topologically sorted order:
 /// we jump only from lower-indexed basic blocks to higher-indexed basic blocks.
 /// This means that, to trace control flow, ensuring that each variable is initialised before used,
@@ -289,6 +533,8 @@ pub struct ControlFlowGraph {
     pub basic_blocks: BTreeMap<BasicBlockId, BasicBlock>,
     /// Which basic block should be entered to invoke the function?
     pub entry_point: BasicBlockId,
+    /// If we know the return value statically, it is given here.
+    pub return_value: Option<KnownValue>,
 }
 
 impl ControlFlowGraph {
@@ -298,12 +544,16 @@ impl ControlFlowGraph {
             next_block_id: BasicBlockId(0),
             entry_point: BasicBlockId(0),
             basic_blocks: BTreeMap::new(),
+            return_value: None,
         }
     }
 }
 
 impl Display for ControlFlowGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(val) = &self.return_value {
+            writeln!(f, "returns {}", val.to_string().replace("\n", "\n    "))?;
+        }
         writeln!(f, "entry point: {}", self.entry_point)?;
 
         for (block_id, block) in &self.basic_blocks {
@@ -432,6 +682,115 @@ impl ControlFlowGraph {
 
         self.entry_point = block_id_map[&self.entry_point];
     }
+
+    /// Replaces the uses of the given variable with the replacement.
+    pub fn replace_uses(&mut self, original: LocalVariableName, replacement: LocalVariableName) {
+        let replace_local = |local: &mut LocalVariableName| {
+            if *local == original {
+                *local = replacement;
+            }
+        };
+        let replace_place = |place: &mut Place| replace_local(&mut place.local);
+        let replace_rvalue = |rvalue: &mut Rvalue| match rvalue {
+            Rvalue::Move(place) => replace_place(place),
+            Rvalue::Borrow(local) | Rvalue::Copy(local) => replace_local(local),
+            Rvalue::Constant(_) => {}
+        };
+
+        for block in self.basic_blocks.values_mut() {
+            for stmt in &mut block.statements {
+                match &mut stmt.kind {
+                    StatementKind::Assign { target, source } => {
+                        replace_local(target);
+                        replace_rvalue(source)
+                    }
+                    StatementKind::AssignPhi { target, phi_cases } => {
+                        replace_local(target);
+                        for (_block, source) in phi_cases.iter_mut() {
+                            replace_local(source);
+                        }
+                    }
+                    StatementKind::InstanceSymbol { target, .. } => {
+                        replace_local(target);
+                    }
+                    StatementKind::Apply {
+                        argument,
+                        function,
+                        target,
+                    } => {
+                        replace_rvalue(argument);
+                        replace_rvalue(function);
+                        replace_local(target);
+                    }
+                    StatementKind::InvokeFunction {
+                        target, arguments, ..
+                    } => {
+                        replace_local(target);
+                        for arg in arguments {
+                            replace_rvalue(arg);
+                        }
+                    }
+                    StatementKind::ConstructFunctionObject {
+                        target,
+                        curried_arguments,
+                        ..
+                    } => {
+                        replace_local(target);
+                        for arg in curried_arguments {
+                            replace_rvalue(arg);
+                        }
+                    }
+                    StatementKind::InvokeFunctionObject {
+                        func_object,
+                        target,
+                        additional_arguments,
+                    } => {
+                        replace_rvalue(func_object);
+                        replace_local(target);
+                        for arg in additional_arguments {
+                            replace_rvalue(arg);
+                        }
+                    }
+                    StatementKind::Drop { variable } => {
+                        replace_local(variable);
+                    }
+                    StatementKind::Free { variable } => {
+                        replace_local(variable);
+                    }
+                    StatementKind::ConstructData { fields, target, .. } => {
+                        for rvalue in fields.values_mut() {
+                            replace_rvalue(rvalue);
+                        }
+                        replace_local(target);
+                    }
+                    StatementKind::ConstructImpl {
+                        definitions,
+                        target,
+                        ..
+                    } => {
+                        for value in definitions.values_mut() {
+                            replace_local(value);
+                        }
+                        replace_local(target);
+                    }
+                }
+            }
+
+            match &mut block.terminator.kind {
+                TerminatorKind::Goto(_) => {}
+                TerminatorKind::SwitchDiscriminant { enum_place, .. } => {
+                    replace_place(enum_place);
+                }
+                TerminatorKind::SwitchConstant { place, .. } => {
+                    replace_place(place);
+                }
+                TerminatorKind::Invalid => panic!("invalid terminator found"),
+                TerminatorKind::Return { value } => {
+                    replace_local(value);
+                }
+            }
+        }
+    }
 }
 
 /// A basic block is a block of code that can be executed, and may manipulate values.
@@ -480,6 +839,7 @@ pub enum StatementKind {
     InstanceSymbol {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        special_case_arguments: Vec<KnownValue>,
         target: LocalVariableName,
     },
     /// Applies one argument to a function, and stores the result in a variable.
@@ -495,6 +855,7 @@ pub enum StatementKind {
     InvokeFunction {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        special_case_arguments: Vec<KnownValue>,
         target: LocalVariableName,
         arguments: Vec<Rvalue>,
     },
@@ -509,6 +870,7 @@ pub enum StatementKind {
     ConstructFunctionObject {
         name: QualifiedName,
         type_variables: Vec<Type>,
+        special_case_arguments: Vec<KnownValue>,
         target: LocalVariableName,
         curry_steps: Vec<u64>,
         curried_arguments: Vec<Rvalue>,
@@ -572,6 +934,7 @@ impl Display for StatementKind {
             StatementKind::InstanceSymbol {
                 name,
                 type_variables,
+                special_case_arguments,
                 target,
             } => {
                 write!(f, "{} = instance {}", target, name)?;
@@ -581,15 +944,25 @@ impl Display for StatementKind {
                         write!(f, " {}", ty_var)?;
                     }
                 }
+                if !special_case_arguments.is_empty() {
+                    write!(f, " special case")?;
+                    for val in special_case_arguments {
+                        write!(f, " {}", val)?;
+                    }
+                }
                 Ok(())
             }
             StatementKind::InvokeFunction {
                 name,
                 type_variables,
+                special_case_arguments,
                 target,
                 arguments,
             } => {
                 write!(f, "{} = invoke {} ( ", target, name)?;
+                for arg in special_case_arguments {
+                    write!(f, "sc {}, ", arg.display_in_mono())?;
+                }
                 for arg in arguments {
                     write!(f, "{}, ", arg)?;
                 }
@@ -605,11 +978,15 @@ impl Display for StatementKind {
             StatementKind::ConstructFunctionObject {
                 name,
                 type_variables,
+                special_case_arguments,
                 target,
                 curry_steps,
                 curried_arguments,
             } => {
                 write!(f, "{} = fobj {} ( ", target, name)?;
+                for arg in special_case_arguments {
+                    write!(f, "sc {}, ", arg.display_in_mono())?;
+                }
                 for arg in curried_arguments {
                     write!(f, "{}, ", arg)?;
                 }

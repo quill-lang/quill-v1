@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use inkwell::{debug_info::AsDIScope, values::FunctionValue, AddressSpace};
-use quill_mir::{
-    mir::{ArgumentIndex, LocalVariableName},
-    ProjectMIR,
+use quill_mir::mir::{ArgumentIndex, LocalVariableName};
+use quill_monomorphise::{
+    mono_mir::MonomorphisedMIR,
+    monomorphisation::{FunctionObjectDescriptor, MonomorphisedCurriedFunction},
 };
-use quill_monomorphise::monomorphisation::{FunctionObjectDescriptor, MonomorphisedFunction};
 use quill_type::Type;
 use quill_type_deduce::replace_type_variables;
 
@@ -22,25 +22,29 @@ mod rvalue;
 pub fn compile_function<'ctx>(
     codegen: &CodeGenContext<'ctx>,
     reprs: &LLVMRepresentations<'_, 'ctx>,
-    mir: &ProjectMIR,
-    func: MonomorphisedFunction,
+    mir: &MonomorphisedMIR,
+    func: MonomorphisedCurriedFunction,
 ) {
-    // println!("func {}", func);
-    let def = &mir.files[&func.func.source_file].definitions[&func.func.name];
+    // eprintln!("func {}", func);
+    // eprintln!("mir {}", mir);
+    let def = &mir.files[&func.func.func.source_file].definitions[&func.func.func.name]
+        [&func.func.mono]
+        .def;
     let func_value = codegen.module.get_function(&func.to_string()).unwrap();
     let func_object_descriptor = func.function_object_descriptor();
 
-    let mono =
-        |ty: Type| replace_type_variables(ty, &def.type_variables, func.mono.type_parameters());
+    let mono = |ty: Type| {
+        replace_type_variables(ty, &def.type_variables, func.func.mono.type_parameters())
+    };
 
     // Create debug info for the function as a whole.
-    let di_file = source_file_debug_info(codegen, &func.func.source_file);
+    let di_file = source_file_debug_info(codegen, &func.func.func.source_file);
     let subprogram = codegen.di_builder.create_function(
         di_file.as_debug_info_scope(),
-        &func.func.to_string(),
+        &func.func.func.to_string(),
         Some(&func.to_string()),
         di_file,
-        func.func.range.start.line + 1,
+        func.func.func.range.start.line + 1,
         codegen.di_builder.create_subroutine_type(
             di_file,
             reprs
@@ -58,7 +62,7 @@ pub fn compile_function<'ctx>(
         ),
         true,
         true,
-        func.func.range.start.line + 1,
+        func.func.func.range.start.line + 1,
         0,
         false,
     );
@@ -70,9 +74,9 @@ pub fn compile_function<'ctx>(
     codegen.builder.unset_current_debug_location();
 
     // Check what kind of function this is.
-    if func.direct {
+    if func.curry.direct {
         // A direct function contains the real function body if there are no arguments left to curry.
-        if func.curry_steps.is_empty() {
+        if func.curry.curry_steps.is_empty() {
             // We need to now create the real function body.
             let mut locals = BTreeMap::new();
             for arg in 0..def.arity {
@@ -82,7 +86,7 @@ pub fn compile_function<'ctx>(
                             .ty
                             .clone(),
                         &def.type_variables,
-                        func.mono.type_parameters(),
+                        func.func.mono.type_parameters(),
                     ))
                     .is_some()
                 {
@@ -141,11 +145,11 @@ pub fn compile_function<'ctx>(
                 "fobj",
             );
 
-            let num_curry_steps = func.curry_steps.iter().sum::<u64>();
+            let num_curry_steps = func.curry.curry_steps.iter().sum::<u64>();
 
             // Store the next function's address inside the new function object.
             let mut next_func = func;
-            next_func.direct = false;
+            next_func.curry.direct = false;
             let next_func_value = codegen.module.get_function(&next_func.to_string()).unwrap();
 
             let fptr = codegen.builder.build_bitcast(
@@ -181,7 +185,7 @@ pub fn compile_function<'ctx>(
         }
     } else {
         // An indirect function contains the real function body if there is only one step of currying left.
-        if func.curry_steps.len() == 1 {
+        if func.curry.curry_steps.len() == 1 {
             // We need to create the real function body.
             let mut locals = BTreeMap::new();
 
@@ -201,7 +205,7 @@ pub fn compile_function<'ctx>(
                     "fobj",
                 )
                 .into_pointer_value();
-            for arg in 0..def.arity - func.curry_steps[0] {
+            for arg in 0..def.arity - func.curry.curry_steps[0] {
                 let arg_ptr = fobj_repr.load(codegen, reprs, fobj, &format!("field_{}", arg));
                 if let Some(arg_ptr) = arg_ptr {
                     locals.insert(LocalVariableName::Argument(ArgumentIndex(arg)), arg_ptr);
@@ -209,16 +213,16 @@ pub fn compile_function<'ctx>(
             }
 
             // Store the arguments given in the function itself.
-            for arg in 0..func.curry_steps[0] {
+            for arg in 0..func.curry.curry_steps[0] {
                 if reprs
                     .repr(replace_type_variables(
                         def.local_variable_names[&LocalVariableName::Argument(ArgumentIndex(
-                            def.arity - func.curry_steps[0] + arg,
+                            def.arity - func.curry.curry_steps[0] + arg,
                         ))]
                             .ty
                             .clone(),
                         &def.type_variables,
-                        func.mono.type_parameters(),
+                        func.func.mono.type_parameters(),
                     ))
                     .is_some()
                 {
@@ -229,7 +233,7 @@ pub fn compile_function<'ctx>(
                     codegen.builder.build_store(arg_ptr, value);
                     locals.insert(
                         LocalVariableName::Argument(ArgumentIndex(
-                            def.arity - func.curry_steps[0] + arg,
+                            def.arity - func.curry.curry_steps[0] + arg,
                         )),
                         arg_ptr,
                     );
@@ -256,13 +260,13 @@ pub fn compile_function<'ctx>(
             let fobj = func_value.get_nth_param(0).unwrap();
             let fobj_repr = reprs.get_fobj(&func.function_object_descriptor()).unwrap();
 
-            let num_curry_steps_after_call = func.curry_steps.iter().skip(1).sum::<u64>();
+            let num_curry_steps_after_call = func.curry.curry_steps.iter().skip(1).sum::<u64>();
 
             // Store the next function's address inside the new function object.
             let mut next_func = func;
-            let args_not_supplied = next_func.curry_steps.iter().sum::<u64>();
+            let args_not_supplied = next_func.curry.curry_steps.iter().sum::<u64>();
             let args_supplied = def.arity - args_not_supplied;
-            let num_args = next_func.curry_steps.remove(0);
+            let num_args = next_func.curry.curry_steps.remove(0);
             let next_func_value = codegen.module.get_function(&next_func.to_string()).unwrap();
 
             let fptr = codegen.builder.build_bitcast(

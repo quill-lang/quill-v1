@@ -1341,7 +1341,7 @@ fn collect_bound_vars(
 
 /// Treating this symbol as a function, what are its arguments' types and the result type?
 /// If this is not a function, then it is treated as a zero-argument function.
-fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
+pub fn get_args_of_type(symbol_type: &Type) -> (Vec<Type>, Type) {
     match symbol_type {
         Type::Function(left, right) => {
             let (mut args, out) = get_args_of_type(right);

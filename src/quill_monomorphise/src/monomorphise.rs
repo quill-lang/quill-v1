@@ -35,7 +35,8 @@ pub fn monomorphise(
                         }
                     }
 
-                    StatementKind::ConstructData { type_variables, .. } => {
+                    StatementKind::ConstructData { type_variables, .. }
+                    | StatementKind::ConstructImpl { type_variables, .. } => {
                         for var in type_variables {
                             mono(var);
                         }
@@ -59,13 +60,15 @@ pub fn monomorphise(
                 let should_keep = match &stmt.kind {
                     StatementKind::Assign { target, .. }
                     | StatementKind::AssignPhi { target, .. }
-                    | StatementKind::InstanceSymbol { target, .. }
-                    | StatementKind::Apply { target, .. }
-                    | StatementKind::ConstructFunctionObject { target, .. }
                     | StatementKind::ConstructData { target, .. } => local_reprs[target],
 
                     StatementKind::InvokeFunction { .. }
-                    | StatementKind::InvokeFunctionObject { .. } => true,
+                    | StatementKind::InvokeFunctionObject { .. }
+                    | StatementKind::ConstructFunctionObject { .. } => {
+                        panic!("func_objects pass should not have been performed yet")
+                    }
+
+                    StatementKind::InstanceSymbol { .. } | StatementKind::Apply { .. } => true,
 
                     StatementKind::Drop { variable } | StatementKind::Free { variable } => {
                         local_reprs[variable]

@@ -13,11 +13,9 @@ use quill_mir::mir::{
     ControlFlowGraph, DefinitionBodyM, DefinitionM, LocalVariableInfo, LocalVariableName, Place,
     PlaceSegment, Rvalue, StatementKind, TerminatorKind,
 };
-use quill_monomorphise::{
-    monomorphisation::{
-        MonomorphisationParameters, MonomorphisedAspect, MonomorphisedFunction, MonomorphisedType,
-    },
-    monomorphise::monomorphise,
+use quill_monomorphise::monomorphisation::{
+    CurryStatus, MonomorphisationParameters, MonomorphisedAspect, MonomorphisedCurriedFunction,
+    MonomorphisedFunction, MonomorphisedType,
 };
 use quill_parser::expr_pat::ConstantValue;
 use quill_type::Type;
@@ -37,8 +35,7 @@ pub fn create_real_func_body<'ctx>(
     def: &DefinitionM,
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
-    let mut def = monomorphise(|ty| context.reprs.repr(ty).is_some(), &context.func, def);
-
+    let mut def = def.clone();
     match &mut def.body {
         DefinitionBodyM::PatternMatch(cfg) => create_real_func_body_cfg(
             context,
@@ -62,7 +59,7 @@ fn create_real_func_body_cfg<'ctx>(
     type_variables: &[TypeParameter],
     scope: DIScope<'ctx>,
 ) -> BasicBlock<'ctx> {
-    // println!("making cfg");
+    // eprintln!("cfg: {}", cfg);
     // Create new LLVM basic blocks for each MIR basic block.
     let blocks = cfg
         .basic_blocks
@@ -165,14 +162,20 @@ fn create_real_func_body_cfg<'ctx>(
                 StatementKind::InvokeFunction {
                     name,
                     type_variables,
+                    special_case_arguments,
                     target,
                     arguments,
                 } => {
-                    let mono_func = MonomorphisedFunction {
-                        func: name.clone(),
-                        mono: MonomorphisationParameters::new(type_variables.clone()),
-                        curry_steps: Vec::new(),
-                        direct: true,
+                    let mono_func = MonomorphisedCurriedFunction {
+                        func: MonomorphisedFunction {
+                            func: name.clone(),
+                            mono: MonomorphisationParameters::new(type_variables.clone())
+                                .with_args(special_case_arguments.iter().cloned()),
+                        },
+                        curry: CurryStatus {
+                            curry_steps: Vec::new(),
+                            direct: true,
+                        },
                     };
                     let func = ctx
                         .codegen
@@ -229,16 +232,23 @@ fn create_real_func_body_cfg<'ctx>(
                 StatementKind::ConstructFunctionObject {
                     name,
                     type_variables,
+                    special_case_arguments,
                     target,
                     curry_steps,
                     curried_arguments,
                 } => {
-                    let mono_func = MonomorphisedFunction {
-                        func: name.clone(),
-                        mono: MonomorphisationParameters::new(type_variables.clone()),
-                        curry_steps: curry_steps.clone(),
-                        direct: true,
+                    let mono_func = MonomorphisedCurriedFunction {
+                        func: MonomorphisedFunction {
+                            func: name.clone(),
+                            mono: MonomorphisationParameters::new(type_variables.clone())
+                                .with_args(special_case_arguments.iter().cloned()),
+                        },
+                        curry: CurryStatus {
+                            curry_steps: curry_steps.clone(),
+                            direct: true,
+                        },
                     };
+
                     let func = ctx
                         .codegen
                         .module
@@ -629,7 +639,7 @@ fn create_real_func_body_cfg<'ctx>(
                                     replace_type_variables(
                                         ty.clone(),
                                         type_variables,
-                                        ctx.func.mono.type_parameters(),
+                                        ctx.func.func.mono.type_parameters(),
                                     )
                                 })
                                 .collect(),

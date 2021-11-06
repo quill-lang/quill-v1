@@ -37,7 +37,7 @@ def default div_int: impl Div[Int, Int] {
 
 def default ord_int: impl Ord[Int] {
     ord_int = impl {
-        cmp x y = match (le_int (copy &x) (copy &y)) (
+        cmp x y = match (lt_int (copy &x) (copy &y)) (
             true -> Less {}
             false -> match (eq_int x y) (
                 true -> Equal {}

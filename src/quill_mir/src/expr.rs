@@ -367,6 +367,7 @@ fn generate_expr_symbol(
             kind: StatementKind::InstanceSymbol {
                 name,
                 type_variables,
+                special_case_arguments: Vec::new(),
                 target: LocalVariableName::Local(variable),
             },
         }],
@@ -509,6 +510,7 @@ fn generate_expr_lambda(
                         parameters: Vec::new(),
                     })
                     .collect(),
+                special_case_arguments: Vec::new(),
                 target: LocalVariableName::Local(variable),
             },
         });
@@ -976,6 +978,7 @@ fn generate_expr_impl(
                                 parameters: Vec::new(),
                             })
                             .collect(),
+                        special_case_arguments: Vec::new(),
                         target: LocalVariableName::Local(variable),
                     },
                 });

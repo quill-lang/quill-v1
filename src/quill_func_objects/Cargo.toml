@@ -9,6 +9,7 @@ description = "Converts curried functions to function objects and explicit funct
 quill_common = { path = "../quill_common" }
 quill_parser = { path = "../quill_parser" }
 quill_mir = { path = "../quill_mir" }
+quill_monomorphise = { path = "../quill_monomorphise" }
 quill_type_deduce = { path = "../quill_type_deduce" }
 
 [dev-dependencies]

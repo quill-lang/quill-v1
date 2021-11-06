@@ -1,7 +1,6 @@
 //! This module contains the mid-level intermediate representation of code.
 //! Much of this code is heavily inspired by the Rust compiler.
 
-mod analyse;
 mod definition;
 mod expr;
 mod impls;
@@ -104,7 +103,7 @@ pub fn to_mir(
     });
 
     definitions.deny().map(|definitions| {
-        let mut result = SourceFileMIR { definitions };
+        let result = SourceFileMIR { definitions };
         // Uncomment this if the `validate` function itself panics.
         // eprintln!("{}", result);
         if let Err(err) = validate::validate(project_index, source_file, &result) {
@@ -120,10 +119,6 @@ pub fn to_mir(
                 err.message,
                 result
             );
-        }
-        // Now, run static analysis on each definition.
-        for def in result.definitions.values_mut() {
-            analyse::analyse(def);
         }
         result
     })

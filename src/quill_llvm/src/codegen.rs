@@ -12,7 +12,7 @@ use inkwell::{
 };
 use quill_index::ProjectIndex;
 use quill_mir::mir::LocalVariableName;
-use quill_monomorphise::monomorphisation::MonomorphisedFunction;
+use quill_monomorphise::monomorphisation::MonomorphisedCurriedFunction;
 use quill_target::{TargetArchitecture, TargetTriple};
 
 use crate::repr::LLVMRepresentations;
@@ -32,7 +32,7 @@ pub struct BodyCreationContext<'a, 'ctx> {
     pub codegen: &'a CodeGenContext<'ctx>,
     pub reprs: &'a LLVMRepresentations<'a, 'ctx>,
     pub index: &'a ProjectIndex,
-    pub func: MonomorphisedFunction,
+    pub func: MonomorphisedCurriedFunction,
     pub func_value: FunctionValue<'ctx>,
     pub locals: BTreeMap<LocalVariableName, PointerValue<'ctx>>,
     pub di_file: DIFile<'ctx>,

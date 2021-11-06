@@ -328,6 +328,7 @@ fn validate_stmt(
             name,
             type_variables,
             target,
+            ..
         } => {
             // The symbol could be a lambda defined in this source file.
             // In this case, its type is not stored in the project index.

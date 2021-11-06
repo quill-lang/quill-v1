@@ -166,14 +166,10 @@ pub fn invoke(invocation: QuillcInvocation) -> bool {
     if emitted_error {
         false
     } else {
-        let mut mir = mir.unwrap();
-
-        println!("status converting function objects");
-
-        quill_func_objects::convert_func_objects(&mut mir);
+        let mir = mir.unwrap();
 
         // `quill_llvm` outputs its own status messages, so no need to make one here.
-        quill_llvm::build(&project_config.name, &mir, invocation.build_info.clone());
+        quill_llvm::build(&project_config.name, mir, invocation.build_info.clone());
 
         println!("status linking");
 
