@@ -305,9 +305,7 @@ fn tokenise_line(
 
         // Check that we actually consumed a character inside `lex_token`.
         if let Some(&(col2, _)) = chars.peek() {
-            if col2 == col {
-                panic!("no characters were consumed by `lex_token`, but it returned a success, at col {} of line \"{}\"", col, line);
-            }
+            assert!(!(col2 == col), "no characters were consumed by `lex_token`, but it returned a success, at col {} of line \"{}\"", col, line);
         }
         consume_whitespace(line_number, &mut chars);
     }

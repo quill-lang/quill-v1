@@ -2,7 +2,7 @@
 name = "quill_lsp"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "A language server protocol implementation for Quill"
 
 [dependencies]
@@ -16,11 +16,11 @@ quill_mir = { path = "../quill_mir" }
 quill_borrow_check = { path = "../quill_borrow_check" }
 
 quillc_api = { path = "../quillc_api" }
-serde = "1.0"
-toml = "0.5"
+serde = "1.0.130"
+toml = "0.5.8"
 
-tokio = { version = "^1.11", features = ["macros", "rt-multi-thread", "io-std", "fs"] }
-lspower = "1.1"
-tracing = "^0.1.26"
-tracing-subscriber = "^0.2.20"
+tokio = { version = "1.13.0", features = ["macros", "rt-multi-thread", "io-std", "fs"] }
+lspower = "1.1.0"
+tracing = "0.1.29"
+tracing-subscriber = { version = "0.3.1", features = ["env-filter"] }
 lazy_static = "1.4.0"

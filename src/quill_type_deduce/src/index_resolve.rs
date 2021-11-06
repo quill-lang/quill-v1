@@ -241,10 +241,7 @@ pub fn as_variable(ty: &Type) -> TypeVariable {
     match ty {
         Type::Named { name, parameters } => TypeVariable::Named {
             name: name.clone(),
-            parameters: parameters
-                .iter()
-                .map(|p| as_variable(p))
-                .collect::<Vec<_>>(),
+            parameters: parameters.iter().map(as_variable).collect::<Vec<_>>(),
         },
         Type::Function(l, r) => {
             let l2 = as_variable(l);
@@ -256,10 +253,7 @@ pub fn as_variable(ty: &Type) -> TypeVariable {
             parameters,
         } => TypeVariable::Variable {
             variable: variable.clone(),
-            parameters: parameters
-                .iter()
-                .map(|p| as_variable(p))
-                .collect::<Vec<_>>(),
+            parameters: parameters.iter().map(as_variable).collect::<Vec<_>>(),
         },
         Type::Primitive(prim) => TypeVariable::Primitive(*prim),
         Type::Borrow { ty, .. } => TypeVariable::Borrow {
@@ -267,10 +261,7 @@ pub fn as_variable(ty: &Type) -> TypeVariable {
         },
         Type::Impl { name, parameters } => TypeVariable::Impl {
             name: name.clone(),
-            parameters: parameters
-                .iter()
-                .map(|p| as_variable(p))
-                .collect::<Vec<_>>(),
+            parameters: parameters.iter().map(as_variable).collect::<Vec<_>>(),
         },
     }
 }

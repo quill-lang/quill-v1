@@ -2,8 +2,8 @@
 name = "quill_target"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "Definitions of build targets"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.130", features = ["derive"] }

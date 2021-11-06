@@ -117,9 +117,10 @@ fn find_explicit_vars(expr: &mut ExpressionT) -> BTreeMap<TypeVariableId, Range>
         // Add it to the map, so that when we know what the actual value of id is,
         // we won't remove the impl args when substituting.
         map.insert(expr.type_variable, range);
-        if !matches!(expr.contents, ExpressionContentsT::Symbol { .. }) {
-            panic!("type deduction does not work for explicit values that are not symbols");
-        }
+        assert!(
+            matches!(expr.contents, ExpressionContentsT::Symbol { .. }),
+            "type deduction does not work for explicit values that are not symbols"
+        );
     }
 
     // Recursively scan the expression contents.

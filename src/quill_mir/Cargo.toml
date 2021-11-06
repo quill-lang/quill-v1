@@ -2,7 +2,7 @@
 name = "quill_mir"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "Translates HIR into a control flow graph"
 
 [dependencies]

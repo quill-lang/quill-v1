@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use inkwell::{
-    types::{BasicTypeEnum, FunctionType},
+    types::{BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
     AddressSpace,
 };
 use quill_mir::mir::{ArgumentIndex, LocalVariableName};
@@ -172,7 +172,7 @@ fn generate_arg_reprs<'ctx>(
             // Generate the drop function.
             {
                 let func = codegen.module.add_function(
-                    &format!("drop/{}#{}", descriptor.to_string(), fields_stored),
+                    &format!("drop/{}#{}", descriptor, fields_stored),
                     codegen.context.void_type().fn_type(
                         &[repr
                             .llvm_repr
@@ -211,7 +211,7 @@ fn generate_arg_reprs<'ctx>(
             // Generate the copy function.
             {
                 let func = codegen.module.add_function(
-                    &format!("copy/{}#{}", descriptor.to_string(), fields_stored),
+                    &format!("copy/{}#{}", descriptor, fields_stored),
                     repr.llvm_repr
                         .as_ref()
                         .unwrap()
@@ -335,7 +335,7 @@ fn generate_llvm_type<'ctx>(
             - func.curry.curry_steps.iter().sum::<u64>() as usize)
             .filter_map(|idx| {
                 arg_reprs.arg_repr_indices[idx]
-                    .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
+                    .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type.into())
             })
             .collect::<Vec<_>>();
 
@@ -376,8 +376,9 @@ fn generate_llvm_type<'ctx>(
         real_args.extend(
             (args_already_calculated..args_already_calculated + func.curry.curry_steps[0] as usize)
                 .filter_map(|idx| {
-                    arg_reprs.arg_repr_indices[idx]
-                        .map(|idx| arg_reprs.args_with_reprs[idx].0.llvm_type)
+                    arg_reprs.arg_repr_indices[idx].map(|idx| {
+                        BasicMetadataTypeEnum::from(arg_reprs.args_with_reprs[idx].0.llvm_type)
+                    })
                 }),
         );
 

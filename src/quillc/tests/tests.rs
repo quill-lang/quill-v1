@@ -173,7 +173,7 @@ fn build_determinism() {
 
         // Store the build folder for later inspection.
         let stored_build_artifacts =
-            build_folder.with_file_name(format!("build_{}", target_triple.to_string()));
+            build_folder.with_file_name(format!("build_{}", target_triple));
         let _ = std::fs::remove_dir_all(&stored_build_artifacts);
         std::fs::create_dir(&stored_build_artifacts).unwrap();
         // eprintln!("from {:?} to {:?}", build_folder, stored_build_artifacts);
@@ -262,15 +262,11 @@ fn run_test(directory: &str, target_triple: TargetTriple) {
                 expected.trim_end() != std::str::from_utf8(&output.stdout).unwrap().trim_end()
             });
 
-            if code_mismatch || output_mismatch {
-                panic!(
-                    "output did not match:\nexpected code {}, expected output:\n{}\n\ngot code {}, got output:\n{}\n",
+            assert!(!(code_mismatch || output_mismatch), "output did not match:\nexpected code {}, expected output:\n{}\n\ngot code {}, got output:\n{}\n",
                     expected_code,
                     expected_output.as_deref().map(|s| s.trim_end()).unwrap_or_else(|| "<nothing>"),
                     output.status.code().map(|code| code.to_string()).unwrap_or_else(|| "<no code>".to_string()),
-                    std::str::from_utf8(&output.stdout).unwrap().trim_end()
-                );
-            }
+                    std::str::from_utf8(&output.stdout).unwrap().trim_end());
         }
     }
 }

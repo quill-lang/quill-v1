@@ -2,7 +2,7 @@
 name = "quill_llvm"
 version = "0.1.0"
 authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm11-0"] }
@@ -17,7 +17,7 @@ quill_monomorphise = { path = "../quill_monomorphise" }
 quill_reprs = { path = "../quill_reprs" }
 quill_analyse = { path = "../quill_analyse" }
 quill_func_objects = { path = "../quill_func_objects" }
-dunce = "1.0.1"
+dunce = "1.0.2"
 
 [dev-dependencies]
 quill_source_file = { path = "../quill_source_file" }

@@ -90,6 +90,8 @@ impl Display for DefinitionM {
     }
 }
 
+// Since pretty much the whole point of the enum is the CFG, the size difference is irrelevant here.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum DefinitionBodyM {
     PatternMatch(ControlFlowGraph),
@@ -635,9 +637,7 @@ impl ControlFlowGraph {
 
         // If this assert fails, then some blocks in the CFG are never reached from the entry point.
         // This could happen if the MIR generation does not correctly represent the HIR's control flow.
-        if !edges.is_empty() {
-            panic!("edges: {:?}\ncfg: {}", edges, self);
-        }
+        assert!(edges.is_empty(), "edges: {:?}\ncfg: {}", edges, self);
 
         // Now, reorder the basic block IDs according to this new order in `l`.
         // This map maps from old block IDs to new block IDs.

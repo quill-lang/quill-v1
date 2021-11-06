@@ -69,6 +69,8 @@ impl Display for MonomorphisedDefinition {
 }
 
 impl MonomorphisedMIR {
+    // Using a closure lets us avoid requiring Clone on has_repr.
+    #[allow(clippy::redundant_closure)]
     /// Construct a monomorphisation of a project's MIR.
     /// TODO: maybe remove has_repr and make the LIR backend (#132) delete instructions with reprs?
     pub fn new(

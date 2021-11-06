@@ -74,7 +74,7 @@ impl PackageFileSystem {
         for SourceFileIdentifierSegment(segment) in &identifier.segments {
             module = module.submodules.entry(segment.clone()).or_default();
         }
-        func(&mut module)
+        func(module)
     }
 
     /// Gets a source file stored in memory, or reads it from disk if it isn't loaded yet.
