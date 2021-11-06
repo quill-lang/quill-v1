@@ -327,8 +327,7 @@ fn get_copy_function<'ctx>(
         .module
         .get_function(&format!(
             "copy/{}#{}",
-            func_object_descriptor.to_string(),
-            fields_stored,
+            func_object_descriptor, fields_stored,
         ))
         .unwrap()
 }
@@ -343,8 +342,7 @@ fn get_drop_function<'ctx>(
         .module
         .get_function(&format!(
             "drop/{}#{}",
-            func_object_descriptor.to_string(),
-            fields_stored,
+            func_object_descriptor, fields_stored,
         ))
         .unwrap()
 }

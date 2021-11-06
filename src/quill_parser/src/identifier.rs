@@ -12,6 +12,8 @@ pub struct IdentifierP {
 #[derive(Debug, Clone)]
 pub(crate) struct Operator {
     pub(crate) level: u32,
+    // I'm sure we'll need the exact name of the operator when we next refactor the parser.
+    #[allow(dead_code)]
     pub(crate) name: NameP,
     pub(crate) ty: AssociativityType,
 }

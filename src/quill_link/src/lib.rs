@@ -22,7 +22,5 @@ pub fn link(project_name: &str, zig_compiler: &Path, build_info: BuildInfo) {
     linker.arg(format!("{:?}", build_info.optimisation_type));
     linker.stderr(Stdio::inherit());
     let result = linker.output().unwrap();
-    if !result.status.success() {
-        panic!("linker failed");
-    }
+    assert!(result.status.success(), "linker failed");
 }

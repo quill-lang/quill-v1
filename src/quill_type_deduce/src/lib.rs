@@ -1,3 +1,7 @@
+// The type checker will be completely overhauled soon, so we won't worry about keeping it that clean.
+#![allow(dead_code)]
+#![allow(clippy::large_enum_variant)]
+
 pub(crate) mod hindley_milner;
 pub mod hir;
 pub(crate) mod index_resolve;

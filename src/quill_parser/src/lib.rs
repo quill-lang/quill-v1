@@ -1099,9 +1099,7 @@ fn group_terms(
         if let Some((_, op_expr)) = term {
             values.insert(0, op_expr);
         }
-        if values.is_empty() {
-            panic!("invalid input");
-        }
+        assert!(!values.is_empty(), "invalid input");
         return apply_function_to_arguments(values).into();
     }
 

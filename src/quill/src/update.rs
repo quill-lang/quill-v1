@@ -60,6 +60,8 @@ struct ZigRelease {
     // shasum: String,
 }
 
+// Clippy seems to think that closures are redundant, when actually they're required for type inference.
+#[allow(clippy::redundant_closure)]
 pub fn process_update(cli_config: &CliConfig, _args: &ArgMatches<'_>) {
     if let crate::CompilerLocation::Installed { host, root } = &cli_config.compiler_location {
         let _ = std::fs::remove_dir_all(root.join("compiler-deps"));
@@ -149,6 +151,8 @@ fn download_text_or_exit(url: &str, request_name: &str) -> String {
     }
 }
 
+// Clippy seems to think that closures are redundant, when actually they're required for type inference.
+#[allow(clippy::redundant_closure)]
 /// If a version is provided, this function assumes that the tarball contains a `version.txt` file, and that the version should match the given expected version.
 /// Archive types `tar.gz`, `tar.xz` and `zip` are supported.
 /// If `unwrap_prefix` is true, we unpack the top level directory from the archive.

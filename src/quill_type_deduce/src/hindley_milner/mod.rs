@@ -132,9 +132,11 @@ pub(crate) fn deduce_expr_type(
             ))
         }
 
-        if !expr_type_check.assumptions.0.is_empty() {
-            panic!("unresolved assumptions {:#?}", expr_type_check.assumptions);
-        }
+        assert!(
+            expr_type_check.assumptions.0.is_empty(),
+            "unresolved assumptions {:#?}",
+            expr_type_check.assumptions
+        );
 
         expr_type_check.constraints.0.push((
             expr_type_check.expr.type_variable.into(),

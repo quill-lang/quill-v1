@@ -14,7 +14,7 @@ enum OwnershipStatus {
     NotInitialised {
         /// Where was this variable defined, even though it was not initialised?
         definition: Range,
-        block: BasicBlockId,
+        // block: BasicBlockId,
     },
     Owned {
         /// Where did we first gain ownership of this variable?
@@ -44,8 +44,6 @@ enum OwnershipStatus {
         /// If we pass through the given blocks, its ownership status is considered 'destructured'.
         /// We must free its memory, but not call its drop code.
         destructured_in_blocks: BTreeMap<BasicBlockId, Range>,
-        /// Through these paths, the object is still owned. Drop and free must be called.
-        not_moved_blocks: BTreeMap<BasicBlockId, Range>,
     },
 }
 
@@ -77,7 +75,7 @@ pub(crate) fn check_ownership(
                         *name,
                         OwnershipStatus::NotInitialised {
                             definition: info.range,
-                            block: BasicBlockId(0),
+                            // block: BasicBlockId(0),
                         },
                     )
                 })
@@ -422,7 +420,7 @@ fn collate_statuses_single(
     if let Some(definition) = not_initialised_but_defined_at {
         OwnershipStatus::NotInitialised {
             definition,
-            block: block_id,
+            // block: block_id,
         }
     } else if moved_into_blocks.is_empty() && destructured_in_blocks.is_empty() {
         OwnershipStatus::Owned {
@@ -453,7 +451,6 @@ fn collate_statuses_single(
             block: block_id,
             moved_into_blocks,
             destructured_in_blocks,
-            not_moved_blocks,
         }
     }
 }

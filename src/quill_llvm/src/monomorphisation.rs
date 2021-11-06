@@ -172,7 +172,7 @@ fn generate_arg_reprs<'ctx>(
             // Generate the drop function.
             {
                 let func = codegen.module.add_function(
-                    &format!("drop/{}#{}", descriptor.to_string(), fields_stored),
+                    &format!("drop/{}#{}", descriptor, fields_stored),
                     codegen.context.void_type().fn_type(
                         &[repr
                             .llvm_repr
@@ -211,7 +211,7 @@ fn generate_arg_reprs<'ctx>(
             // Generate the copy function.
             {
                 let func = codegen.module.add_function(
-                    &format!("copy/{}#{}", descriptor.to_string(), fields_stored),
+                    &format!("copy/{}#{}", descriptor, fields_stored),
                     repr.llvm_repr
                         .as_ref()
                         .unwrap()
