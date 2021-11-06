@@ -6,5 +6,5 @@ edition = "2021"
 description = "API for invoking quillc"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.130", features = ["derive"] }
 quill_target = { path = "../quill_target" }

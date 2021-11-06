@@ -5,10 +5,10 @@ authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-console = "^0.14"
-indicatif = "^0.16"
-curl = "0.4.38"
+console = "0.15.0"
+indicatif = "0.16.2"
+curl = "0.4.40"
 tar = "0.4.37"
-flate2 = "1.0"
+flate2 = "1.0.22"
 tempdir = "0.3.7"
-dirs = "3.0.2"
+dirs = "4.0.0"

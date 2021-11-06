@@ -6,4 +6,4 @@ edition = "2021"
 description = "A small library containing common utilities useful for most components of the project"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.130", features = ["derive"] }

@@ -10,7 +10,7 @@ quill_source_file = { path = "../quill_source_file" }
 quill_lexer = { path = "../quill_lexer" }
 quill_parser = { path = "../quill_parser" }
 quill_type = { path = "../quill_type" }
-either = "^1.6"
+either = "1.6.1"
 
 [dev-dependencies]
 quill_error = { path = "../quill_error" }

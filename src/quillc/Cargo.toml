@@ -20,11 +20,11 @@ quill_link = { path = "../quill_link" }
 quill_target = { path = "../quill_target" }
 
 quillc_api = { path = "../quillc_api" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-toml = "0.5"
+serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "1.0.69"
+toml = "0.5.8"
 
 [dev-dependencies]
-file_diff = "1.0"
-fs_extra = "1.2"
-rusty-fork = "0.3"
+file_diff = "1.0.0"
+fs_extra = "1.2.0"
+rusty-fork = "0.3.0"

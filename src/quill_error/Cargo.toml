@@ -7,4 +7,4 @@ edition = "2021"
 [dependencies]
 quill_common = { path = "../quill_common" }
 quill_source_file = { path = "../quill_source_file" }
-ariadne = "^0.1"
+ariadne = "0.1.3"

@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 quill_common = { path = "../quill_common" }
 quill_source_file = { path = "../quill_source_file" }
-unicode-normalization = "0.1.17"
+unicode-normalization = "0.1.19"
 
 [dev-dependencies]
 quill_error = { path = "../quill_error" }
