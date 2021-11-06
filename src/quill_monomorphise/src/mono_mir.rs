@@ -51,7 +51,7 @@ impl Display for MonomorphisedSourceFile {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MonomorphisedDefinition {
     pub def: DefinitionM,
     /// After the func_objects pass, this will contain the set of used curry statuses.

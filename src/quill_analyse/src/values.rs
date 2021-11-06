@@ -131,6 +131,7 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
                 .or_default()
                 .insert(desc.clone());
             if analysed_functions.insert(dep_def.clone()) {
+                eprintln!("Requesting analysis of {:#?}", dep_def);
                 analysis_queue.push_back(dep_def)
             }
         }
@@ -171,41 +172,28 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
         }
     }
 
-    // Cache the definition info so that we can borrow it immutably
-    // while mutably editing the analysed functions.
-    let definition_info_cache = mir
-        .files
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                v.definitions
-                    .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.clone(),
-                            v.iter()
-                                .map(|(k, v)| {
-                                    (
-                                        k.clone(),
-                                        DefinitionInfo {
-                                            arity: v.def.arity,
-                                            symbol_type: v.def.symbol_type(),
-                                        },
-                                    )
-                                })
-                                .collect::<BTreeMap<_, _>>(),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-
     // Now that values are known, replace the MIR of each assignment with
     // new MIR that initialises each runtime value to the compile-time known value.
     // This will inevitably introduce dead code, which will need to be eliminated later.
     for analysed_function in analysed_functions {
+        let defs = mir
+            .files
+            .get(&analysed_function.name.source_file)
+            .unwrap()
+            .definitions
+            .get(&analysed_function.name.name)
+            .unwrap();
+        let mut def = defs.get(&analysed_function.params).unwrap().clone();
+        propagate_known_values(&mut def.def, |name, tys, vals| {
+            let v = &mir.files[&name.source_file].definitions[&name.name]
+                [&MonomorphisationParameters::new(tys.to_vec()).with_args(vals.iter().cloned())];
+            DefinitionInfo {
+                arity: v.def.arity,
+                symbol_type: v.def.symbol_type(),
+            }
+        });
+
+        // Replace the definition, with updated values, back in the map.
         let defs = mir
             .files
             .get_mut(&analysed_function.name.source_file)
@@ -213,16 +201,11 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
             .definitions
             .get_mut(&analysed_function.name.name)
             .unwrap();
-        let def = defs.get_mut(&analysed_function.params).unwrap();
-        propagate_known_values(&mut def.def, |name, tys, vals| {
-            definition_info_cache[&name.source_file][&name.name]
-                [&MonomorphisationParameters::new(tys.to_vec()).with_args(vals.iter().cloned())]
-                .clone()
-        });
+        *defs.get_mut(&analysed_function.params).unwrap() = def;
     }
 }
 
-/// Convert variables known values into MIR which generates the known value.
+/// Convert variables' known values into MIR which generates the known value.
 /// This will inevitably introduce dead code, which will need to be eliminated later.
 fn propagate_known_values(
     def: &mut DefinitionM,
@@ -444,11 +427,15 @@ fn analyse_values_def(
                 defs_required.insert(desc);
                 ty
             }
-            _ => KnownValue::Instantiate {
-                name: desc.name.clone(),
-                type_variables: desc.params.type_parameters().to_vec(),
-                special_case_arguments: desc.params.special_case_arguments().to_vec(),
-            },
+            _ => {
+                let ty = KnownValue::Instantiate {
+                    name: desc.name.clone(),
+                    type_variables: desc.params.type_parameters().to_vec(),
+                    special_case_arguments: desc.params.special_case_arguments().to_vec(),
+                };
+                defs_required.insert(desc);
+                ty
+            }
         }
     };
 
