@@ -283,7 +283,7 @@ impl<'ctx> LLVMDataRepresentation<'ctx> {
                     .builder
                     .build_call(
                         codegen.module.get_function("free").unwrap(),
-                        &[field_value],
+                        &[field_value.into()],
                         "free_invocation",
                     )
                     .try_as_basic_value()

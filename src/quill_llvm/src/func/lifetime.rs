@@ -74,7 +74,7 @@ pub fn lifetime_start<'ctx>(
                 .i64_type()
                 .const_int(size as u64, false)
                 .into(),
-            ptr,
+            ptr.into(),
         ],
         "lifetime_start",
     );
@@ -114,7 +114,7 @@ pub fn lifetime_end<'ctx>(
                 .i64_type()
                 .const_int(size as u64, false)
                 .into(),
-            ptr,
+            ptr.into(),
         ],
         "lifetime_end",
     );

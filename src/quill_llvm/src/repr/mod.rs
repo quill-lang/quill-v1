@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    convert::{TryFrom, TryInto},
-};
+use std::{collections::BTreeMap, convert::TryFrom};
 
 use inkwell::{
     debug_info::{AsDIScope, DIDerivedType, DIFlagsConstants},
@@ -263,7 +260,7 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                         .build_load(variable_ptr, "value_to_drop");
                     self.codegen.builder.build_call(
                         func,
-                        &[variable],
+                        &[variable.into()],
                         &format!("drop_{}", mono_ty),
                     );
                 } else {
@@ -298,11 +295,11 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                             .context
                             .void_type()
                             .fn_type(
-                                &[variable_ptr
-                                    .get_type()
-                                    .get_element_type()
-                                    .try_into()
-                                    .unwrap()],
+                                &[BasicTypeEnum::try_from(
+                                    variable_ptr.get_type().get_element_type(),
+                                )
+                                .unwrap()
+                                .into()],
                                 false,
                             )
                             .ptr_type(AddressSpace::Generic),
@@ -310,11 +307,15 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                     )
                     .into_pointer_value();
 
-                let args = &[self.codegen.builder.build_bitcast(
-                    func_object_ptr,
-                    self.general_func_obj_ty.llvm_type,
-                    "fobj_bitcast",
-                )];
+                let args = &[self
+                    .codegen
+                    .builder
+                    .build_bitcast(
+                        func_object_ptr,
+                        self.general_func_obj_ty.llvm_type,
+                        "fobj_bitcast",
+                    )
+                    .into()];
 
                 self.codegen.builder.build_call(
                     CallableValue::try_from(fptr).unwrap(),
@@ -347,7 +348,7 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                         .build_load(variable_ptr, "value_to_drop");
                     self.codegen.builder.build_call(
                         func,
-                        &[variable],
+                        &[variable.into()],
                         &format!("drop_{}", mono_asp),
                     );
                 } else {
@@ -414,7 +415,7 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                         copy,
                         self.general_func_obj_ty
                             .llvm_type
-                            .fn_type(&[self.general_func_obj_ty.llvm_type], false)
+                            .fn_type(&[self.general_func_obj_ty.llvm_type.into()], false)
                             .ptr_type(AddressSpace::Generic),
                         "fptr",
                     )

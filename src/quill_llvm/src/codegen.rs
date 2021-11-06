@@ -60,7 +60,7 @@ fn declare_libc<'ctx>(
         context
             .i8_type()
             .ptr_type(inkwell::AddressSpace::Generic)
-            .fn_type(&[size_t.as_basic_type_enum()], false),
+            .fn_type(&[size_t.as_basic_type_enum().into()], false),
         None,
     );
     // Wrap `malloc` so that we can always call it with an `i64` regardless of the target's pointer size.
@@ -84,7 +84,8 @@ fn declare_libc<'ctx>(
                         size_t,
                         "as_ptr_sized_int",
                     )
-                    .as_basic_value_enum()],
+                    .as_basic_value_enum()
+                    .into()],
                 "result",
             )
             .try_as_basic_value()
@@ -118,7 +119,11 @@ fn declare_libc<'ctx>(
     {
         let block = context.append_basic_block(free_wrapper, "call_free");
         builder.position_at_end(block);
-        builder.build_call(free, &[free_wrapper.get_first_param().unwrap()], "result");
+        builder.build_call(
+            free,
+            &[free_wrapper.get_first_param().unwrap().into()],
+            "result",
+        );
         builder.build_return(None);
     }
 }

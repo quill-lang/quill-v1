@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, convert::TryFrom};
 use inkwell::{
     basic_block::BasicBlock,
     debug_info::DIScope,
-    types::{AnyType, BasicType, BasicTypeEnum},
-    values::CallableValue,
+    types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum},
+    values::{BasicMetadataValueEnum, CallableValue},
     AddressSpace,
 };
 
@@ -198,6 +198,7 @@ fn create_real_func_body_cfg<'ctx>(
                             ctx.codegen
                                 .builder
                                 .build_load(ptr, &format!("if/{}_{}arg", mono_func, i))
+                                .into()
                         })
                         .collect::<Vec<_>>();
 
@@ -270,6 +271,7 @@ fn create_real_func_body_cfg<'ctx>(
                             ctx.codegen
                                 .builder
                                 .build_load(ptr, &format!("c/{}_{}arg", mono_func, i))
+                                .into()
                         })
                         .collect::<Vec<_>>();
 
@@ -334,12 +336,14 @@ fn create_real_func_body_cfg<'ctx>(
                         .reprs
                         .repr(return_type.clone())
                         .map(|repr| repr.llvm_type);
-                    let mut arg_types = vec![ctx.reprs.general_func_obj_ty.llvm_type];
+                    let mut arg_types = vec![BasicMetadataTypeEnum::from(
+                        ctx.reprs.general_func_obj_ty.llvm_type,
+                    )];
                     arg_types.extend(
                         additional_argument_types
                             .iter()
                             .filter_map(|ty| ctx.reprs.repr(ty.clone()))
-                            .map(|repr| repr.llvm_type),
+                            .map(|repr| BasicMetadataTypeEnum::from(repr.llvm_type)),
                     );
                     let func_ty = match return_ty {
                         Some(BasicTypeEnum::ArrayType(v)) => v.fn_type(&arg_types, false),
@@ -356,10 +360,12 @@ fn create_real_func_body_cfg<'ctx>(
                         .build_bitcast(fptr_raw, func_ty.ptr_type(AddressSpace::Generic), "fptr")
                         .into_pointer_value();
 
-                    let mut args = vec![ctx.codegen.builder.build_bitcast(
-                        func_object_ptr,
-                        ctx.reprs.general_func_obj_ty.llvm_type,
-                        "fobj_bitcast",
+                    let mut args = vec![BasicMetadataValueEnum::from(
+                        ctx.codegen.builder.build_bitcast(
+                            func_object_ptr,
+                            ctx.reprs.general_func_obj_ty.llvm_type,
+                            "fobj_bitcast",
+                        ),
                     )];
                     for (i, arg) in additional_arguments.iter().enumerate() {
                         if let Some(ptr) = get_pointer_to_rvalue_arg(
@@ -370,7 +376,12 @@ fn create_real_func_body_cfg<'ctx>(
                             local_variable_names,
                             arg,
                         ) {
-                            args.push(ctx.codegen.builder.build_load(ptr, &format!("io/{}arg", i)))
+                            args.push(
+                                ctx.codegen
+                                    .builder
+                                    .build_load(ptr, &format!("io/{}arg", i))
+                                    .into(),
+                            )
                         }
                     }
 
