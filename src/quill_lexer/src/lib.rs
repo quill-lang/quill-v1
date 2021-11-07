@@ -58,6 +58,8 @@ pub enum TokenType {
 
     Name(String),
     Lifetime(String),
+    Character(char),
+    String(String),
 }
 
 /// A single token such as an identifier or special character.
@@ -439,8 +441,8 @@ fn parse_token(
         '\'' => {
             // This is either a lifetime or a character literal.
             chars.next();
-            let (nextcol, nextch) = if let Some(ch) = chars.peek() {
-                *ch
+            let (nextcol, nextch) = if let Some(ch) = chars.next() {
+                ch
             } else {
                 return DiagnosticResult::fail(ErrorMessage::new(
                     "expected a character or a lifetime".to_string(),
@@ -448,22 +450,85 @@ fn parse_token(
                     Diagnostic::at(source_file, &Range::from(Location { line, col })),
                 ));
             };
-            if nextch.is_alphanumeric() {
-                let (lifetime, range) =
-                    consume_predicate(line, chars, |c| c.is_alphanumeric() || c == '_');
+
+            if nextch == '\'' {
+                // We can't have an empty character literal.
+                return DiagnosticResult::fail(ErrorMessage::new(
+                    "expected a character between these quotes".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &Range::from(Location { line, col: nextcol })),
+                ));
+            }
+
+            // We assume that it is a character literal until we don't see a closing quote.
+            // TODO: character escaping
+            // Do we have a closing quote?
+            if let Some((_, '\'')) = chars.peek() {
+                // This is definitely a character literal.
+                chars.next();
+                return DiagnosticResult::ok(
+                    Token {
+                        token_type: TokenType::Character(nextch),
+                        range: Range::from(Location { line, col: nextcol }),
+                    }
+                    .into(),
+                );
+            }
+
+            // This is a lifetime, not a character.
+            let (mut lifetime, range) =
+                consume_predicate(line, chars, |c| c.is_alphanumeric() || c == '_');
+            lifetime.insert(0, nextch);
+            if lifetime.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 DiagnosticResult::ok(
                     Token {
                         token_type: TokenType::Lifetime(lifetime),
-                        range,
+                        range: Range::from(Location { line, col: nextcol }).union(range),
                     }
                     .into(),
                 )
             } else {
                 DiagnosticResult::fail(ErrorMessage::new(
-                    "lifetime must be made of alphanumeric characters only".to_string(),
+                    "lifetime must be made of alphanumeric and underscore characters only"
+                        .to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &range),
+                ))
+            }
+        }
+        '"' => {
+            // This is a string literal.
+            // TODO: character escaping
+            chars.next();
+            let (string, range) = consume_predicate(line, chars, |c| c != '"');
+            match chars.next() {
+                Some((_, '"')) => DiagnosticResult::ok(
+                    Token {
+                        token_type: TokenType::String(string),
+                        // Include the quote marks in the range.
+                        range: Range {
+                            start: Location {
+                                line: range.start.line,
+                                col: range.start.col - 1,
+                            },
+                            end: Location {
+                                line: range.end.line,
+                                col: range.end.col + 1,
+                            },
+                        },
+                    }
+                    .into(),
+                ),
+                Some((nextcol, _)) => DiagnosticResult::fail(ErrorMessage::new(
+                    "expected closing double quote mark".to_string(),
                     Severity::Error,
                     Diagnostic::at(source_file, &Range::from(Location { line, col: nextcol })),
-                ))
+                )),
+                None => DiagnosticResult::fail(ErrorMessage::new(
+                    "expected closing double quote mark".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(source_file, &Range::from(range.end)),
+                )),
             }
         }
         _ => {

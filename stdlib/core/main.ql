@@ -12,16 +12,15 @@ def main: Unit {
 
 def add_ints: Unit -> Unit {
     add_ints unit = (
-        // Print "Type two integers to add.\n"
-        print (84 :- 121 :- 112 :- 101 :- 32 :- 116 :- 119 :- 111 :- 32 :- 105 :- 110 :- 116 :- 101 :- 103 :- 101 :- 114 :- 115 :- 32 :- 116 :- 111 :- 32 :- 97 :- 100 :- 100 :- 46 :- 10 :- empty)
+        print "Type two integers to add.\n"
         match (get_int unit) (
             Some { value } -> match (get_int unit) (
                 Some { value = value_2 } -> (
                     print (copy &value)
                     // " + "
-                    putchar 32
-                    putchar 43
-                    putchar 32
+                    putchar ' '
+                    putchar '+'
+                    putchar ' '
                     print (copy &value_2)
                     // " = "
                     putchar 32

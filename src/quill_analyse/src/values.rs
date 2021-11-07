@@ -131,7 +131,6 @@ pub fn analyse_values(mir: &mut MonomorphisedMIR) {
                 .or_default()
                 .insert(desc.clone());
             if analysed_functions.insert(dep_def.clone()) {
-                eprintln!("Requesting analysis of {:#?}", dep_def);
                 analysis_queue.push_back(dep_def)
             }
         }
