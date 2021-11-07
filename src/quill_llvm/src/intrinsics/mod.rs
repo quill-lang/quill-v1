@@ -94,6 +94,20 @@ pub(crate) fn create_real_func_body_intrinsic<'ctx>(
                     .build_int_compare(IntPredicate::NE, lhs, rhs, "result")
             });
         }
+        "int_to_char_intrinsic" => {
+            int_unop(&ctx, |value| {
+                ctx.codegen
+                    .builder
+                    .build_int_cast(value, ctx.codegen.context.i32_type(), "result")
+            });
+        }
+        "char_to_int_intrinsic" => {
+            int_unop(&ctx, |value| {
+                ctx.codegen
+                    .builder
+                    .build_int_cast(value, ctx.codegen.context.i64_type(), "result")
+            });
+        }
         _ => {
             panic!("intrinsic {} is not defined by the compiler", ctx.func.func)
         }
@@ -144,6 +158,24 @@ fn getchar(ctx: &BodyCreationContext) {
     ctx.codegen.builder.build_return(Some(&result));
 }
 
+/// Generic unary integer operation.
+fn int_unop<'ctx, F, V>(ctx: &BodyCreationContext<'_, 'ctx>, op: F)
+where
+    F: FnOnce(IntValue<'ctx>) -> V,
+    V: BasicValue<'ctx>,
+{
+    let arg0 = ctx
+        .codegen
+        .builder
+        .build_load(
+            ctx.locals[&LocalVariableName::Argument(ArgumentIndex(0))],
+            "arg0",
+        )
+        .into_int_value();
+    ctx.codegen.builder.build_return(Some(&op(arg0)));
+}
+
+/// Generic binary integer operation.
 fn int_binop<'ctx, F, V>(ctx: &BodyCreationContext<'_, 'ctx>, op: F)
 where
     F: FnOnce(IntValue<'ctx>, IntValue<'ctx>) -> V,
