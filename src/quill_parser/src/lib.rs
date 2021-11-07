@@ -891,6 +891,31 @@ impl<'input> Parser<'input> {
             } else {
                 self.parse_expr_impl(tk.range)
             })
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::Character(_)))
+        {
+            if let TokenType::Character(ch) = tk.token_type {
+                Some(
+                    ExprPatP::Constant {
+                        range: tk.range,
+                        value: ConstantValue::Char(ch),
+                    }
+                    .into(),
+                )
+            } else {
+                unreachable!()
+            }
+        } else if let Some(tk) = self.parse_token_maybe(|ty| matches!(ty, TokenType::String(_))) {
+            if let TokenType::String(string) = tk.token_type {
+                Some(
+                    ExprPatP::String {
+                        range: tk.range,
+                        value: string,
+                    }
+                    .into(),
+                )
+            } else {
+                unreachable!()
+            }
         } else {
             self.parse_identifier_maybe().map(|identifier| identifier.bind(|identifier| {
                 let constant = if identifier.segments.len() == 1 {

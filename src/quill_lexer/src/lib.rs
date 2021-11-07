@@ -339,6 +339,8 @@ fn should_insert_semicolon_after(ty: &TokenType) -> bool {
             | TokenType::RightBrace
             | TokenType::RightParenthesis
             | TokenType::RightSquare
+            | TokenType::Character(_)
+            | TokenType::String(_)
     )
 }
 

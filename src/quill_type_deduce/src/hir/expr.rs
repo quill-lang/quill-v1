@@ -79,8 +79,10 @@ pub enum ExpressionContentsGeneric<E, T, V, P, I> {
         open_brace: Range,
         close_brace: Range,
     },
-    /// A raw value, such as a string literal, the `unit` keyword, or an integer literal.
+    /// A raw value, such as a character literal, the `unit` keyword, or an integer literal.
     ConstantValue { value: ConstantValue, range: Range },
+    /// A string literal, which will be converted into a cons-list later.
+    String { value: String, range: Range },
     /// A borrowed value.
     Borrow { borrow_token: Range, expr: Box<E> },
     /// A copy of a borrowed value.
@@ -137,6 +139,7 @@ where
                 ..
             } => open_bracket.union(*close_bracket),
             ExpressionContentsGeneric::ConstantValue { range, .. } => *range,
+            ExpressionContentsGeneric::String { range, .. } => *range,
             ExpressionContentsGeneric::Borrow {
                 borrow_token, expr, ..
             } => borrow_token.union(expr.range()),

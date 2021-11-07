@@ -920,6 +920,7 @@ impl<'a> TypeChecker<'a> {
                     Diagnostic::at(self.source_file, &range),
                 )),
             },
+            ExprPatP::String { .. } => todo!(),
             ExprPatP::Apply(left, _right) => DiagnosticResult::fail(ErrorMessage::new(
                 String::from("expected a type constructor pattern"),
                 Severity::Error,

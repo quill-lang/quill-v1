@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use quill_common::{
     diagnostic::DiagnosticResult,
-    location::{Range, Ranged},
+    location::{
+        ModuleIdentifier, Range, Ranged, SourceFileIdentifier, SourceFileIdentifierSegment,
+        SourceFileType,
+    },
     name::QualifiedName,
 };
 use quill_parser::{expr_pat::ConstantValue, identifier::NameP};
@@ -56,7 +59,7 @@ pub(crate) fn initialise_expr(ctx: &mut DefinitionTranslationContext, expr: &Exp
                 initialise_expr(ctx, expr);
             }
         }
-        ExpressionContents::ConstantValue { .. } => {}
+        ExpressionContents::ConstantValue { .. } | ExpressionContents::String { .. } => {}
         ExpressionContents::Borrow { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Copy { expr, .. } => initialise_expr(ctx, &*expr),
         ExpressionContents::Impl { .. } => {}
@@ -118,6 +121,7 @@ fn list_used_locals(expr: &Expression) -> Vec<NameP> {
             .flatten()
             .collect::<Vec<_>>(),
         ExpressionContents::ConstantValue { .. } => Vec::new(),
+        ExpressionContents::String { .. } => Vec::new(),
         ExpressionContents::Borrow { expr, .. } => list_used_locals(&*expr),
         ExpressionContents::Copy { expr, .. } => list_used_locals(&*expr),
         ExpressionContents::Impl { .. } => {
@@ -263,6 +267,9 @@ pub(crate) fn generate_expr(
         } => generate_expr_construct(fields, ctx, range, ty.clone(), new_terminator, variant),
         ExpressionContents::ConstantValue { value, range } => {
             generate_expr_constant(ctx, range, ty.clone(), value, new_terminator)
+        }
+        ExpressionContents::String { value, range } => {
+            generate_expr_string(ctx, range, ty.clone(), value, new_terminator)
         }
         ExpressionContents::Borrow { borrow_token, expr } => {
             generate_expr_borrow(ctx, range, expr, new_terminator, borrow_token)
@@ -759,6 +766,82 @@ fn generate_expr_constant(
     ExprGeneratedM {
         block: initialise_variable,
         variable: LocalVariableName::Local(variable),
+    }
+    .into()
+}
+
+fn generate_expr_string(
+    ctx: &mut DefinitionTranslationContext,
+    range: quill_common::location::Range,
+    ty: Type,
+    value: String,
+    terminator: Terminator,
+) -> DiagnosticResult<ExprGeneratedM> {
+    let list_name = QualifiedName {
+        source_file: SourceFileIdentifier {
+            module: ModuleIdentifier {
+                segments: vec![SourceFileIdentifierSegment("core".to_string())],
+            },
+            file: SourceFileIdentifierSegment("list".to_string()),
+            file_type: SourceFileType::Quill,
+        },
+        name: "List".to_string(),
+        range,
+    };
+
+    let mut list = ctx.new_local_variable(LocalVariableInfo {
+        range,
+        ty: ty.clone(),
+        details: Default::default(),
+    });
+    let mut statements = vec![Statement {
+        range,
+        kind: StatementKind::ConstructData {
+            name: list_name.clone(),
+            type_variables: vec![Type::Primitive(PrimitiveType::Char)],
+            variant: Some("Empty".to_string()),
+            fields: BTreeMap::new(),
+            target: LocalVariableName::Local(list),
+        },
+    }];
+
+    for ch in value.chars().rev() {
+        let variable = ctx.new_local_variable(LocalVariableInfo {
+            range,
+            ty: ty.clone(),
+            details: Default::default(),
+        });
+        statements.push(Statement {
+            range,
+            kind: StatementKind::ConstructData {
+                name: list_name.clone(),
+                type_variables: vec![Type::Primitive(PrimitiveType::Char)],
+                variant: Some("Cons".to_string()),
+                fields: {
+                    let mut map = BTreeMap::new();
+                    map.insert(
+                        "value".to_string(),
+                        Rvalue::Constant(ConstantValue::Char(ch)),
+                    );
+                    map.insert(
+                        "list".to_string(),
+                        Rvalue::Move(Place::new(LocalVariableName::Local(list))),
+                    );
+                    map
+                },
+                target: LocalVariableName::Local(variable),
+            },
+        });
+        list = variable;
+    }
+
+    let initialise_variable = ctx.control_flow_graph.new_basic_block(BasicBlock {
+        statements,
+        terminator,
+    });
+    ExprGeneratedM {
+        block: initialise_variable,
+        variable: LocalVariableName::Local(list),
     }
     .into()
 }

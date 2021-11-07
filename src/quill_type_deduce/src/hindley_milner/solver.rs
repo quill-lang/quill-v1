@@ -146,6 +146,7 @@ fn find_explicit_vars(expr: &mut ExpressionT) -> BTreeMap<TypeVariableId, Range>
                 .flatten(),
         ),
         ExpressionContentsT::ConstantValue { .. } => {}
+        ExpressionContentsT::String { .. } => {}
         ExpressionContentsT::Borrow { expr, .. } => {
             map.extend(find_explicit_vars(expr.deref_mut()))
         }

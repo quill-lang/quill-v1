@@ -265,6 +265,9 @@ impl SemanticTokenGenerator {
             ExprPatP::Constant { range, .. } => {
                 self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER], 0);
             }
+            ExprPatP::String { range, .. } => {
+                self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::STRING], 0);
+            }
             ExprPatP::Apply(l, r) => {
                 self.gen_expr(
                     *l,
@@ -379,6 +382,7 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             }
         }
         ExprPatP::Constant { .. } => Vec::new(),
+        ExprPatP::String { .. } => Vec::new(),
         ExprPatP::Apply(l, r) => {
             let mut result = get_named_parameters(&*l, is_main_pattern);
             result.extend(get_named_parameters(&*r, false));
@@ -441,6 +445,7 @@ lazy_static::lazy_static! {
             SemanticTokenType::PROPERTY,
             SemanticTokenType::PARAMETER,
             SemanticTokenType::NUMBER,
+            SemanticTokenType::STRING,
         ]
     };
     static ref SEMANTIC_TOKEN_LEGEND: HashMap<SemanticTokenType, u32> = {
