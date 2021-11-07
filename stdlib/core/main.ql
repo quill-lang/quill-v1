@@ -19,6 +19,7 @@ def add_ints: Unit -> Unit {
             Some { value } -> match (get_int unit) (
                 Some { value = value_2 } -> (
                     print (copy &value)
+                    putchar '\''
                     print " + "
                     print (copy &value_2)
                     print " = "

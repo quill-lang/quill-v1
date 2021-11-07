@@ -5,7 +5,7 @@ use quill_common::location::Ranged;
 use quill_parser::{
     data_types::{AspectP, DataP, EnumP, FieldP},
     definition::{DefinitionBodyP, DefinitionDeclP, DefinitionP, TypeParameterP},
-    expr_pat::ExprPatP,
+    expr_pat::{ConstantValue, ExprPatP},
     file::FileP,
     types::TypeP,
 };
@@ -262,8 +262,15 @@ impl SemanticTokenGenerator {
                     0,
                 );
             }
-            ExprPatP::Constant { range, .. } => {
-                self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER], 0);
+            ExprPatP::Constant { range, value } => {
+                self.push_token(
+                    range,
+                    SEMANTIC_TOKEN_LEGEND[&match value {
+                        ConstantValue::Char(_) => SemanticTokenType::STRING,
+                        _ => SemanticTokenType::NUMBER,
+                    }],
+                    0,
+                );
             }
             ExprPatP::String { range, .. } => {
                 self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::STRING], 0);

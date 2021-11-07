@@ -443,17 +443,30 @@ fn parse_token(
         '\'' => {
             // This is either a lifetime or a character literal.
             let (string_start_col, _) = chars.next().unwrap();
+            if let Some((_, '\'')) = chars.peek() {
+                // We can't have an empty character literal.
+                return DiagnosticResult::fail(ErrorMessage::new(
+                    "expected a character between these quotes".to_string(),
+                    Severity::Error,
+                    Diagnostic::at(
+                        source_file,
+                        &Range::from(Location {
+                            line,
+                            col: string_start_col,
+                        })
+                        .union(
+                            Location {
+                                line,
+                                col: string_start_col + 1,
+                            }
+                            .into(),
+                        ),
+                    ),
+                ));
+            }
+
             consume_string_character(line, string_start_col, source_file, chars).bind(
                 |(single_char, char_range)| {
-                    if single_char == '\'' {
-                        // We can't have an empty character literal.
-                        return DiagnosticResult::fail(ErrorMessage::new(
-                            "expected a character between these quotes".to_string(),
-                            Severity::Error,
-                            Diagnostic::at(source_file, &char_range),
-                        ));
-                    }
-
                     // We assume that it is a character literal until we don't see a closing quote.
                     // Do we have a closing quote?
                     if let Some((_, '\'')) = chars.peek() {
@@ -462,7 +475,17 @@ fn parse_token(
                         return DiagnosticResult::ok(
                             Token {
                                 token_type: TokenType::Character(single_char),
-                                range: char_range,
+                                // Include the quote marks in the character range.
+                                range: Range {
+                                    start: Location {
+                                        line: char_range.start.line,
+                                        col: char_range.start.col - 1,
+                                    },
+                                    end: Location {
+                                        line: char_range.end.line,
+                                        col: char_range.end.col + 1,
+                                    },
+                                },
                             }
                             .into(),
                         );
