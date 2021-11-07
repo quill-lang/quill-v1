@@ -89,6 +89,7 @@ pub enum ConstantValue {
     Unit,
     Bool(bool),
     Int(i64),
+    Char(char),
 }
 
 impl Display for ConstantValue {
@@ -97,6 +98,7 @@ impl Display for ConstantValue {
             ConstantValue::Unit => write!(f, "unit"),
             ConstantValue::Bool(value) => write!(f, "bool {}", value),
             ConstantValue::Int(value) => write!(f, "int {}", value),
+            ConstantValue::Char(value) => write!(f, "char {}", value),
         }
     }
 }

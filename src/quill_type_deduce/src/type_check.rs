@@ -1294,6 +1294,7 @@ pub(crate) fn get_constant_type(constant: &ConstantValue) -> PrimitiveType {
         ConstantValue::Unit => PrimitiveType::Unit,
         ConstantValue::Bool(_) => PrimitiveType::Bool,
         ConstantValue::Int(_) => PrimitiveType::Int,
+        ConstantValue::Char(_) => PrimitiveType::Char,
     }
 }
 

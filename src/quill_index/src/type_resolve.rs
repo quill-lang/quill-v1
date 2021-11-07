@@ -116,6 +116,7 @@ pub(crate) fn resolve_type_identifier(
             "Unit" => Some(PrimitiveType::Unit),
             "Bool" => Some(PrimitiveType::Bool),
             "Int" => Some(PrimitiveType::Int),
+            "Char" => Some(PrimitiveType::Char),
             _ => None,
         } {
             if parameters.is_empty() {

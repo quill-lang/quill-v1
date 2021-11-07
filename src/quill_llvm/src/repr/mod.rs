@@ -174,6 +174,16 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                     .unwrap()
                     .as_type(),
             )),
+            Type::Primitive(PrimitiveType::Char) => Some(AnyTypeRepresentation::new(
+                // Represented as an unsigned char in DWARF.
+                self.codegen,
+                BasicTypeEnum::IntType(self.codegen.context.i32_type()),
+                self.codegen
+                    .di_builder
+                    .create_basic_type("Char", 32, 8, DIFlagsConstants::PUBLIC)
+                    .unwrap()
+                    .as_type(),
+            )),
             Type::Borrow { ty, .. } => self.repr(*ty).map(|repr| {
                 AnyTypeRepresentation::new(
                     self.codegen,
@@ -433,12 +443,7 @@ impl<'a, 'ctx> LLVMRepresentations<'a, 'ctx> {
                 // Primitive types can simply be copied bitwise.
                 match ty {
                     PrimitiveType::Unit => None,
-                    PrimitiveType::Bool => Some(
-                        self.codegen
-                            .builder
-                            .build_load(variable_ptr, "copied_value"),
-                    ),
-                    PrimitiveType::Int => Some(
+                    PrimitiveType::Bool | PrimitiveType::Int | PrimitiveType::Char => Some(
                         self.codegen
                             .builder
                             .build_load(variable_ptr, "copied_value"),

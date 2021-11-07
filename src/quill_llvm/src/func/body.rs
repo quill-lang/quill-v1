@@ -714,6 +714,11 @@ fn create_real_func_body_cfg<'ctx>(
                                         false,
                                     )
                                 }
+                                ConstantValue::Char(value) => ctx
+                                    .codegen
+                                    .context
+                                    .i32_type()
+                                    .const_int(*value as u64, false),
                                 ConstantValue::Unit => {
                                     unreachable!()
                                 }
