@@ -69,6 +69,8 @@ pub enum PrimitiveType {
     Bool,
     /// A 64-bit signed integer type.
     Int,
+    /// A 32-bit Unicode code point.
+    Char,
 }
 
 impl Debug for PrimitiveType {
@@ -77,6 +79,7 @@ impl Debug for PrimitiveType {
             PrimitiveType::Unit => write!(f, "Unit"),
             PrimitiveType::Bool => write!(f, "Bool"),
             PrimitiveType::Int => write!(f, "Int"),
+            PrimitiveType::Char => write!(f, "Char"),
         }
     }
 }

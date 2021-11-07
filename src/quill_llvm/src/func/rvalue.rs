@@ -272,6 +272,16 @@ pub fn get_pointer_to_rvalue<'ctx>(
                     );
                     Some(mem)
                 }
+                ConstantValue::Char(value) => {
+                    let mem = codegen
+                        .builder
+                        .build_alloca(codegen.context.i32_type(), "constant");
+                    codegen.builder.build_store(
+                        mem,
+                        codegen.context.i32_type().const_int(*value as u64, false),
+                    );
+                    Some(mem)
+                }
             }
         }
     }
@@ -385,10 +395,12 @@ pub fn get_type_of_rvalue(
         }
         Rvalue::Constant(constant) => {
             // Alloca the constant, then make a pointer to it.
+            // TODO: unify with `type_check.rs` function `get_constant_type`
             match constant {
                 ConstantValue::Unit => Type::Primitive(PrimitiveType::Unit),
                 ConstantValue::Bool(_) => Type::Primitive(PrimitiveType::Bool),
                 ConstantValue::Int(_) => Type::Primitive(PrimitiveType::Int),
+                ConstantValue::Char(_) => Type::Primitive(PrimitiveType::Char),
             }
         }
     }

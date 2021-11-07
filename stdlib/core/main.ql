@@ -5,6 +5,8 @@ use bool
 use int
 use option
 use ops
+use func
+use convert
 
 def main: Unit {
     main = add_ints unit
@@ -12,41 +14,31 @@ def main: Unit {
 
 def add_ints: Unit -> Unit {
     add_ints unit = (
-        // Print "Type two integers to add.\n"
-        print (84 :- 121 :- 112 :- 101 :- 32 :- 116 :- 119 :- 111 :- 32 :- 105 :- 110 :- 116 :- 101 :- 103 :- 101 :- 114 :- 115 :- 32 :- 116 :- 111 :- 32 :- 97 :- 100 :- 100 :- 46 :- 10 :- empty)
+        print "Type two integers to add.\n"
         match (get_int unit) (
             Some { value } -> match (get_int unit) (
                 Some { value = value_2 } -> (
                     print (copy &value)
-                    // " + "
-                    putchar 32
-                    putchar 43
-                    putchar 32
+                    putchar '\''
+                    print " + "
                     print (copy &value_2)
-                    // " = "
-                    putchar 32
-                    putchar 61
-                    putchar 32
+                    print " = "
                     print (value + value_2)
                 )
-                // Print "Error"
-                None {} -> print (69 :- 114 :- 114 :- 111 :- 114 :- empty)
+                None {} -> print "Error"
             )
-            // Print "Error"
-            None {} -> print (69 :- 114 :- 114 :- 111 :- 114 :- empty)
+            None {} -> print "Error"
         )
     )
 }
 
 def hello_world_factorials: Unit {
     hello_world_factorials = (
-        // "Hello, world!" in Unicode code points is
-        // 72 101 108 108 111 44 32 119 111 114 108 100 33
         if false (
             nop
         ) (
             \a -> (
-                let list = 72 :- 101 :- 108 :- 108 :- 111 :- 44 :- 32 :- 119 :- 111 :- 114 :- 108 :- 100 :- 33 :- empty
+                let list = "Hello, world!"
                 @print print_show (copy &list)
                 @print (copy &print_show) (copied (as_ref &list))
             )
@@ -62,10 +54,10 @@ def print_factorials: Int -> Int -> Unit {
         nop
     ) (\a -> (
         print (copy &low)
-        putchar 33
-        putchar 32
-        putchar 61
-        putchar 32
+        (putchar <|| convert) 33
+        (putchar <|| convert) 32
+        (putchar <|| convert) 61
+        (putchar <|| convert) 32
         print (factorial (copy &low))
         newline unit
         print_factorials (low + 1) high

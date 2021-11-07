@@ -105,11 +105,13 @@ fn rvalue_type(
     }
 }
 
+// TODO: unify with `type_check.rs` function `get_constant_type`
 pub fn type_of_value(value: ConstantValue) -> PrimitiveType {
     match value {
         ConstantValue::Unit => PrimitiveType::Unit,
         ConstantValue::Bool(_) => PrimitiveType::Bool,
         ConstantValue::Int(_) => PrimitiveType::Int,
+        ConstantValue::Char(_) => PrimitiveType::Char,
     }
 }
 
@@ -559,6 +561,9 @@ fn validate_terminator(
                     }
                     ConstantValue::Int(_) => {
                         assert_eq(prim, PrimitiveType::Int, "switch constant type")?
+                    }
+                    ConstantValue::Char(_) => {
+                        assert_eq(prim, PrimitiveType::Char, "switch constant type")?
                     }
                 }
                 if *target <= block_id {

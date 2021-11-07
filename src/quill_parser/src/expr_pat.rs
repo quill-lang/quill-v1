@@ -14,6 +14,8 @@ pub enum ExprPatP {
     Variable(IdentifierP),
     /// A primitive constant such as `14` or `false`.
     Constant { range: Range, value: ConstantValue },
+    /// A string literal, which will later be converted into a cons-list.
+    String { range: Range, value: String },
     /// Apply the left hand side to the right hand side, e.g. `a b`.
     /// More complicated expressions e.g. `a b c d` can be desugared into `((a b) c) d`.
     Apply(Box<ExprPatP>, Box<ExprPatP>),
@@ -89,6 +91,7 @@ pub enum ConstantValue {
     Unit,
     Bool(bool),
     Int(i64),
+    Char(char),
 }
 
 impl Display for ConstantValue {
@@ -97,6 +100,7 @@ impl Display for ConstantValue {
             ConstantValue::Unit => write!(f, "unit"),
             ConstantValue::Bool(value) => write!(f, "bool {}", value),
             ConstantValue::Int(value) => write!(f, "int {}", value),
+            ConstantValue::Char(value) => write!(f, "char {}", value),
         }
     }
 }
@@ -115,6 +119,7 @@ impl Ranged for ExprPatP {
         match self {
             ExprPatP::Variable(identifier) => identifier.range(),
             ExprPatP::Constant { range, .. } => *range,
+            ExprPatP::String { range, .. } => *range,
             ExprPatP::Apply(left, right) => left.range().union(right.range()),
             ExprPatP::Unknown(range) => *range,
             ExprPatP::Lambda {

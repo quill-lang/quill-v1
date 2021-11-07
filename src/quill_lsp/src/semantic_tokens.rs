@@ -5,7 +5,7 @@ use quill_common::location::Ranged;
 use quill_parser::{
     data_types::{AspectP, DataP, EnumP, FieldP},
     definition::{DefinitionBodyP, DefinitionDeclP, DefinitionP, TypeParameterP},
-    expr_pat::ExprPatP,
+    expr_pat::{ConstantValue, ExprPatP},
     file::FileP,
     types::TypeP,
 };
@@ -262,8 +262,18 @@ impl SemanticTokenGenerator {
                     0,
                 );
             }
-            ExprPatP::Constant { range, .. } => {
-                self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::NUMBER], 0);
+            ExprPatP::Constant { range, value } => {
+                self.push_token(
+                    range,
+                    SEMANTIC_TOKEN_LEGEND[&match value {
+                        ConstantValue::Char(_) => SemanticTokenType::STRING,
+                        _ => SemanticTokenType::NUMBER,
+                    }],
+                    0,
+                );
+            }
+            ExprPatP::String { range, .. } => {
+                self.push_token(range, SEMANTIC_TOKEN_LEGEND[&SemanticTokenType::STRING], 0);
             }
             ExprPatP::Apply(l, r) => {
                 self.gen_expr(
@@ -379,6 +389,7 @@ fn get_named_parameters(pattern: &ExprPatP, is_main_pattern: bool) -> Vec<String
             }
         }
         ExprPatP::Constant { .. } => Vec::new(),
+        ExprPatP::String { .. } => Vec::new(),
         ExprPatP::Apply(l, r) => {
             let mut result = get_named_parameters(&*l, is_main_pattern);
             result.extend(get_named_parameters(&*r, false));
@@ -441,6 +452,7 @@ lazy_static::lazy_static! {
             SemanticTokenType::PROPERTY,
             SemanticTokenType::PARAMETER,
             SemanticTokenType::NUMBER,
+            SemanticTokenType::STRING,
         ]
     };
     static ref SEMANTIC_TOKEN_LEGEND: HashMap<SemanticTokenType, u32> = {

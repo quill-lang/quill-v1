@@ -4,15 +4,16 @@ use bool
 use func
 use iter
 use ops
+use convert
 
-def putchar: Int -> Unit { compiler_intrinsic }
+def putchar: Char -> Unit { compiler_intrinsic }
 
 def newline: Unit -> Unit {
-    newline _ = putchar 10
+    newline _ = putchar (convert 10)
 }
 
 aspect Show[T] {
-    show: T -> List[Int]
+    show: T -> List[Char]
 }
 
 aspect Print[T] {
@@ -25,8 +26,8 @@ def default print_show[T]: impl Show[T] -> impl Print[T] {
     }
 }
 
-def default show_list: impl Show[List[Int]] {
-    show_list = impl {
+def default show_list_char: impl Show[List[Char]] {
+    show_list_char = impl {
         show = id
     }
 }
@@ -40,7 +41,7 @@ def default show_int: impl Show[Int] {
                     let rem = n - (copy &quot) * 10
                     concat (show quot) (show rem)
                 )
-                false -> (n + 48) :- empty
+                false -> (convert (n + 48)) :- empty
             )
         )
     }

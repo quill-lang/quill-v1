@@ -2,7 +2,10 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use quill_common::{
     diagnostic::{Diagnostic, DiagnosticResult, ErrorMessage, HelpMessage, HelpType, Severity},
-    location::{Range, Ranged, SourceFileIdentifier},
+    location::{
+        ModuleIdentifier, Range, Ranged, SourceFileIdentifier, SourceFileIdentifierSegment,
+        SourceFileType,
+    },
     name::QualifiedName,
 };
 use quill_index::{ProjectIndex, TypeDeclarationTypeI};
@@ -216,6 +219,47 @@ pub(crate) fn generate_constraints(
                         reason: ConstraintEqualityReason::Literal {
                             expr: range,
                             ty: Type::Primitive(ty),
+                        },
+                    },
+                ),
+                let_variables,
+                new_variables: None,
+            })
+        }
+        ExprPatP::String { range, value } => {
+            let type_variable = TypeVariableId::default();
+            let string_type_name = QualifiedName {
+                source_file: SourceFileIdentifier {
+                    module: ModuleIdentifier {
+                        segments: vec![SourceFileIdentifierSegment("core".to_string())],
+                    },
+                    file: SourceFileIdentifierSegment("list".to_string()),
+                    file_type: SourceFileType::Quill,
+                },
+                name: "List".to_string(),
+                range,
+            };
+            DiagnosticResult::ok(ExprTypeCheck {
+                expr: ExpressionT {
+                    type_variable,
+                    contents: ExpressionContentsT::String { range, value },
+                    explicit_token,
+                },
+                type_variable_definition_ranges: BTreeMap::new(),
+                assumptions: Assumptions::default(),
+                constraints: Constraints::new_with(
+                    type_variable.into(),
+                    Constraint::Equality {
+                        ty: TypeVariable::Named {
+                            name: string_type_name.clone(),
+                            parameters: vec![TypeVariable::Primitive(PrimitiveType::Char)],
+                        },
+                        reason: ConstraintEqualityReason::Literal {
+                            expr: range,
+                            ty: Type::Named {
+                                name: string_type_name,
+                                parameters: vec![Type::Primitive(PrimitiveType::Char)],
+                            },
                         },
                     },
                 ),
@@ -1199,8 +1243,8 @@ fn generate_pattern_variables(
                     },
                 }
             }
-            ExprPatP::Constant { .. } => PatternMatchConstraints {
-                // Immediate patterns do not create any constraints,
+            ExprPatP::Constant { .. } | ExprPatP::String { .. } => PatternMatchConstraints {
+                // Constant patterns do not create any constraints,
                 // since they do not define new variables.
                 variables: Vec::new(),
                 assumptions: Assumptions::default(),

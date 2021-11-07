@@ -388,6 +388,9 @@ fn substitute_contents(
         ExpressionContentsT::ConstantValue { value, range } => {
             DiagnosticResult::ok(ExpressionContents::ConstantValue { value, range }.into())
         }
+        ExpressionContentsT::String { value, range } => {
+            DiagnosticResult::ok(ExpressionContents::String { value, range }.into())
+        }
         ExpressionContentsT::Borrow { borrow_token, expr } => substitute_outer(
             substitution,
             *expr,
