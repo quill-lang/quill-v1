@@ -74,8 +74,8 @@ pub fn into_diagnostic(
             },
         ),
         severity: Some(match message.severity {
-            Severity::Error => DiagnosticSeverity::Error,
-            Severity::Warning => DiagnosticSeverity::Warning,
+            Severity::Error => DiagnosticSeverity::ERROR,
+            Severity::Warning => DiagnosticSeverity::WARNING,
         }),
         code: None,
         code_description: None,
