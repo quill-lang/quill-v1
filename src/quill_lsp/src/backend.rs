@@ -171,7 +171,7 @@ struct RootFileSystems {
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> jsonrpc::Result<InitializeResult> {
         let capabilities = ServerCapabilities {
-            text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::Full)),
+            text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
             semantic_tokens_provider: Some(
                 SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
                     work_done_progress_options: WorkDoneProgressOptions {
