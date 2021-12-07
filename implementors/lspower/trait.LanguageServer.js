@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["quill_lsp"] = [{"text":"impl LanguageServer for <a class=\"struct\" href=\"quill_lsp/backend/struct.Backend.html\" title=\"struct quill_lsp::backend::Backend\">Backend</a>","synthetic":false,"types":["quill_lsp::backend::Backend"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

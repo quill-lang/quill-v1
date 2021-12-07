@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["file_to_url",""],["path_to_file","Takes a relativised path and converts it to a source file identifier."]]});

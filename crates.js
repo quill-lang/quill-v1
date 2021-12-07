@@ -1,0 +1,1 @@
+window.ALL_CRATES = ["quill","quill_analyse","quill_borrow_check","quill_common","quill_error","quill_func_objects","quill_index","quill_install","quill_lexer","quill_link","quill_llvm","quill_lsp","quill_mir","quill_monomorphise","quill_parser","quill_reprs","quill_source_file","quill_target","quill_type","quill_type_deduce","quillc","quillc_api"];

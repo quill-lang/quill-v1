@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["BuildTarget",""],["OptimisationType",""]],"fn":[["build",""],["build_flags","Adds all flags that are relevant to building a quill project."],["clean",""],["gen_cli","All switches from `build` are copied into `run`."],["run",""],["update",""]]});

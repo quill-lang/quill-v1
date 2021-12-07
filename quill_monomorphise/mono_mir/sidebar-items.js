@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["MonomorphisedDefinition",""],["MonomorphisedMIR","The monomorphised MIR is the MIR for each monomorphised function. This is the equivalent of ProjectMIR after monomorphisation."],["MonomorphisedSourceFile",""]]});

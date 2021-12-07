@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["IdentifierP","An unresolved identifier, which is a string of text at some range in code."],["NameP","A name for an item, which cannot be qualified. This implements Ord to make Quill builds reproducible."]]});

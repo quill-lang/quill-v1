@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["DefinitionBody",""]],"struct":[["Definition","A definition for a symbol, i.e. a function or constant. The function’s type is `arg_types -> return_type`. For example, if we defined a function"],["DefinitionCase",""]]});

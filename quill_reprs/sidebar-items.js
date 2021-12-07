@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["data","Utilities for representations of data types and enum types."],["sort_types",""]],"struct":[["Representations","Stores the representations of all data/struct types in a project, post monomorphisation."]]});

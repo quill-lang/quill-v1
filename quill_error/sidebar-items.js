@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["ErrorEmitter","Prints error and warning messages, outputting the relevant lines of source code from the input files."]]});

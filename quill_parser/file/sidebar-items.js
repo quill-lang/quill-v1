@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["FileP","A single `.ql` file may export data types and definitions. This `File` struct contains the parsed abstract syntax tree of a file."],["UseP",""]]});

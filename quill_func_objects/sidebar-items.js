@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["convert_func_objects","Converts curried functions and partial application of functions into more LLVM-friendly representations."]]});

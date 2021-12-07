@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["invoke","Returns false if an error was emitted. Messages are printed to stdout to communicate with the `quill` executable. Messages are prefixed with one of the following tags:"]]});

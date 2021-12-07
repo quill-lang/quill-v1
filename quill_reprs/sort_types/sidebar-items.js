@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["MonomorphisedItem",""]],"struct":[["IndirectedMonomorphisedType","A monomorphised type, where some of its fields may have a layer of heap indirection."]]});

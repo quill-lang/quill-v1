@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["Pattern","A pattern made up of type constructors and potential unknowns."]]});

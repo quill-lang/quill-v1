@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["parse","Parses a source file. This function parses the top-level item declarations, without parsing the contents of items."]],"mod":[["data_types",""],["definition",""],["expr_pat",""],["file",""],["identifier",""],["types",""],["visibility",""]]});

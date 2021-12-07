@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["definition",""],["expr",""],["pattern",""]],"struct":[["SourceFileHIR","A parsed and fully type checked source file. No effort has been made to ensure semantic consistency or correctness, just syntactic and type correctness."]]});

@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["ProjectInfo","This is the format for `quill.toml` files."],["QuillcInvocation",""]]});
