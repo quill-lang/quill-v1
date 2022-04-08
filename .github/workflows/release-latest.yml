@@ -133,7 +133,7 @@ jobs:
       # Now create a release and upload the compiler.
 
       - name: Fetch version
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: version
           path: target/release
@@ -172,7 +172,7 @@ jobs:
     needs: test
     steps:
       - name: Download all workflow run artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
 
       - name: Create GitHub release
         uses: "marvinpinto/action-automatic-releases@latest"
