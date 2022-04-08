@@ -15,7 +15,7 @@ jobs:
           cat version.txt
 
       - name: Upload version
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: version
           path: version.txt
@@ -157,7 +157,7 @@ jobs:
           mv quill_install ${{ matrix.os }}_quill_install
 
       - name: Upload compiler tarballs
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: quill-${{ matrix.os }}
           path: |
